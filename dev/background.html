@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Weave — background harness</title>
+<style>
+  /* Deliberately minimal. This page exists to look at one thing. */
+  :root { --bg-deep: #08070f; --ink: #eceaf5; --dim: #9691b0; --line: #2a2740; --accent: #8b5cf6; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg-deep); color: var(--ink);
+    font: 14px/1.5 ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+    display: grid; grid-template-rows: auto 1fr;
+  }
+  .bar {
+    display: flex; gap: 18px; align-items: center; flex-wrap: wrap;
+    padding: 10px 16px; border-bottom: 1px solid var(--line);
+  }
+  .bar label { display: flex; gap: 7px; align-items: center; color: var(--dim); }
+  .bar output { font: 12px ui-monospace, Consolas, monospace; color: var(--ink); min-width: 3ch; }
+  button {
+    background: #201d33; color: inherit; border: 1px solid var(--line);
+    border-radius: 9px; padding: 6px 13px; cursor: pointer; font: inherit;
+  }
+  button:hover { border-color: var(--accent); }
+  /* The same layering the room uses: canvas behind, content above, gutter transparent. */
+  .panel { position: relative; overflow: hidden; }
+  .panel canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; display: block; }
+  .msgs { position: relative; z-index: 1; padding: 26px 34px; display: grid; gap: 18px; align-content: start; }
+  .msg { max-width: 62ch; }
+  .who { font-weight: 600; }
+  .when { color: #625d7d; font-size: 12px; margin-left: 8px; }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <strong>Background harness</strong>
+    <label>people <input id="n" type="range" min="0" max="12" value="6"><output id="nOut">6</output></label>
+    <label>noise <input id="noise" type="range" min="0" max="100" value="0"><output id="noiseOut">0.00</output></label>
+    <button id="join">+ join</button>
+    <button id="leave">− leave</button>
+    <button id="toggle">stop</button>
+    <span id="fps" style="color:var(--dim);font:12px ui-monospace,Consolas,monospace"></span>
+  </div>
+
+  <div class="panel">
+    <canvas id="bg"></canvas>
+    <div class="msgs">
+      <div class="msg"><span class="who">Kestrel</span><span class="when">21:04</span>
+        <div>Putting my screen up — the build is finally green.</div></div>
+      <div class="msg"><span class="who">vaporwave_dan</span><span class="when">21:05</span>
+        <div>Finally. Runbook is updated so nobody has to dig through logs again.</div></div>
+      <div class="msg"><span class="who">Roan</span><span class="when">21:07</span>
+        <div>memory graph before and after, for the record</div></div>
+    </div>
+  </div>
+
+<script type="module">
+// A harness for looking at the ported animation without signing in to anything.
+// Not part of either build — vite only bundles index.html.
+import { WeaveBackground } from '../src/ui/weave-background.js';
+import { userHue } from '../src/ui/hue.js';
+
+const NAMES = ['Kestrel', 'vaporwave_dan', 'Moth', 'Roan', 'Ghostbyte', 'Tessellate',
+               'Lint', 'Bobbin', 'Selvedge', 'Warp', 'Heddle', 'Nettle'];
+
+const n = document.getElementById('n');
+const nOut = document.getElementById('nOut');
+const noise = document.getElementById('noise');
+const noiseOut = document.getElementById('noiseOut');
+const fps = document.getElementById('fps');
+
+let count = Number(n.value);
+const state = () => ({
+    participants: NAMES.slice(0, count).map((name) => ({ id: name, hue: userHue(name) })),
+    noise: Number(noise.value) / 100,
+});
+
+const bg = new WeaveBackground(document.getElementById('bg'), { getState: state });
+bg.start();
+
+const setCount = (v) => {
+    count = Math.max(0, Math.min(NAMES.length, v));
+    n.value = String(count);
+    nOut.textContent = String(count);
+};
+n.oninput = () => setCount(Number(n.value));
+noise.oninput = () => { noiseOut.textContent = (Number(noise.value) / 100).toFixed(2); };
+document.getElementById('join').onclick = () => setCount(count + 1);
+document.getElementById('leave').onclick = () => setCount(count - 1);
+document.getElementById('toggle').onclick = (e) => {
+    if (bg.running) { bg.stop(); e.target.textContent = 'start'; }
+    else { bg.start(); e.target.textContent = 'stop'; }
+};
+
+// A frame counter, because the honest question about this animation is what it costs.
+let frames = 0;
+let mark = performance.now();
+(function tick(now) {
+    frames++;
+    if (now - mark >= 1000) {
+        fps.textContent = `${frames} fps · ${count} strands · phase ${bg.phase.toFixed(2)}`;
+        frames = 0; mark = now;
+    }
+    requestAnimationFrame(tick);
+})(performance.now());
+</script>
+</body>
+</html>

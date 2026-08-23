@@ -13,6 +13,13 @@ One source tree, two builds:
 > **Status: early development.** The authentication surface works end to end against a
 > real server. The room — voice, screen share, chat — is the next piece of work.
 
+## Download
+
+Windows installers are published to
+[Releases](https://github.com/Weave-speak/Weave_Client/releases). Builds are unsigned, so
+SmartScreen shows "Windows protected your PC" — More info, then Run anyway. The wizard lets
+you install to any drive and leaves `Uninstall Weave.exe` in the same folder.
+
 ## The difference between the two builds
 
 It is not cosmetic, and it is the reason `src/platform/` exists.

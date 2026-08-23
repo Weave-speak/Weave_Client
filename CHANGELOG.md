@@ -1,0 +1,27 @@
+# Changelog
+
+All notable changes to Weave Client are recorded here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
+[semantic versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+- Platform adapter: one source tree, two builds. `WEAVE_TARGET=browser` inherits the
+  origin that served it; `WEAVE_TARGET=desktop` ships blank and is pointed at a server.
+  Server management is compiled out of the browser build rather than hidden in it.
+- Address parsing that accepts a bare hostname, `host:port`, an explicit scheme, a pasted
+  `wss://` URL, or a URL copied out of a browser. Defaults to HTTPS, except for addresses
+  that are obviously on a private network, where plain HTTP is the common case.
+- Server discovery against `GET /api/server-info` with protocol *range* negotiation, so a
+  newer client does not refuse a server it could have talked to. Distinguishes timeout,
+  wrong software, incompatible version and unfinished setup; everything a browser cannot
+  distinguish gets one honest message rather than a specific guess.
+- Multi-server list for the desktop build, with per-server namespaced settings. A server
+  is only remembered once it has answered.
+- Sign in, register with an invite code, and a three-step password reset built on a
+  security question. No email is involved at any point.
+
+### Notes
+- The room — voice, screen share, chat — is not built yet. Signing in currently lands on
+  a placeholder confirming the whole chain works.

@@ -1,0 +1,315 @@
+/* The authentication surface: sign in, register, reset, and the server list.
+ *
+ * A single centred card on a quiet field. Kept separate from the app shell because the two
+ * share nothing structurally — before sign-in there are no columns, no rooms and no people.
+ */
+
+/* The soft off-centre glow, so a flat dark page has some depth to it. */
+.app {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+    background:
+        radial-gradient(1100px 620px at 18% 12%, rgb(var(--accent-rgb) / 0.13) 0%, transparent 62%),
+        radial-gradient(900px 560px at 86% 88%, rgb(var(--accent-rgb) / 0.11) 0%, transparent 58%),
+        var(--bg-void);
+    overflow-y: auto;
+}
+
+/* ── Top bar ──────────────────────────────────────────────────────────────── */
+
+.topbar {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    height: var(--titlebar-h);
+    padding: 0 var(--s-5);
+    border-bottom: 1px solid var(--line-soft);
+    flex: none;
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+.topbar-spacer { flex: 1; }
+
+.brand-mark {
+    display: grid;
+    place-items: center;
+    width: var(--avatar-lg); height: var(--avatar-lg);
+    border-radius: var(--r-4);
+    background: linear-gradient(150deg, var(--accent-hi), var(--accent-deep));
+    color: var(--on-accent);
+    box-shadow: 0 8px 26px -8px var(--accent);
+    flex: none;
+}
+.brand-mark svg { width: 26px; height: 26px; }
+.brand-mark.small { width: 28px; height: 28px; border-radius: var(--r-2); }
+.brand-mark.small svg { width: 17px; height: 17px; }
+
+.server-pill {
+    font: var(--t-sm) / 1 var(--font-mono);
+    color: var(--ink-dim);
+    padding: 7px 11px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-5);
+}
+/* Nothing chosen yet. Reads as absent rather than as a value. */
+.server-pill.none { color: var(--ink-faint); border-style: dashed; }
+
+/* ── Stage ────────────────────────────────────────────────────────────────── */
+
+.stage {
+    flex: 1;
+    display: grid;
+    place-items: center;
+    padding: var(--s-7) var(--s-5) var(--s-9);
+}
+
+/* ── Card ─────────────────────────────────────────────────────────────────── */
+
+.card {
+    position: relative;
+    width: min(430px, 100%);
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-5);
+    padding: 34px 34px var(--s-6);
+    box-shadow: var(--shadow-3);
+}
+.card.wide-card { width: min(560px, 100%); }
+
+.card-lead {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s-3);
+    margin-bottom: var(--s-5);
+}
+.wordmark { font-size: 25px; font-weight: 600; letter-spacing: -0.02em; }
+
+.card h1 {
+    margin: 0 0 var(--s-1);
+    font-size: var(--t-2xl);
+    font-weight: 650;
+    letter-spacing: -0.025em;
+    text-align: center;
+}
+.lead-sub {
+    margin: 0 0 var(--s-6);
+    text-align: center;
+    color: var(--ink-dim);
+    font-size: var(--t-base);
+}
+
+.card-gear { position: absolute; top: var(--s-4); right: var(--s-4); }
+
+.card-links { margin: var(--s-5) 0 0; text-align: center; font-size: var(--t-base); }
+.card-links a { color: var(--accent-hi); text-decoration: none; }
+.card-links a:hover { text-decoration: underline; }
+.card-links .dot { color: var(--ink-faint); margin: 0 var(--s-2); }
+
+.card-foot {
+    margin: var(--s-5) 0 0;
+    text-align: center;
+    font-size: var(--t-xs);
+    color: var(--ink-faint);
+}
+
+/* ── Fields ───────────────────────────────────────────────────────────────── */
+
+.field { margin-bottom: var(--s-4); }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-3); }
+@media (max-width: 520px) { .field-row { grid-template-columns: 1fr; } }
+
+.field label {
+    display: block;
+    font-size: var(--t-base);
+    color: var(--ink-dim);
+    margin-bottom: var(--s-1);
+}
+.optional { color: var(--ink-faint); font-weight: 400; }
+
+.field input, .field select {
+    width: 100%;
+    background: var(--surface-0);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    padding: var(--s-3) var(--s-4);
+    transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
+}
+.field input::placeholder { color: var(--ink-ghost); }
+/* The glow is the hover-and-click affordance; the keyboard ring comes from base.css and
+   must not be suppressed here. */
+.field input:focus, .field select:focus {
+    border-color: var(--accent);
+    box-shadow: var(--focus-ring);
+}
+.field input.invalid { border-color: var(--bad); }
+.field input.invalid:focus { box-shadow: 0 0 0 3px rgb(var(--bad-rgb) / 0.25); }
+
+/* The invite code is the one field where the value itself is the point. */
+.code-input {
+    font-family: var(--font-mono);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+.code-input:focus {
+    border-color: var(--gold);
+    box-shadow: 0 0 0 3px rgb(var(--gold-rgb) / 0.25);
+}
+
+.field-help { margin-top: var(--s-1); font-size: var(--t-xs); color: var(--ink-faint); }
+.field-error { margin-top: var(--s-1); font-size: var(--t-sm); color: var(--bad); }
+.field-error:empty { margin: 0; }
+
+.match-label.ok { color: var(--ok); }
+.match-label.bad { color: var(--warn); }
+
+.check-row {
+    display: flex;
+    gap: var(--s-2);
+    align-items: flex-start;
+    margin: var(--s-1) 0 var(--s-5);
+    font-size: var(--t-base);
+    cursor: pointer;
+}
+/* Checkboxes must not inherit the full-width rule above — that mistake has broken more
+   than one form in this project's history. */
+.check-row input[type="checkbox"] {
+    width: auto;
+    flex: none;
+    margin: 3px 0 0;
+    accent-color: var(--accent);
+}
+.check-row em { color: var(--ink-dim); font-style: normal; }
+
+/* ── Buttons ──────────────────────────────────────────────────────────────── */
+
+.btn {
+    border: 1px solid var(--line);
+    background: var(--surface-3);
+    border-radius: var(--r-3);
+    padding: var(--s-3) var(--s-6);
+    cursor: pointer;
+    font-weight: 500;
+    transition: filter var(--dur-fast), opacity var(--dur-fast);
+}
+.btn.wide { width: 100%; }
+.btn.primary {
+    background: linear-gradient(180deg, var(--accent-hi), var(--accent));
+    border-color: transparent;
+    color: var(--on-accent);
+    font-weight: 600;
+    box-shadow: var(--shadow-accent);
+}
+.btn:hover:not(:disabled) { filter: brightness(1.08); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
+.btn.busy { cursor: progress; }
+
+.icon-btn {
+    display: grid;
+    place-items: center;
+    width: 34px; height: 34px;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--ink-dim);
+    border-radius: var(--r-2);
+    cursor: pointer;
+}
+.icon-btn:hover { color: var(--ink); border-color: var(--accent); }
+.icon-btn svg { width: 17px; height: 17px; }
+.icon-btn.danger:hover { color: var(--bad); border-color: var(--bad); }
+
+/* ── Messages ─────────────────────────────────────────────────────────────── */
+
+.form-message {
+    display: none;
+    border-radius: var(--r-3);
+    padding: 11px var(--s-4);
+    margin-bottom: var(--s-4);
+    font-size: var(--t-base);
+    border: 1px solid;
+}
+.form-message.show { display: block; }
+.form-message.error {
+    background: var(--bad-soft);
+    border-color: rgb(var(--bad-rgb) / 0.25);
+    color: var(--bad-text);
+}
+.form-message.ok {
+    background: var(--ok-soft);
+    border-color: rgb(var(--ok-rgb) / 0.25);
+    color: var(--ok-text);
+}
+
+/* ── Password strength ────────────────────────────────────────────────────── */
+
+.strength { display: flex; gap: 5px; margin-top: 9px; }
+.strength i {
+    flex: 1;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--line);
+    transition: background var(--dur);
+}
+.strength i.on { background: var(--warn); }
+.strength[data-score="3"] i.on { background: var(--strength-fair); }
+.strength[data-score="4"] i.on { background: var(--ok); }
+
+/* ── Reset steps ──────────────────────────────────────────────────────────── */
+
+.steps { display: flex; gap: var(--s-1); margin: 0 0 var(--s-6); }
+.steps i { flex: 1; height: 3px; border-radius: 2px; background: var(--line); }
+.steps i.on { background: var(--accent); }
+
+/* ── Servers ──────────────────────────────────────────────────────────────── */
+
+.server-list {
+    list-style: none;
+    margin: 0 0 var(--s-5);
+    padding: 0;
+    display: grid;
+    gap: var(--s-2);
+}
+.server-row {
+    display: flex;
+    gap: var(--s-2);
+    align-items: center;
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    padding: var(--s-1) var(--s-2) var(--s-1) var(--s-1);
+}
+.server-row.active { border-color: var(--accent); background: var(--accent-tint); }
+.server-pick-btn {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: transparent;
+    border: 0;
+    text-align: left;
+    padding: var(--s-2) var(--s-3);
+    cursor: pointer;
+    border-radius: var(--r-2);
+}
+.server-name { font-weight: 550; }
+.server-origin { font: var(--t-xs) / 1 var(--font-mono); color: var(--ink-faint); }
+
+.server-result {
+    border-radius: var(--r-3);
+    padding: var(--s-3) var(--s-4);
+    margin-bottom: var(--s-4);
+    font-size: var(--t-base);
+    border: 1px solid;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+.server-result.ok { background: var(--ok-soft); border-color: rgb(var(--ok-rgb) / 0.22); }
+.server-result.bad { background: var(--bad-soft); border-color: rgb(var(--bad-rgb) / 0.22); }
+.server-result span { color: var(--ink-dim); font-size: var(--t-sm); }

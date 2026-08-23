@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Weave — shell harness</title>
+</head>
+<body>
+<div id="app"></div>
+
+<script type="module">
+// The shell, rendered from fixtures. Development only; vite bundles index.html alone.
+import '../src/styles.css';
+import { shell } from '../src/room/shell.js';
+import { html } from '../src/ui/dom.js';
+import { WeaveBackground } from '../src/ui/weave-background.js';
+import { userHue } from '../src/ui/hue.js';
+import { state } from './fixtures.js';
+
+const app = document.getElementById('app');
+app.innerHTML = '';
+app.append(html(shell(state)));
+
+// The living background, fed by whoever is in the current room.
+const here = state.rooms.find((r) => r.current)?.occupants ?? [];
+const bg = new WeaveBackground(document.getElementById('roomBg'), {
+    getState: () => ({
+        participants: here.map((p) => ({ id: p.username, hue: userHue(p.username) })),
+        noise: Number(document.getElementById('noise')?.value ?? 25) / 100,
+    }),
+});
+bg.start();
+
+// A small overlay for poking at the things that are hard to see in a static render.
+const tools = document.createElement('div');
+tools.style.cssText = `position:fixed;right:14px;bottom:14px;z-index:900;display:flex;gap:12px;
+  align-items:center;background:var(--surface-4);border:1px solid var(--line);border-radius:var(--r-3);
+  padding:8px 14px;font:12px var(--font-sans);color:var(--ink-dim);box-shadow:var(--shadow-2)`;
+tools.innerHTML = `
+  <label style="display:flex;gap:6px;align-items:center">noise
+    <input id="noise" type="range" min="0" max="100" value="25" style="width:90px"></label>
+  <span id="metrics" style="font-family:var(--font-mono)"></span>`;
+document.body.append(tools);
+
+let frames = 0;
+let mark = performance.now();
+(function tick(now) {
+    frames++;
+    if (now - mark >= 1000) {
+        const doc = document.documentElement;
+        document.getElementById('metrics').textContent =
+            `${frames} fps · ${doc.scrollWidth}x${doc.clientWidth}`;
+        frames = 0; mark = now;
+    }
+    requestAnimationFrame(tick);
+})(performance.now());
+</script>
+</body>
+</html>

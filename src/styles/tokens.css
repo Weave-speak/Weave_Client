@@ -1,0 +1,149 @@
+/* The design system.
+ *
+ * Every value the rest of the CSS is allowed to use lives here. If a component file
+ * contains a raw hex code, a raw pixel gap or a raw z-index, that is a bug in the token
+ * set rather than a shortcut — the missing token should be added here instead.
+ *
+ * Why that rule is worth keeping: the previous client accumulated ninety-odd colour
+ * literals across a 93,000-line stylesheet, which is how a product ends up with four
+ * slightly different greys and no way to change the accent colour.
+ *
+ * Colours that need alpha variants are stored as bare RGB triplets, so a tint is derived
+ * from the same source as the solid rather than being a second literal that drifts.
+ */
+
+:root {
+    /* ── Brand ─────────────────────────────────────────────────────────────── */
+    --accent-rgb: 139 92 246;
+    --accent: rgb(var(--accent-rgb));
+    --accent-hi: #a78bfa;
+    --accent-deep: #6d28d9;
+    --accent-tint: rgb(var(--accent-rgb) / 0.14);
+    --accent-tint-hi: rgb(var(--accent-rgb) / 0.24);
+    --accent-glow: rgb(var(--accent-rgb) / 0.45);
+    /* Text and icons sitting ON the accent. Named by role, so a lighter accent later means
+       changing this one value rather than hunting every `color: #fff` in the codebase. */
+    --on-accent: #fff;
+
+    /* ── Surfaces, as a depth ladder ───────────────────────────────────────── */
+    /* Deeper number = closer to the viewer. Nothing should invent a step between two. */
+    --bg-void: #08070f;      /* behind the whole window */
+    --bg-app: #0d0c14;       /* the app field */
+    --surface-0: #12101d;    /* sunken: inputs, wells */
+    --surface-1: #16142a;    /* columns */
+    --surface-2: #1a1730;    /* cards, message hover */
+    --surface-3: #221e3a;    /* raised: buttons, chips */
+    --surface-4: #2a2545;    /* overlay: menus, popovers, tooltips */
+
+    /* ── Lines ─────────────────────────────────────────────────────────────── */
+    --line-soft: #1e1b31;    /* barely there: internal dividers */
+    --line: #2a2740;         /* the default border */
+    --line-strong: #3a3557;  /* emphasis, focus-adjacent */
+
+    /* ── Ink ───────────────────────────────────────────────────────────────── */
+    --ink: #eceaf5;          /* body text */
+    --ink-dim: #9691b0;      /* secondary text, labels */
+    --ink-faint: #625d7d;    /* timestamps, hints */
+    --ink-ghost: #4b4766;    /* placeholders, disabled */
+
+    /* ── Status ────────────────────────────────────────────────────────────── */
+    --ok-rgb: 74 222 128;
+    --warn-rgb: 251 191 36;
+    --bad-rgb: 248 113 113;
+    --gold-rgb: 224 163 62;
+    --ok: rgb(var(--ok-rgb));
+    --warn: rgb(var(--warn-rgb));
+    --bad: rgb(var(--bad-rgb));
+    --gold: rgb(var(--gold-rgb));
+    --ok-soft: rgb(var(--ok-rgb) / 0.13);
+    --bad-soft: rgb(var(--bad-rgb) / 0.13);
+    --ok-text: #86efac;
+    /* The third rung of the password meter: past warning, not yet good. */
+    --strength-fair: #a3e635;
+    --bad-text: #fca5a5;
+
+    /* ── Presence ──────────────────────────────────────────────────────────── */
+    /* Named by meaning, not by colour, so a state can be recoloured in one place. */
+    --presence-live: var(--ok);
+    --presence-idle: var(--warn);
+    --presence-busy: var(--bad);
+    --presence-off: var(--ink-ghost);
+
+    /* ── Space, on a 4px base ──────────────────────────────────────────────── */
+    --s-1: 4px;
+    --s-2: 8px;
+    --s-3: 12px;
+    --s-4: 16px;
+    --s-5: 20px;
+    --s-6: 24px;
+    --s-7: 32px;
+    --s-8: 40px;
+    --s-9: 48px;
+
+    /* ── Radius ────────────────────────────────────────────────────────────── */
+    --r-1: 6px;
+    --r-2: 9px;
+    --r-3: 12px;
+    --r-4: 16px;
+    --r-5: 20px;
+    --r-pill: 999px;
+
+    /* ── Type ──────────────────────────────────────────────────────────────── */
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+    --t-xs: 11px;
+    --t-sm: 12.5px;
+    --t-base: 14px;
+    --t-md: 15px;
+    --t-lg: 17px;
+    --t-xl: 21px;
+    --t-2xl: 27px;
+
+    --lh-tight: 1.25;
+    --lh: 1.55;
+
+    /* ── Elevation ─────────────────────────────────────────────────────────── */
+    --shadow-1: 0 2px 8px -2px rgb(0 0 0 / 0.4);
+    --shadow-2: 0 10px 30px -12px rgb(0 0 0 / 0.55);
+    --shadow-3: 0 30px 70px -30px rgb(0 0 0 / 0.85);
+    --shadow-accent: 0 10px 30px -12px var(--accent-glow);
+
+    /* ── Motion ────────────────────────────────────────────────────────────── */
+    --ease: cubic-bezier(0.2, 0.8, 0.3, 1);
+    --dur-fast: 120ms;
+    --dur: 180ms;
+    --dur-slow: 280ms;
+
+    /* ── Focus ─────────────────────────────────────────────────────────────── */
+    /* One ring, applied globally in base.css. A component that wants a different focus
+       style is almost always a component that is about to become inaccessible. */
+    --focus-ring: 0 0 0 3px rgb(var(--accent-rgb) / 0.4);
+    --focus-line: var(--accent-hi);
+
+    /* ── Z-index ladder ────────────────────────────────────────────────────── */
+    /* Named rungs only. A literal z-index anywhere else means two components are about
+       to fight over a number nobody can reason about. */
+    --z-below: -1;      /* the animated background */
+    --z-base: 0;
+    --z-raised: 10;     /* content above the background */
+    --z-sticky: 100;    /* day separators, column headers */
+    --z-popover: 300;   /* hover cards, tooltips */
+    --z-menu: 400;      /* context and dropdown menus */
+    --z-modal: 500;     /* settings, dialogs */
+    --z-toast: 600;     /* transient notices */
+    --z-drag: 700;      /* whatever is under the cursor during a drag */
+
+    /* ── Shell geometry ────────────────────────────────────────────────────── */
+    --rail-w: 66px;
+    --sidebar-w: 302px;
+    --members-w: 288px;
+    --titlebar-h: 46px;
+    /* Beyond this the message column stops growing. At 4K an uncapped column produces
+       3,000-pixel lines, which is unreadable however good the typography is. */
+    --reading-max: 1180px;
+
+    --avatar-sm: 26px;
+    --avatar: 34px;
+    --avatar-lg: 42px;
+}

@@ -4,6 +4,12 @@
 // itself is the next piece of work: the previous client's 13,700 lines get brought across
 // as modules behind the same platform adapter used here.
 
+// The stylesheet is imported here rather than linked from the HTML so that it travels
+// through the module graph: vite then hashes it into the build and hot-reloads it in
+// development. A bare <link> to a source .css is served as a JS module by the dev
+// server and silently applies no rules at all.
+import './styles.css';
+
 import { createAuth } from './auth/index.js';
 import { platform, VERSION } from './platform/index.js';
 import { activeServer } from './server/store.js';

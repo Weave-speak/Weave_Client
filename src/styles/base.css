@@ -1,0 +1,77 @@
+/* Reset, typography and the rules that apply everywhere.
+ *
+ * Deliberately short. A large reset is a sign the component styles are fighting the
+ * browser rather than working with it.
+ */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+    height: 100%;
+    margin: 0;
+}
+
+body {
+    background: var(--bg-void);
+    color: var(--ink);
+    font: var(--t-md) / var(--lh) var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    /* The app owns its own scrolling regions. If the page itself ever scrolls, a column
+       has failed to constrain itself and the layout is broken — better to see that than
+       to have the whole window drift sideways. */
+    overflow: hidden;
+}
+
+button, input, select, textarea {
+    font: inherit;
+    color: inherit;
+}
+
+button { background: none; border: none; padding: 0; cursor: pointer; }
+
+/* One focus ring, everywhere, and only for keyboard use.
+ *
+ * Applied here rather than per component: the components that forget are exactly the
+ * ones nobody tabs through while building them. */
+:focus { outline: none; }
+:focus-visible {
+    outline: 2px solid var(--focus-line);
+    outline-offset: 2px;
+    border-radius: var(--r-1);
+}
+
+/* A scrollbar that belongs to this app rather than to Windows. */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+}
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+    background: var(--line-strong);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: var(--r-pill);
+}
+*::-webkit-scrollbar-thumb:hover { background-clip: padding-box; }
+
+/* Visible only to a screen reader. Used for headings that the design conveys by grouping
+   and position rather than by text. */
+.sr-only {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+.boot { display: grid; place-items: center; height: 100%; color: var(--ink-dim); }
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}

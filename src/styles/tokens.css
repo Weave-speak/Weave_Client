@@ -108,6 +108,8 @@
     --shadow-2: 0 10px 30px -12px rgb(0 0 0 / 0.55);
     --shadow-3: 0 30px 70px -30px rgb(0 0 0 / 0.85);
     --shadow-accent: 0 10px 30px -12px var(--accent-glow);
+    /* Cast upward, for something anchored to the bottom edge. */
+    --shadow-lift: 0 -8px 30px -20px rgb(0 0 0 / 0.9);
 
     /* ── Motion ────────────────────────────────────────────────────────────── */
     --ease: cubic-bezier(0.2, 0.8, 0.3, 1);

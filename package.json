@@ -1,21 +1,43 @@
 {
   "name": "weave-client",
   "version": "0.1.0",
-  "description": "Weave client — one core, three modes",
+  "description": "The Weave client \u2014 self-hosted voice, video and text chat for small groups",
   "license": "MIT",
   "type": "module",
   "private": true,
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite",
+    "dev:desktop": "vite --mode desktop",
     "build": "vite build",
+    "build:desktop": "vite build --mode desktop",
     "preview": "vite preview",
-    "test": "node --test"
+    "test": "node --test",
+    "art": "node scripts/make-installer-art.mjs",
+    "electron:dev": "electron .",
+    "pack": "npm run art && npm run build:desktop && electron-builder --win --publish never",
+    "release": "npm run art && npm run build:desktop && electron-builder --win --publish always"
   },
   "dependencies": {
+    "electron-log": "5.4.4",
+    "electron-updater": "6.8.9",
     "mediasoup-client": "^3.22.0"
   },
   "devDependencies": {
+    "electron": "43.4.1",
+    "electron-builder": "26.15.7",
     "vite": "^8.2.2"
-  }
+  },
+  "author": {
+    "name": "The Weave contributors"
+  },
+  "homepage": "https://github.com/Weave-speak/Weave_Client",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Weave-speak/Weave_Client.git"
+  },
+  "main": "electron/main.js",
+  "productName": "Weave"
 }

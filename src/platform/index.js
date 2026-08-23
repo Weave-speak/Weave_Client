@@ -62,12 +62,12 @@ export function createStorage(scope) {
  * "stay signed in" is a desktop-only option.
  */
 function memoryTokenStore() {
-    let token = null;
+    const held = new Map();
     return {
         available: false,
-        async get() { return token; },
-        async set(value) { token = value; },
-        async clear() { token = null; },
+        async get(serverId) { return held.get(String(serverId)) ?? null; },
+        async set(serverId, token) { held.set(String(serverId), token); return false; },
+        async clear(serverId) { held.delete(String(serverId)); return false; },
     };
 }
 
@@ -88,9 +88,27 @@ export function noteOriginIsWeave(value) {
     originIsWeave = value === true;
 }
 
+/**
+ * Updates.
+ *
+ * A browser build is updated by reloading the page, so there is nothing to report and
+ * nothing to install. It says so rather than throwing: the login screen asks about update
+ * state on every boot, and a capability that throws when absent turns "no updater here"
+ * into an error the user has to see.
+ */
+const noUpdates = {
+    available: false,
+    async state() { return { status: 'unsupported' }; },
+    async install() { return false; },
+    onChange() { return () => {}; },
+};
+
 const browserPlatform = {
     target: 'browser',
     version: VERSION,
+
+    updates: noUpdates,
+    diagnostics: { available: false, async read() { return null; }, async openFolder() {} },
 
     // The server that served this page. Not configurable and not presented as if it were —
     // but only once it has actually answered as a Weave server.
@@ -121,6 +139,16 @@ const desktopPlatform = {
     tokens: (typeof window !== 'undefined' && window.weaveNative?.tokens)
         ? window.weaveNative.tokens
         : memoryTokenStore(),
+
+    // Present only when the Electron bridge is. Running the desktop UI in a plain browser
+    // during development is a supported thing to do, and it must not explode.
+    updates: (typeof window !== 'undefined' && window.weaveNative?.updates)
+        ? { available: true, ...window.weaveNative.updates }
+        : noUpdates,
+
+    diagnostics: (typeof window !== 'undefined' && window.weaveNative?.diagnostics)
+        ? { available: true, ...window.weaveNative.diagnostics }
+        : { available: false, async read() { return null; }, async openFolder() {} },
 };
 
 export const platform = isDesktop ? desktopPlatform : browserPlatform;

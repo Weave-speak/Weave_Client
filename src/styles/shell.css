@@ -795,3 +795,77 @@
     .rail { display: none; }
     .timeline-inner, .composer-wrap { padding-left: var(--s-3); padding-right: var(--s-3); }
 }
+
+/* ── Update bar ───────────────────────────────────────────────────────────── */
+
+/* Pinned to the bottom of the window, above everything except a modal. The login screen
+   stays fully usable while this runs — updating is something the app does alongside you,
+   not a wall you wait behind. */
+.update-bar {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    z-index: var(--z-toast);
+    background: var(--surface-1);
+    border-top: 1px solid var(--line);
+    box-shadow: var(--shadow-lift);
+}
+.update-bar[hidden] { display: none; }
+
+.update-track {
+    height: 3px;
+    background: var(--line-soft);
+    overflow: hidden;
+}
+.update-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent-hi));
+    transition: width var(--dur) var(--ease);
+}
+
+/* A differential update copies unchanged blocks and emits no progress while it does. A
+   percentage frozen for twenty seconds reads as broken; this reads as busy. */
+.update-fill.indeterminate {
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        var(--accent) 35%,
+        var(--accent-hi) 50%,
+        var(--accent) 65%,
+        transparent 100%);
+    background-size: 40% 100%;
+    background-repeat: no-repeat;
+    animation: update-sweep 1.4s infinite linear;
+}
+@keyframes update-sweep {
+    from { background-position: -40% 0; }
+    to { background-position: 140% 0; }
+}
+
+.update-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-2) var(--s-5);
+    font-size: var(--t-base);
+    color: var(--ink-dim);
+}
+.update-text { flex: 1; min-width: 0; }
+.update-detail { font-variant-numeric: tabular-nums; color: var(--ink-faint); flex: none; }
+
+.update-action {
+    flex: none;
+    padding: 5px var(--s-3);
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    background: var(--surface-3);
+    color: var(--ink);
+    font-size: var(--t-sm);
+    font-weight: 550;
+}
+.update-action:hover:not(:disabled) { border-color: var(--accent); }
+.update-action:disabled { opacity: 0.5; }
+
+/* An update that failed is worth noticing, but the app still works — so this is a notice,
+   not an alarm. */
+.update-bar.failed { border-top-color: rgb(var(--warn-rgb) / 0.4); }
+.update-bar.failed .update-text { color: var(--warn); }

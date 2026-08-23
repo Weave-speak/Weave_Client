@@ -11,3 +11,7 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# Packaging output. The installer is published to GitHub Releases, not committed.
+release/
+build/*.bmp

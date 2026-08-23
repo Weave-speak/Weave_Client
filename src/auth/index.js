@@ -159,7 +159,9 @@ export function createAuth({ mount, onSignedIn }) {
                 const api = apiFor(server().origin);
                 const result = await api.login(username, password);
                 api.setToken(result.token);
-                await platform.tokens.set(result.token).catch(() => {});
+                // Scoped to this server: a client that can reach several must never carry one
+                // server's credentials to another.
+                await platform.tokens.set(current.id, result.token).catch(() => {});
                 onSignedIn({ api, user: result.user, token: result.token, server: server(), autoJoin });
             } catch (err) {
                 setBusy(button, false);
@@ -220,7 +222,9 @@ export function createAuth({ mount, onSignedIn }) {
                 const api = apiFor(server().origin);
                 const result = await api.register(payload);
                 api.setToken(result.token);
-                await platform.tokens.set(result.token).catch(() => {});
+                // Scoped to this server: a client that can reach several must never carry one
+                // server's credentials to another.
+                await platform.tokens.set(current.id, result.token).catch(() => {});
                 onSignedIn({ api, user: result.user, token: result.token, server: server(), autoJoin: true });
             } catch (err) {
                 setBusy(button, false);

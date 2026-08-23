@@ -14,6 +14,7 @@ import { createAuth } from './auth/index.js';
 import { platform, VERSION, noteOriginIsWeave } from './platform/index.js';
 import { activeServer } from './server/store.js';
 import { discover, OUTCOME } from './server/discover.js';
+import { createUpdateBanner } from './updates/banner.js';
 import { displayAddress } from './server/address.js';
 import { $, html, safe } from './ui/dom.js';
 
@@ -74,9 +75,45 @@ async function locateServer() {
     noteOriginIsWeave(found.outcome === OUTCOME.OK);
 }
 
+/**
+ * Send an update failure to the server the user is configured against.
+ *
+ * Deliberately to THEIR server, not to us. This is self-hosted software: the person who
+ * can act on a broken update is whoever runs the server, and shipping diagnostics to a
+ * third party by default is not a thing a self-hosted app should do.
+ *
+ * Returns false rather than throwing — the caller is a button, and a rejected promise
+ * there just becomes an unhandled rejection nobody sees.
+ */
+async function sendDiagnostics(report) {
+    const server = activeServer();
+    if (!server || !report?.text) return false;
+    try {
+        const response = await fetch(`${server.origin}/api/diagnostics`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            credentials: 'omit',
+            body: JSON.stringify({
+                kind: 'update-failure',
+                client: { version: VERSION, target: platform.target },
+                log: report.text,
+            }),
+        });
+        return response.ok;
+    } catch {
+        // The most likely reason an update failed is that the network is unavailable, which
+        // is also the most likely reason this cannot be sent. The log is still on disk.
+        return false;
+    }
+}
+
 async function boot() {
     app.innerHTML = '';
     app.append(html(shell()));
+
+    // Mounted before anything else, so an update that started at launch is already visible
+    // while the server probe runs. It reports nothing when there is nothing to report.
+    createUpdateBanner({ onSendDiagnostics: sendDiagnostics });
 
     // Rendered before the probe so a slow or unreachable origin shows something rather than
     // an empty window.

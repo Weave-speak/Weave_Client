@@ -1,6 +1,6 @@
 {
   "name": "weave-client",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "The Weave client — self-hosted voice, video and text chat for small groups",
   "license": "MIT",
   "type": "module",
@@ -19,7 +19,8 @@
     "electron:dev": "electron .",
     "pack": "npm run art && npm run build:desktop && electron-builder --win --publish never",
     "release": "npm run art && npm run build:desktop && electron-builder --win --publish always",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "predict-delta": "node scripts/predict-delta.mjs"
   },
   "dependencies": {
     "electron-log": "5.4.4",

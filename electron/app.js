@@ -179,6 +179,10 @@ const toRenderer = (channel, payload) => {
 
 let updateState = { status: 'idle' };
 
+/** Bytes actually pulled over the wire this update, for the differential check below. */
+let transferred = 0;
+let expectedFullSize = null;
+
 function setUpdateState(next) {
     updateState = next;
     toRenderer('weave:update', next);
@@ -202,23 +206,54 @@ function startUpdateCheck() {
     // with — which looks exactly like a broken updater and is much harder to diagnose.
     autoUpdater.allowPrerelease = true;
 
+    // We ship a single self-contained installer, not the two-part web installer. Saying so
+    // silences a warning on every check and locks in the behaviour before the default
+    // flips in a later release.
+    autoUpdater.disableWebInstaller = true;
+
+    // Differential download stays ON. It is what makes an update a megabyte instead of a
+    // hundred: the updater fetches only the blocks that changed, using HTTP range requests
+    // against the previous installer cached at
+    // %LOCALAPPDATA%/<updaterCacheDirName>/installer.exe. There is no baseline to diff
+    // against on the first update after a fresh install, so that one is always full.
+    autoUpdater.disableDifferentialDownload = false;
+
     autoUpdater.on('checking-for-update', () => setUpdateState({ status: 'checking' }));
     autoUpdater.on('update-not-available', () => setUpdateState({ status: 'current' }));
 
-    autoUpdater.on('update-available', (info) =>
-        setUpdateState({ status: 'downloading', version: info?.version ?? null, percent: 0 }));
+    autoUpdater.on('update-available', (info) => {
+        transferred = 0;
+        expectedFullSize = null;
+        setUpdateState({ status: 'downloading', version: info?.version ?? null, percent: 0 });
+    });
 
-    autoUpdater.on('download-progress', (p) => setUpdateState({
-        status: 'downloading',
-        version: updateState.version ?? null,
-        percent: Math.round(p?.percent ?? 0),
-        bytesPerSecond: Math.round(p?.bytesPerSecond ?? 0),
-        transferred: p?.transferred ?? 0,
-        total: p?.total ?? 0,
-    }));
+    autoUpdater.on('download-progress', (p) => {
+        transferred = p?.transferred ?? transferred;
+        if (p?.total) expectedFullSize = p.total;
+        setUpdateState({
+            status: 'downloading',
+            version: updateState.version ?? null,
+            percent: Math.round(p?.percent ?? 0),
+            bytesPerSecond: Math.round(p?.bytesPerSecond ?? 0),
+            transferred,
+            total: p?.total ?? 0,
+        });
+    });
 
-    autoUpdater.on('update-downloaded', (info) =>
-        setUpdateState({ status: 'ready', version: info?.version ?? null }));
+    autoUpdater.on('update-downloaded', (info) => {
+        // Whether the delta actually worked is otherwise a matter of faith. This line turns
+        // it into a number: a differential update transfers a fraction of the installer,
+        // a full one transfers all of it.
+        const full = info?.files?.[0]?.size ?? expectedFullSize;
+        updaterLog.info('Update downloaded', {
+            version: info?.version ?? null,
+            transferredBytes: transferred,
+            fullInstallerBytes: full ?? null,
+            differential: full ? transferred < full * 0.9 : null,
+            savedPercent: full ? Number((100 - (transferred / full) * 100).toFixed(1)) : null,
+        });
+        setUpdateState({ status: 'ready', version: info?.version ?? null });
+    });
 
     autoUpdater.on('error', (err) => {
         // An update that fails must never stop the app starting. The user still signs in;
@@ -259,7 +294,18 @@ function registerBridge() {
 
     ipcMain.handle('weave:update.install', () => {
         if (updateState.status !== 'ready') return false;
-        autoUpdater.quitAndInstall();
+        // Both arguments matter, and the bare call gets both wrong.
+        //
+        //   isSilent = true         no NSIS progress window flashing up. The default is
+        //                           false, which shows one - and the update is already
+        //                           downloaded and verified, so there is nothing for that
+        //                           window to tell anyone.
+        //   isForceRunAfter = true  come back afterwards. Without it the app quits, installs
+        //                           and stays quit, which reads as a crash.
+        //
+        // The quit-time path (autoInstallOnAppQuit) is silent already; this is the path
+        // taken when somebody presses Restart now.
+        autoUpdater.quitAndInstall(true, true);
         return true;
     });
 

@@ -4,6 +4,22 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-08-23
+
+### Fixed
+- Pressing "Restart now" for an update showed an installer progress window and then left
+  the app closed. `quitAndInstall()` defaults to a visible install and to not relaunching;
+  both are now set explicitly. The quit-time path was already silent.
+
+### Added
+- `scripts/predict-delta.mjs`, which reports how large the next update will actually be by
+  comparing two blockmaps, and fails a release if the delta exceeds 10% — the signal that
+  something recompressed the payload rather than that the code changed a lot.
+- The updater now logs how many bytes it actually transferred against the full installer
+  size, so whether a differential update worked is a number rather than an assumption.
+- `docs/releasing.md`, including the four pipeline rules that silently turn every user's
+  next update into a full download.
+
 ## [0.1.1] - 2026-08-23
 
 ### Fixed

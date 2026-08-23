@@ -194,7 +194,12 @@ export function createRoom({ mount, api, link, user, server, onSignedOut }) {
      */
     async function startVoice(frame) {
         const channel = frame.channel;
-        if (frame.type === 'moved') await voice.onMoved(frame.rtpCapabilities);
+        if (frame.type === 'moved') {
+            await voice.onMoved({
+                rtpCapabilities: frame.rtpCapabilities,
+                mediaReset: frame.mediaReset === true,
+            });
+        }
         if (!frame.rtpCapabilities) return;
 
         await voice.start(frame.rtpCapabilities);

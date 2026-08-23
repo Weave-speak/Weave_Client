@@ -234,8 +234,14 @@ export function createVoice({ link, onChange = () => {}, onLevels = () => {} } =
         if (micProducer) return micProducer;
 
         await ensureSend();
-        const track = await openMicrophone();
-        micMeter = meterFor(micStream, 'self');
+
+        // Reuse the open track where there is one. After a cross-worker move the producer
+        // and transports are gone but the microphone is not, and calling getUserMedia again
+        // is both a needless permission round trip and a chance to be handed a different
+        // device than the one already in use.
+        const existing = micStream?.getAudioTracks?.().find((t) => t.readyState === 'live');
+        const track = existing ?? await openMicrophone();
+        micMeter ??= meterFor(micStream, 'self');
 
         micProducer = await sendTransport.produce({
             track,
@@ -467,10 +473,36 @@ export function createVoice({ link, onChange = () => {}, onLevels = () => {} } =
             }
         },
 
-        /** A move puts us on a different router; every consumer belongs to the old one. */
-        async onMoved(rtpCapabilities) {
+        /**
+         * A move happened. Consumers always die; the rest depends on the server.
+         *
+         * Consumers belong to the old channel's router either way, so they go regardless.
+         * Transports and producers only have to go when the server says `mediaReset`, which
+         * it does when the new channel is served by a different worker — and therefore a
+         * different router, on which our producer would sit unheard and our receive
+         * transport would be deaf. On a single-worker server, which is the default, this is
+         * never set and a move costs nothing.
+         *
+         * Rebuilding is left to the caller: it happens as part of bringing voice up for the
+         * new room, so the microphone is opened once rather than closed and reopened.
+         */
+        async onMoved({ rtpCapabilities, mediaReset = false } = {}) {
             for (const id of [...consumers.keys()]) dropConsumer(id);
-            if (rtpCapabilities && !device?.loaded) {
+
+            if (mediaReset) {
+                try { micProducer?.close(); } catch { /* already closed */ }
+                micProducer = null;
+                try { sendTransport?.close(); } catch { /* already closed */ }
+                try { recvTransport?.close(); } catch { /* already closed */ }
+                sendTransport = null;
+                recvTransport = null;
+
+                // The microphone track itself is kept. It is still a perfectly good track,
+                // the permission is already granted, and reopening it risks coming back
+                // with a different device.
+            }
+
+            if (rtpCapabilities && device && !device.loaded) {
                 await device.load({ routerRtpCapabilities: rtpCapabilities });
             }
         },

@@ -70,6 +70,11 @@ The dev server runs on its own origin and talks to a real Weave server cross-ori
 the same path the desktop build takes in production. That is deliberate: it exercises
 CORS during development instead of discovering it at release.
 
+Either command reaches a working sign-in. The browser build probes its own origin at boot,
+finds vite rather than a Weave server, and offers the server screen — the same one the
+desktop build opens on. In production, where a Weave server serves the page, that probe
+succeeds and no server management appears at all.
+
 ## Build
 
 ```bash

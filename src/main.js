@@ -11,8 +11,9 @@
 import './styles.css';
 
 import { createAuth } from './auth/index.js';
-import { platform, VERSION } from './platform/index.js';
+import { platform, VERSION, noteOriginIsWeave } from './platform/index.js';
 import { activeServer } from './server/store.js';
+import { discover, OUTCOME } from './server/discover.js';
 import { displayAddress } from './server/address.js';
 import { $, html, safe } from './ui/dom.js';
 
@@ -55,9 +56,32 @@ function refreshServerPill() {
     pill.title = server ? `${server.label} · ${server.origin}` : 'No server selected yet';
 }
 
-function boot() {
+/**
+ * Find out whether the page we are running in was served by a Weave server.
+ *
+ * Only the browser build needs to ask. A desktop app ships blank and always chooses.
+ *
+ * The answer decides whether server management exists at all: served BY Weave means the
+ * origin is the server and there is nothing to choose, while served by anything else means
+ * the app must ask, because a login form aimed at a server that cannot answer is a dead end
+ * with no way out of it.
+ */
+async function locateServer() {
+    if (platform.target !== 'browser') return;
+
+    const origin = platform.defaultOrigin();
+    const found = await discover(origin);
+    noteOriginIsWeave(found.outcome === OUTCOME.OK);
+}
+
+async function boot() {
     app.innerHTML = '';
     app.append(html(shell()));
+
+    // Rendered before the probe so a slow or unreachable origin shows something rather than
+    // an empty window.
+    $('#stage').innerHTML = '<p class="boot-note">Looking for a server…</p>';
+    await locateServer();
 
     const auth = createAuth({
         mount: $('#stage'),
@@ -82,9 +106,9 @@ function boot() {
     });
 
     const route = () => location.hash.replace('#/', '') || 'signin';
-    const show = () => { auth.show(route()); refreshServerPill(); };
+    const show = async () => { await auth.show(route()); refreshServerPill(); };
 
-    show();
+    await show();
     window.addEventListener('hashchange', show);
     // Adding or switching a server does not change the hash, so navigation alone is not a
     // sufficient signal — the store says when it happened.

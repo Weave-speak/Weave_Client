@@ -63,6 +63,7 @@ export function createAuth({ mount, onSignedIn }) {
                     list: listServers(),
                     activeId: server()?.id ?? null,
                     firstRun: listServers().length === 0,
+                    servedElsewhere: platform.target === 'browser',
                 }));
                 break;
             case 'signin':

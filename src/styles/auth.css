@@ -70,6 +70,9 @@
     padding: var(--s-7) var(--s-5) var(--s-9);
 }
 
+/* Shown while the browser build works out whether its own origin is a Weave server. */
+.boot-note { color: var(--ink-faint); font-size: var(--t-base); }
+
 /* ── Card ─────────────────────────────────────────────────────────────────── */
 
 .card {

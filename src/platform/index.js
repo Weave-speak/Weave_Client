@@ -71,12 +71,32 @@ function memoryTokenStore() {
     };
 }
 
+/**
+ * Whether the origin that served this page is itself a Weave server. `null` until checked.
+ *
+ * The browser build normally inherits its server from wherever it was served, and that is
+ * the right default — it is the only server such a page can reach. But the assumption is
+ * not guaranteed. A development server, a static host, or a misconfigured deployment can
+ * all serve this page without being a Weave server at all, and when that happens the app
+ * would otherwise show a sign-in form aimed at something that cannot answer, with no way to
+ * point it anywhere else. That is a dead end, so the build asks rather than assuming.
+ */
+let originIsWeave = null;
+
+/** Recorded once at boot, after the browser build probes its own origin. */
+export function noteOriginIsWeave(value) {
+    originIsWeave = value === true;
+}
+
 const browserPlatform = {
     target: 'browser',
     version: VERSION,
 
-    // The server that served this page. Not configurable, and not presented as if it were.
-    canChooseServer: false,
+    // The server that served this page. Not configurable and not presented as if it were —
+    // but only once it has actually answered as a Weave server.
+    get canChooseServer() { return originIsWeave === false; },
+    /** true, false, or null while the probe is still in flight. */
+    get servedByWeave() { return originIsWeave; },
     defaultOrigin: () => window.location.origin,
 
     tokens: memoryTokenStore(),
@@ -89,7 +109,10 @@ const browserPlatform = {
 const desktopPlatform = {
     ...browserPlatform,
     target: 'desktop',
+    // A desktop app ships blank: there is no origin to inherit, so there is nothing to probe
+    // and the answer is always yes.
     canChooseServer: true,
+    servedByWeave: false,
     defaultOrigin: () => null,
 
     // Replaced at runtime by the Electron preload bridge when it is present. Until the

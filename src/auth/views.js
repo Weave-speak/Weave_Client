@@ -237,16 +237,26 @@ export function forgotReset({ username, questionId, answer }) {
     </form>`;
 }
 
-/** Desktop only: the first thing a blank app shows, and the gear panel afterwards. */
-export function servers({ list = [], activeId = null, firstRun = false } = {}) {
+/**
+ * The first thing a blank app shows, and the gear panel afterwards.
+ *
+ * Usually desktop only. The browser build reaches it in one case: the page was not served
+ * by a Weave server, so there is no origin to inherit and the app has to ask.
+ */
+export function servers({ list = [], activeId = null, firstRun = false, servedElsewhere = false } = {}) {
+    // Saying WHY turns a surprising screen into an explained one. Without this line, a
+    // browser user who expected to land on a login form just sees the wrong screen.
+    const lead = !firstRun
+        ? 'Add another server, or switch between the ones you use.'
+        : servedElsewhere
+            ? 'This page wasn\'t served by a Weave server, so it can\'t sign you in on its own. '
+              + 'Enter the address of the server you want to use.'
+            : 'Weave doesn\'t run in the cloud. Point this app at the server your crew uses.';
+
     return `
     <form class="card auth-card" id="serversForm" novalidate>
       <h1>${firstRun ? 'Connect to a server' : 'Servers'}</h1>
-      <p class="lead-sub">
-        ${firstRun
-        ? 'Weave doesn\'t run in the cloud. Point this app at the server your crew uses.'
-        : 'Add another server, or switch between the ones you use.'}
-      </p>
+      <p class="lead-sub">${esc(lead)}</p>
 
       <div class="form-message"></div>
 

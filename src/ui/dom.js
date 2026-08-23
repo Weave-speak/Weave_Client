@@ -8,6 +8,24 @@
 export const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+/**
+ * A template tag that escapes every interpolated value.
+ *
+ *     el.innerHTML = safe`<strong>${server.name}</strong>`;
+ *
+ * Prefer this over remembering to call `esc()` at each hole, because the rule that gets
+ * forgotten is the rule that bites. This client shipped with a server's own name
+ * interpolated raw into innerHTML on the add-server screen — a screen reached by TYPING AN
+ * ADDRESS, which is to say before the user has decided to trust that host at all. Any host
+ * could therefore run script in the client of anyone who typed its address, and in the
+ * desktop build that script sits behind a native bridge.
+ *
+ * Structure comes from the literal parts, which we wrote. Only the holes are escaped, so
+ * markup still works and content can never become structure.
+ */
+export const safe = (strings, ...values) =>
+    strings.reduce((out, part, i) => out + part + (i < values.length ? esc(values[i]) : ''), '');
+
 export const $ = (selector, root = document) => root.querySelector(selector);
 export const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 

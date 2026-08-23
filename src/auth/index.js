@@ -18,7 +18,7 @@ import {
     listServers, activeServer, setActive, rememberServer, forgetServer, getServer,
 } from '../server/store.js';
 import {
-    $, $$, on, html, clearErrors, setFieldError, setFormMessage, setBusy, passwordStrength,
+    $, $$, on, html, safe, clearErrors, setFieldError, setFormMessage, setBusy, passwordStrength,
 } from '../ui/dom.js';
 
 export function createAuth({ mount, onSignedIn }) {
@@ -387,8 +387,8 @@ export function createAuth({ mount, onSignedIn }) {
             if (found.outcome !== OUTCOME.OK) {
                 result.hidden = false;
                 result.className = 'server-result bad';
-                result.innerHTML = `<strong>${found.message}</strong>${
-                    found.detail ? `<span>${found.detail}</span>` : ''}`;
+                result.innerHTML = safe`<strong>${found.message}</strong>`
+                    + (found.detail ? safe`<span>${found.detail}</span>` : '');
                 return;
             }
 
@@ -397,9 +397,11 @@ export function createAuth({ mount, onSignedIn }) {
             const record = rememberServer(found);
             result.hidden = false;
             result.className = 'server-result ok';
+            // Every value below is chosen by the server we have only just met. It names
+            // itself, and a name is content, never structure.
             result.innerHTML =
-                `<strong>${found.info.instance.name}</strong>`
-                + `<span>version ${found.info.version} · `
+                safe`<strong>${found.info.instance.name}</strong>`
+                + safe`<span>version ${found.info.version} · `
                 + `${found.info.instance.registration === 'invite_only' ? 'invite only' : 'open registration'}</span>`;
 
             cachedQuestions = null;

@@ -8,7 +8,7 @@ import { createAuth } from './auth/index.js';
 import { platform, VERSION } from './platform/index.js';
 import { activeServer } from './server/store.js';
 import { displayAddress } from './server/address.js';
-import { $, html } from './ui/dom.js';
+import { $, html, safe } from './ui/dom.js';
 
 const app = $('#app');
 
@@ -58,7 +58,9 @@ function boot() {
         onSignedIn({ user, server }) {
             // The room is the next piece. Landing here proves the whole chain works:
             // address -> discovery -> protocol negotiation -> login -> token.
-            $('#stage').innerHTML = `
+            // A display name is chosen by a person and relayed by a server. Both are
+            // outside our control, so both are content rather than markup.
+            $('#stage').innerHTML = safe`
               <div class="card auth-card">
                 <h1>Signed in</h1>
                 <p class="lead-sub">

@@ -71,16 +71,29 @@ export function createRoomState({ me = null, server = {} } = {}) {
         }).sort((a, b) => (a.displayName ?? a.username).localeCompare(b.displayName ?? b.username));
     }
 
-    /** Occupants of one channel, in the order they arrived. */
+    /**
+     * Occupants of one channel, one row per PERSON.
+     *
+     * Deduplicated by user, for the same reason the member list is: somebody signed in on
+     * two machines is in the room once, not twice. Mapping peers straight to rows shows
+     * them twice, which reads as a bug to everyone who sees it — and it is the one thing a
+     * peer-shaped list gets wrong that a user-shaped one does not.
+     */
     function occupantsOf(channelId) {
         const all = people();
-        return [...state.peers.values()]
-            .filter((p) => p.channelId === channelId)
-            .map((p) => all.find((u) => u.id === p.userId) ?? {
+        const seen = new Set();
+        const here = [];
+
+        for (const peer of state.peers.values()) {
+            if (peer.channelId !== channelId || seen.has(peer.userId)) continue;
+            seen.add(peer.userId);
+            here.push(all.find((u) => u.id === peer.userId) ?? {
                 // A peer whose account we have not loaded yet. Showing the username we do
                 // have beats showing nothing and beats waiting.
-                id: p.userId, username: p.username, displayName: p.displayName, presence: 'live',
+                id: peer.userId, username: peer.username, displayName: peer.displayName, presence: 'live',
             });
+        }
+        return here;
     }
 
     const currentChannel = () => state.channels.find((c) => c.id === state.currentChannelId) ?? null;

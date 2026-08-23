@@ -151,7 +151,48 @@ export function typingLine(names = []) {
       <span>${who} ${verb} typing…</span>`;
 }
 
-export function timeline({ room = {}, items = [], typing = [] } = {}) {
+/**
+ * What voice is doing, when that is worth saying.
+ *
+ * Silent while it works. A status line that reports success on every launch is noise, and
+ * noise is what teaches people not to read the place real problems appear.
+ */
+export function voiceNotice(status = {}) {
+    switch (status.state) {
+        case 'no-mic':
+            return { show: true, tone: 'warn', text: status.message ?? 'Microphone unavailable.' };
+        case 'unavailable':
+            return { show: true, tone: 'quiet', text: status.message ?? 'Voice is off in this room.' };
+        case 'recovering':
+            return {
+                show: true,
+                tone: 'warn',
+                text: `Reconnecting voice… (${status.attempt} of ${status.of})`,
+            };
+        case 'failed':
+            return {
+                show: true,
+                tone: 'bad',
+                text: status.message ?? 'Voice could not be re-established.',
+            };
+        case 'blocked':
+            return {
+                show: true,
+                tone: 'warn',
+                text: 'Click anywhere to let sound play.',
+            };
+        default:
+            return { show: false };
+    }
+}
+
+export const voiceNoticeMarkup = (status) => {
+    const view = voiceNotice(status);
+    if (!view.show) return '';
+    return `<div class="voice-notice ${esc(view.tone)}">${esc(view.text)}</div>`;
+};
+
+export function timeline({ room = {}, items = [], typing = [], voice = {} } = {}) {
     return `
     <main class="room">
       <canvas class="room-bg" id="roomBg" aria-hidden="true"></canvas>
@@ -171,6 +212,8 @@ export function timeline({ room = {}, items = [], typing = [] } = {}) {
           <div class="typing" aria-live="polite">${typingLine(typing)}</div>
         </div>
       </div>
+
+      <div class="voice-notice-slot" id="voiceNotice">${voiceNoticeMarkup(voice)}</div>
 
       <div class="composer-wrap">
         <form class="composer" id="composer">

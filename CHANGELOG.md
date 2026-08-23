@@ -4,6 +4,24 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2026-08-23
+
+### Added
+- Voice. The microphone is produced to the SFU on joining a room that allows it, everyone
+  else's audio is consumed automatically, mute works, and the weaving background's pace is
+  driven by how loud the room actually is.
+- A voice notice above the composer, shown only when there is something to say: a blocked
+  microphone, a room with voice disabled, a recovery in progress, or a give-up.
+
+### Fixed
+- One person signed in on two machines occupied a room twice in the room list, while the
+  member list correctly showed them once.
+
+### Notes
+- Verified against the live server with a synthetic 440 Hz track: produce, forward, consume
+  and play, with the received tone measured at 422 Hz — the same signal, one FFT bin wide.
+- Video and screen share are not wired yet.
+
 ## [0.1.4] - 2026-08-23
 
 ### Added

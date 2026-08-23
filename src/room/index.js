@@ -13,9 +13,10 @@
 import { shell, connection as connectionPill } from './shell.js';
 import { roomGroups, selfBar } from './views/sidebar.js';
 import { memberGroups } from './views/members.js';
-import { messageList, typingLine } from './views/timeline.js';
+import { messageList, typingLine, voiceNoticeMarkup } from './views/timeline.js';
 import { createRoomState } from './state.js';
 import { WeaveBackground } from '../ui/weave-background.js';
+import { createVoice } from '../media/voice.js';
 import { userHue } from '../ui/hue.js';
 import { $, html } from '../ui/dom.js';
 
@@ -33,6 +34,17 @@ export function createRoom({ mount, api, link, user, server, onSignedOut }) {
 
     let background = null;
     let painting = false;
+    let voiceLevels = new Map();
+
+    const voice = createVoice({
+        link,
+        onChange: (status) => {
+            voiceState = status;
+            paint();
+        },
+        onLevels: (levels) => { voiceLevels = levels; },
+    });
+    let voiceState = { state: 'idle' };
 
     /* ── painting ────────────────────────────────────────────────────────── */
 
@@ -72,6 +84,7 @@ export function createRoom({ mount, api, link, user, server, onSignedOut }) {
         setHtml('#membersScroll', memberGroups(view.people, view.room.id));
         setText('#membersCount', `Members — ${view.people.length}`);
         setHtml('.typing', typingLine(view.typing));
+        setHtml('#voiceNotice', voiceNoticeMarkup(voiceState));
         paintConnection(view.connection);
         paintRoomHead(view.room);
         paintMessages(view.items);
@@ -122,12 +135,21 @@ export function createRoom({ mount, api, link, user, server, onSignedOut }) {
         if (!canvas) return;
         background = new WeaveBackground(canvas, {
             getState: () => {
-                const here = state.toShell().rooms.find((r) => r.current)?.occupants ?? [];
+                const view = state.toShell();
+                const here = view.rooms.find((r) => r.current)?.occupants ?? [];
+
+                // The room's pace is how loud it actually is. Favours the loudest speaker
+                // blended with the average, so one person talking quietly in a room of
+                // eight still registers rather than being averaged into silence.
+                const values = here.map((p) => (p.id === view.me.id
+                    ? (voiceLevels.get('self') ?? 0)
+                    : (voiceLevels.get(p.cid) ?? 0)));
+                const loudest = values.length ? Math.max(...values) : 0;
+                const average = values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+
                 return {
                     participants: here.map((p) => ({ id: p.username, hue: userHue(p.username) })),
-                    // Voice levels arrive with the media layer. Until then the room's pace
-                    // comes from how much is being said in text, which is a real signal.
-                    noise: 0,
+                    noise: Math.min(1, Math.max(loudest, average * 1.4)),
                 };
             },
         });
@@ -147,10 +169,60 @@ export function createRoom({ mount, api, link, user, server, onSignedOut }) {
         if (msg.type === 'moved' || msg.type === 'joined') {
             state.apply(msg);
             loadHistory(msg.channel?.id).catch(() => {});
+            startVoice(msg).catch((err) => {
+                voiceState = { state: 'failed', message: err.message };
+                paint();
+            });
+            return;
+        }
+
+        // Media frames first: the voice layer is waiting on specific replies, and a frame it
+        // has claimed is not something the roster needs to see.
+        if (voice.handle(msg)) {
+            state.apply(msg);
             return;
         }
 
         state.apply(msg);
+    }
+
+    /**
+     * Bring voice up for the room we have just entered.
+     *
+     * A move puts us on a different router, so every consumer from the old room is dead and
+     * the whole set has to be rebuilt against whoever is here now.
+     */
+    async function startVoice(frame) {
+        const channel = frame.channel;
+        if (frame.type === 'moved') await voice.onMoved(frame.rtpCapabilities);
+        if (!frame.rtpCapabilities) return;
+
+        await voice.start(frame.rtpCapabilities);
+
+        // Consume everyone already talking before opening our own microphone, so the room
+        // is audible immediately rather than after a permission prompt is answered.
+        for (const peer of frame.peers ?? []) await voice.consumePeer(peer);
+
+        if (channel?.allowVoice === false) {
+            voiceState = { state: 'unavailable', message: `Voice is off in ${channel.name}.` };
+            paint();
+            return;
+        }
+
+        try {
+            await voice.enableMic();
+            voice.setMuted(state.toShell().me.muted);
+        } catch (err) {
+            // A refused microphone is a completely normal thing for someone to do, and the
+            // room still works without one — you can read, type and listen.
+            voiceState = {
+                state: 'no-mic',
+                message: err?.name === 'NotAllowedError'
+                    ? 'Microphone blocked. You can still hear everyone.'
+                    : `Microphone unavailable: ${err.message}`,
+            };
+            paint();
+        }
     }
 
     async function loadHistory(channelId) {
@@ -182,7 +254,11 @@ export function createRoom({ mount, api, link, user, server, onSignedOut }) {
 
             if (event.target.closest('[data-toggle-mic]')) {
                 const me = state.toShell().me;
-                link.send('setMute', { muted: !me.muted, deafened: Boolean(me.deafened) });
+                const next = !me.muted;
+                // Locally first so the button responds immediately, then tell the room. The
+                // server's broadcast is what everyone else sees; this is what we hear.
+                voice.setMuted(next);
+                link.send('setMute', { muted: next, deafened: Boolean(me.deafened) });
                 return;
             }
 
@@ -246,7 +322,7 @@ export function createRoom({ mount, api, link, user, server, onSignedOut }) {
 
     async function start() {
         mount.innerHTML = '';
-        mount.append(html(shell(state.toShell())));
+        mount.append(html(shell({ ...state.toShell(), voice: voiceState })));
         wire();
         startBackground();
 
@@ -272,6 +348,7 @@ export function createRoom({ mount, api, link, user, server, onSignedOut }) {
         start,
         get state() { return state; },
         destroy() {
+            voice.stop();
             background?.destroy();
             link.onEvent = () => {};
             link.onState = () => {};

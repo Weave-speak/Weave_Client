@@ -53,7 +53,7 @@ export function shell(state = {}) {
       <div class="app-body">
         ${rail({ dms: state.dms, inRoom: !state.dmOpen })}
         ${sidebar({ server: state.server, rooms: state.rooms, me: state.me })}
-        ${timeline({ room, items: state.items, typing: state.typing })}
+        ${timeline({ room, items: state.items, typing: state.typing, voice: state.voice })}
         ${members({ people: state.people, roomId: room.id })}
       </div>
     </div>`;

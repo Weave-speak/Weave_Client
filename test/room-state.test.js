@@ -112,6 +112,23 @@ test('one person on two machines is one entry in the member list', () => {
     assert.equal(state.toShell().people.find((p) => p.username === 'kestrel').presence, 'live');
 });
 
+test('one person on two connections occupies a room once', () => {
+    // Found by a live test that opened two sockets for the same account: the room list
+    // showed "Ghostbyte (you)" twice while the member list correctly showed one. A person
+    // is in a room once regardless of how many machines they are signed in on.
+    const state = fresh();
+    state.apply({ type: 'joined', channel: channels[0], self: peer('cid-me', 'u-me', 'ghostbyte'), peers: [] });
+    state.apply({ type: 'peer_joined', peer: peer('cid-me-2', 'u-me', 'ghostbyte') });
+
+    const here = state.toShell().rooms.find((r) => r.id === 'c-hall').occupants;
+    assert.equal(here.length, 1);
+    assert.equal(here[0].username, 'ghostbyte');
+
+    // And closing one of the two does not empty the room.
+    state.apply({ type: 'peer_left', cid: 'cid-me-2' });
+    assert.equal(state.toShell().rooms.find((r) => r.id === 'c-hall').occupants.length, 1);
+});
+
 test('the AFK room reads as away rather than as live', () => {
     const state = fresh();
     state.apply({ type: 'joined', channel: channels[0], self: peer('cid-me', 'u-me', 'ghostbyte'), peers: [] });

@@ -869,3 +869,31 @@
    not an alarm. */
 .update-bar.failed { border-top-color: rgb(var(--warn-rgb) / 0.4); }
 .update-bar.failed .update-text { color: var(--warn); }
+
+/* ── Voice notice ─────────────────────────────────────────────────────────── */
+
+/* Sits between the timeline and the composer, where it is unmissable without covering
+   anything. Absent entirely when voice is simply working. */
+.voice-notice-slot:empty { display: none; }
+.voice-notice {
+    margin: 0 var(--s-5) var(--s-2);
+    padding: var(--s-2) var(--s-3);
+    border-radius: var(--r-2);
+    border: 1px solid;
+    font-size: var(--t-base);
+}
+.voice-notice.quiet {
+    background: var(--surface-2);
+    border-color: var(--line);
+    color: var(--ink-dim);
+}
+.voice-notice.warn {
+    background: rgb(var(--warn-rgb) / 0.1);
+    border-color: rgb(var(--warn-rgb) / 0.35);
+    color: var(--warn);
+}
+.voice-notice.bad {
+    background: var(--bad-soft);
+    border-color: rgb(var(--bad-rgb) / 0.35);
+    color: var(--bad-text);
+}

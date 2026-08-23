@@ -71,6 +71,9 @@ function roomItem(room, me) {
     </li>`;
 }
 
+/** The scrolling room list. Exported so a roster change can replace just this. */
+export const roomGroups = (rooms, me) => groupRooms(rooms).map((g) => group(g, me)).join('');
+
 const group = (g, me) => `
   <section class="room-group">
     <h3 class="room-group-head">
@@ -95,9 +98,11 @@ export function groupRooms(rooms = []) {
 }
 
 /** The bottom bar: who you are, where you are, and the controls you reach for most. */
-function selfBar(me = {}) {
+export function selfBar(me = {}) {
     const inRoom = Boolean(me.roomName);
-    const where = inRoom ? `${me.status ?? 'Here'} · ${me.roomName}` : 'Not in a room';
+    // A null status means the room name says it all on its own.
+    const where = !inRoom ? 'Not in a room'
+        : me.status ? `${me.status} · ${me.roomName}` : me.roomName;
     return `
     <footer class="self-bar">
       <button type="button" class="self-id" data-open-settings aria-label="Your profile and preferences">
@@ -128,7 +133,6 @@ function selfBar(me = {}) {
 }
 
 export function sidebar({ server = {}, rooms = [], me = {} } = {}) {
-    const groups = groupRooms(rooms);
     return `
     <div class="sidebar">
       <header class="sidebar-head">
@@ -146,8 +150,8 @@ export function sidebar({ server = {}, rooms = [], me = {} } = {}) {
         </div>
       </div>
 
-      <div class="room-scroll">${groups.map((g) => group(g, me)).join('')}</div>
+      <div class="room-scroll" id="roomScroll">${roomGroups(rooms, me)}</div>
 
-      ${selfBar(me)}
+      <div id="selfBarSlot">${selfBar(me)}</div>
     </div>`;
 }

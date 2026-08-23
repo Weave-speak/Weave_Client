@@ -15,6 +15,8 @@ import { platform, VERSION, noteOriginIsWeave } from './platform/index.js';
 import { activeServer } from './server/store.js';
 import { discover, OUTCOME } from './server/discover.js';
 import { createUpdateBanner } from './updates/banner.js';
+import { createLink } from './net/link.js';
+import { createRoom } from './room/index.js';
 import { displayAddress } from './server/address.js';
 import { $, html, safe } from './ui/dom.js';
 
@@ -107,6 +109,44 @@ async function sendDiagnostics(report) {
     }
 }
 
+/**
+ * Hand the window over to the room.
+ *
+ * The auth surface and the room do not share a frame: one is a card on a quiet field, the
+ * other is four columns edge to edge. So the room replaces the app element outright rather
+ * than mounting inside the auth shell.
+ */
+function enterRoom({ api, user, token, server }) {
+    const link = createLink({ origin: server.origin, token });
+
+    app.innerHTML = '';
+    const room = createRoom({
+        mount: app,
+        api,
+        link,
+        user,
+        server,
+        onSignedOut() {
+            room.destroy();
+            boot();
+        },
+    });
+
+    room.start().catch((err) => {
+        // Failing to build the room must not leave a blank window with no way out of it.
+        app.innerHTML = safe`
+          <div class="app"><main class="stage">
+            <div class="card auth-card">
+              <h1>Could not open the room</h1>
+              <p class="lead-sub">${err?.message ?? 'Something went wrong.'}</p>
+              <p class="card-foot">Client ${VERSION} · ${platform.target}</p>
+            </div>
+          </main></div>`;
+    });
+
+    link.connect();
+}
+
 async function boot() {
     app.innerHTML = '';
     app.append(html(shell()));
@@ -122,23 +162,8 @@ async function boot() {
 
     const auth = createAuth({
         mount: $('#stage'),
-        onSignedIn({ user, server }) {
-            // The room is the next piece. Landing here proves the whole chain works:
-            // address -> discovery -> protocol negotiation -> login -> token.
-            // A display name is chosen by a person and relayed by a server. Both are
-            // outside our control, so both are content rather than markup.
-            $('#stage').innerHTML = safe`
-              <div class="card auth-card">
-                <h1>Signed in</h1>
-                <p class="lead-sub">
-                  Welcome, ${user.displayName ?? user.username}.
-                  You're connected to ${server?.lastSeen?.name ?? 'this server'}.
-                </p>
-                <p class="card-foot">
-                  The room is the next piece of work. Client ${VERSION} · ${platform.target}
-                </p>
-              </div>`;
-            refreshServerPill();
+        onSignedIn({ api, user, token, server }) {
+            enterRoom({ api, user, token, server });
         },
     });
 

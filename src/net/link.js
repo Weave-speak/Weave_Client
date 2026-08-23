@@ -88,6 +88,13 @@ export function createLink({
 } = {}) {
     const socketUrl = `${normaliseAddress(origin).socket}/ws`;
 
+    // Handlers are held in variables rather than used directly from the parameters, so they
+    // can be replaced after construction. The link is created at sign-in and the room that
+    // consumes its events is created afterwards; without this, assigning link.onEvent later
+    // would set a property nothing reads, and every frame would vanish in silence.
+    let handleEvent = onEvent;
+    let handleState = onState;
+
     let ws = null;
     let state = LINK.IDLE;
     let attempt = 0;
@@ -107,7 +114,7 @@ export function createLink({
     function setState(next, detail = {}) {
         if (state === next && !detail.force) return;
         state = next;
-        onState({ state, rttMs, cid, failure, ...detail });
+        handleState({ state, rttMs, cid, failure, ...detail });
     }
 
     function raw(type, payload = {}) {
@@ -224,7 +231,7 @@ export function createLink({
                 cid = msg.cid ?? null;
                 // The correlation id is worth having even if the join fails, so it is
                 // surfaced before we try.
-                onState({ state, rttMs, cid, failure });
+                handleState({ state, rttMs, cid, failure });
                 raw('join', {
                     token,
                     protocol: { min: CLIENT_PROTOCOL.MIN, max: CLIENT_PROTOCOL.MAX },
@@ -251,7 +258,7 @@ export function createLink({
             case 'error':
                 if (FATAL.has(msg.code)) {
                     giveUp(msg.code, msg.message, msg.detail);
-                    onEvent(msg);
+                    handleEvent(msg);
                     return;
                 }
                 if (msg.code === 'rate_limited') {
@@ -266,7 +273,7 @@ export function createLink({
         }
 
         // Everything else — roster changes, messages, media signalling — belongs upstairs.
-        onEvent(msg);
+        handleEvent(msg);
     }
 
     /** Anything queued during an outage, in order, once. */
@@ -275,6 +282,10 @@ export function createLink({
     }
 
     return {
+        /** Replaceable, because the consumer is built after the link is. */
+        set onEvent(fn) { handleEvent = typeof fn === 'function' ? fn : () => {}; },
+        set onState(fn) { handleState = typeof fn === 'function' ? fn : () => {}; },
+
         get state() { return state; },
         get rttMs() { return rttMs; },
         get cid() { return cid; },

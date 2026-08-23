@@ -127,6 +127,16 @@ const daySeparator = (m) => `<li class="day-sep" role="separator">${esc(m.label)
 
 const RENDERERS = { message, system: systemEvent, day: daySeparator };
 
+/**
+ * The messages, and nothing else.
+ *
+ * Exported so an arriving message replaces only this. Re-rendering the whole column would
+ * take the composer with it, and losing a half-typed message because somebody else said
+ * something is the kind of bug people never forgive.
+ */
+export const messageList = (items = []) =>
+    items.map((m) => (RENDERERS[m.kind] ?? message)(m)).join('');
+
 /** Who is typing, in the phrasing a person would use. */
 export function typingLine(names = []) {
     if (!names.length) return '';
@@ -146,7 +156,7 @@ export function timeline({ room = {}, items = [], typing = [] } = {}) {
     <main class="room">
       <canvas class="room-bg" id="roomBg" aria-hidden="true"></canvas>
 
-      <header class="room-head">
+      <header class="room-head" id="roomHead">
         ${room.private ? icons.lock : icons.speaker}
         <h1>${esc(room.name ?? 'Room')}</h1>
         ${room.topic ? `<span class="room-topic">${esc(room.topic)}</span>` : ''}
@@ -157,9 +167,7 @@ export function timeline({ room = {}, items = [], typing = [] } = {}) {
 
       <div class="timeline" id="timeline" tabindex="0" aria-label="Messages">
         <div class="timeline-inner">
-          <ol class="msg-list">
-            ${items.map((m) => (RENDERERS[m.kind] ?? message)(m)).join('')}
-          </ol>
+          <ol class="msg-list" id="msgList">${messageList(items)}</ol>
           <div class="typing" aria-live="polite">${typingLine(typing)}</div>
         </div>
       </div>

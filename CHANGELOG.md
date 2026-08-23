@@ -4,6 +4,20 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-08-23
+
+### Added
+- The room. Signing in now opens the real four-column application against your server
+  rather than a placeholder: live channel list with occupancy, member list grouped by
+  presence, message history, sending and receiving, room switching, mute, and the animated
+  background driven by whoever is actually in the room with you.
+
+### Notes
+- Users and peers are modelled separately. Users are accounts and come from HTTP; peers are
+  live connections and come from the socket. One person signed in twice is one row in the
+  member list and two peers, which is what stops the ghosts the previous client had.
+- Voice, video and screen share are not wired yet — the room is the frame they mount into.
+
 ## [0.1.3] - 2026-08-23
 
 ### Fixed

@@ -52,17 +52,18 @@ const group = (g) => `
   <h3 class="member-group">${esc(g.label)} — ${esc(g.people.length)}</h3>
   <ul class="member-list">${g.people.map(memberRow).join('')}</ul>`;
 
+/** The grouped list, exported so a presence change can replace just this. */
+export const memberGroups = (people, roomId) =>
+    groupMembers(people, { roomId }).map(group).join('');
+
 export function members({ people = [], roomId = null } = {}) {
-    const groups = groupMembers(people, { roomId });
     return `
     <aside class="members" aria-label="Members">
       <header class="members-head">
-        <span class="members-title">Members — ${esc(people.length)}</span>
+        <span class="members-title" id="membersCount">Members — ${esc(people.length)}</span>
         <button type="button" class="icon-btn" data-members-menu
                 title="Member options" aria-label="Member options">${icons.dots}</button>
       </header>
-      <div class="members-scroll">
-        ${groups.map(group).join('')}
-      </div>
+      <div class="members-scroll" id="membersScroll">${memberGroups(people, roomId)}</div>
     </aside>`;
 }

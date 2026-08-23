@@ -29,6 +29,20 @@ contextBridge.exposeInMainWorld('weaveNative', {
         clear: (serverId) => ipcRenderer.invoke('weave:tokens.clear', String(serverId)),
     },
 
+    /**
+     * Saved sign-in details for the "Remember me" box, held in the OS credential store.
+     *
+     * Separate from tokens: a token expires and can be revoked server-side, a saved password
+     * cannot. Signing out should be able to drop one without the other.
+     */
+    credentials: {
+        available: true,
+        get: (serverId) => ipcRenderer.invoke('weave:credentials.get', String(serverId)),
+        set: (serverId, username, password) =>
+            ipcRenderer.invoke('weave:credentials.set', String(serverId), String(username), String(password)),
+        clear: (serverId) => ipcRenderer.invoke('weave:credentials.clear', String(serverId)),
+    },
+
     updates: {
         /** The current state, for a renderer that mounted after the check began. */
         state: () => ipcRenderer.invoke('weave:update.state'),

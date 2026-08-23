@@ -4,6 +4,25 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-08-23
+
+### Fixed
+- Nothing persisted between launches. The renderer was served from `file://`, which has an
+  opaque origin, and Chromium refuses storage to opaque origins — every `localStorage` call
+  threw. The storage helper catches and returns a fallback by design, so the app silently
+  forgot every server and setting on close. It is now served from a registered `weave://`
+  scheme with a real, secure origin.
+- Pressing Enter on the sign-in form opened server settings instead of signing in. The gear
+  icon is a `<button>` with no `type`, which defaults to `submit`, and it sat above the
+  Sign In button — so Enter fired the first submit control in the form.
+
+### Added
+- A "Remember me next time" box. Credentials go to the OS credential store, encrypted with
+  a key bound to this Windows account, never to a plain file. Saved only after the details
+  have been shown to work, so a typo is not persisted; unticking clears what was saved.
+- The sign-in fields keep what you typed when you visit server settings and come back. In
+  memory for the session only, never stored, cleared on success.
+
 ## [0.1.2] - 2026-08-23
 
 ### Fixed

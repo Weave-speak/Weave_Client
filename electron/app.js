@@ -17,7 +17,7 @@
 // what that server sends back. Treating the window as a general-purpose browser would mean
 // a hostile server could navigate it somewhere and inherit whatever the page can do.
 
-import { app, BrowserWindow, ipcMain, shell, safeStorage, nativeTheme } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, safeStorage, nativeTheme, protocol, net } from 'electron';
 // Both of these are CommonJS. A named import from CJS depends on Node's module lexer
 // spotting the export in compiled output, which is not something to rely on in a process
 // whose only failure mode is a dialog that says "Error". Default-import and destructure.
@@ -28,8 +28,8 @@ import log from 'electron-log/main';
 
 const { autoUpdater } = electronUpdater;
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join, dirname, normalize } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
@@ -52,6 +52,54 @@ const updaterLog = log.create({ logId: 'updater' });
 updaterLog.transports.file.fileName = 'updater.log';
 updaterLog.transports.file.maxSize = 2 * 1024 * 1024;
 autoUpdater.logger = updaterLog;
+
+/* ── serving the renderer ─────────────────────────────────────────────────── */
+
+/**
+ * The app is served from weave://app/ rather than from file://.
+ *
+ * This is not cosmetic. A file:// page has an OPAQUE origin, and Chromium refuses storage
+ * to opaque origins — localStorage throws SecurityError on every call. Our storage helper
+ * catches and returns a fallback, by design, so the failure is completely silent: the app
+ * appears to work, and simply forgets your servers and your settings every time it closes.
+ *
+ * A registered scheme that is `standard` and `secure` gets a real origin, so storage works,
+ * and it brings the rest of a secure context with it. It also removes file:// path handling
+ * from the equation entirely, which is one fewer way to read something we did not intend to
+ * serve.
+ *
+ * This registration MUST happen before the app is ready, which is why it sits at module
+ * scope rather than inside whenReady.
+ */
+const SCHEME = 'weave';
+
+protocol.registerSchemesAsPrivileged([{
+    scheme: SCHEME,
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true },
+}]);
+
+const rendererRoot = join(here, '..', 'dist-electron', 'renderer');
+
+function serveRenderer() {
+    protocol.handle(SCHEME, async (request) => {
+        const { pathname } = new URL(request.url);
+        const target = normalize(join(rendererRoot, decodeURIComponent(pathname)));
+
+        // Nothing outside the renderer directory is servable, whatever the URL claims.
+        // Without this, "weave://app/../../../../secrets" is a file read.
+        if (!target.startsWith(normalize(rendererRoot))) {
+            log.warn({ evt: 'protocol.escape', url: request.url }, 'Blocked a path escaping the renderer root');
+            return new Response('Not found', { status: 404 });
+        }
+
+        try {
+            return await net.fetch(pathToFileURL(target).toString());
+        } catch (err) {
+            log.error({ evt: 'protocol.miss', target, err }, 'Renderer asset could not be served');
+            return new Response('Not found', { status: 404 });
+        }
+    });
+}
 
 /* ── the window ───────────────────────────────────────────────────────────── */
 
@@ -100,7 +148,7 @@ function createWindow() {
         const target = new URL(url);
         const allowed = isDev
             ? target.origin === 'http://localhost:5173'
-            : target.protocol === 'file:';
+            : target.protocol === `${SCHEME}:`;
         if (!allowed) {
             event.preventDefault();
             log.warn({ url }, 'Blocked in-window navigation');
@@ -123,10 +171,7 @@ function createWindow() {
     if (isDev) {
         win.loadURL('http://localhost:5173');
     } else {
-        // Inside the asar this file is at /electron/main.js and the renderer at
-        // /dist-electron/renderer/, so the path is relative to the archive root rather than
-        // to a build output directory that only exists on the machine that built it.
-        win.loadFile(join(here, '..', 'dist-electron', 'renderer', 'index.html'));
+        win.loadURL(`${SCHEME}://app/index.html`);
     }
 
     win.on('closed', () => { win = null; });
@@ -145,31 +190,43 @@ function createWindow() {
  * Tokens are keyed per server. A client that can reach several servers must never carry
  * one server's credentials to another.
  */
-const tokenFile = () => join(app.getPath('userData'), 'tokens.dat');
+const secretFile = (name) => join(app.getPath('userData'), name);
 
-async function readTokens() {
+/**
+ * Read an encrypted store.
+ *
+ * Tokens and saved credentials live in separate files on purpose. They have different
+ * lifetimes and different consequences: a token expires and can be revoked server-side,
+ * whereas a saved password opens the account until it is changed. Signing out should be
+ * able to drop one without touching the other.
+ */
+async function readSecrets(name) {
     try {
-        const blob = await readFile(tokenFile());
+        const blob = await readFile(secretFile(name));
         if (!safeStorage.isEncryptionAvailable()) return {};
         return JSON.parse(safeStorage.decryptString(blob));
     } catch {
-        // Missing, corrupt, or written by a different OS user. All three mean "no tokens",
-        // and all three are recovered from by signing in again.
+        // Missing, corrupt, or written by a different OS user. All three mean "nothing
+        // saved", and all three are recovered from by signing in again.
         return {};
     }
 }
 
-async function writeTokens(map) {
+async function writeSecrets(name, map) {
     if (!safeStorage.isEncryptionAvailable()) {
-        // Refusing is the right answer. Writing plaintext tokens to disk because the OS
-        // keyring is unavailable would silently downgrade the guarantee the user was given.
-        log.warn('OS encryption unavailable; not persisting tokens');
+        // Refusing is the right answer. Writing a plaintext password to disk because the OS
+        // keyring is unavailable would silently downgrade the guarantee the user was given
+        // when they ticked the box.
+        log.warn({ evt: 'secrets.unavailable', store: name }, 'OS encryption unavailable; not persisting');
         return false;
     }
-    await mkdir(dirname(tokenFile()), { recursive: true });
-    await writeFile(tokenFile(), safeStorage.encryptString(JSON.stringify(map)), { mode: 0o600 });
+    await mkdir(dirname(secretFile(name)), { recursive: true });
+    await writeFile(secretFile(name), safeStorage.encryptString(JSON.stringify(map)), { mode: 0o600 });
     return true;
 }
+
+const readTokens = () => readSecrets('tokens.dat');
+const writeTokens = (map) => writeSecrets('tokens.dat', map);
 
 /* ── updates ──────────────────────────────────────────────────────────────── */
 
@@ -290,6 +347,32 @@ function registerBridge() {
         return writeTokens(map);
     });
 
+    /**
+     * Saved sign-in details, for the "Remember me" box.
+     *
+     * A stored password is a reusable credential — it opens the account until it is changed,
+     * and unlike a session it cannot be revoked from the server. So it goes in the OS
+     * credential store, encrypted with a key bound to this Windows account, rather than in
+     * a file anything can read. Copying it to another machine yields nothing.
+     *
+     * Keyed per server, like everything else: one server's credentials must never be
+     * offered to another.
+     */
+    ipcMain.handle('weave:credentials.get', async (_e, serverId) =>
+        (await readSecrets('credentials.dat'))[serverId] ?? null);
+
+    ipcMain.handle('weave:credentials.set', async (_e, serverId, username, password) => {
+        const map = await readSecrets('credentials.dat');
+        map[serverId] = { username: String(username), password: String(password) };
+        return writeSecrets('credentials.dat', map);
+    });
+
+    ipcMain.handle('weave:credentials.clear', async (_e, serverId) => {
+        const map = await readSecrets('credentials.dat');
+        delete map[serverId];
+        return writeSecrets('credentials.dat', map);
+    });
+
     ipcMain.handle('weave:update.state', () => updateState);
 
     ipcMain.handle('weave:update.install', () => {
@@ -379,6 +462,7 @@ if (!app.requestSingleInstanceLock()) {
         log.info({ evt: 'app.start', version: app.getVersion(), packaged: app.isPackaged },
             `Weave ${app.getVersion()} starting`);
         registerBridge();
+        serveRenderer();
         createWindow();
         startUpdateCheck();
 

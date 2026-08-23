@@ -17,7 +17,7 @@ const mark = `
 
 /** The gear only exists where a server can actually be chosen. */
 const gear = () => (platform.canChooseServer ? `
-  <button class="icon-btn card-gear" data-open-servers
+  <button type="button" class="icon-btn card-gear" data-open-servers
           title="Servers" aria-label="Manage servers">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
       <circle cx="12" cy="12" r="3.2"/>
@@ -66,6 +66,12 @@ export function signIn({ servers = [], activeId = null, instanceName = null } = 
         <input id="password" name="password" type="password" autocomplete="current-password" required>
         <div class="field-error"></div>
       </div>
+
+      ${platform.credentials.available ? `
+      <label class="check-row">
+        <input type="checkbox" name="remember">
+        <span>Remember me next time <em>(saved to this Windows account only)</em></span>
+      </label>` : ''}
 
       <label class="check-row">
         <input type="checkbox" name="autoJoin" checked>

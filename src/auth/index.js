@@ -27,6 +27,19 @@ export function createAuth({ mount, onSignedIn }) {
     let reset = null;
     let cachedQuestions = null;
 
+    /**
+     * What has been typed on the sign-in form but not yet submitted.
+     *
+     * Nipping into the server settings and coming back should not cost you your username
+     * and password. Every screen is re-rendered from scratch on navigation, so without this
+     * the fields come back empty and it looks like the app threw the input away — which it
+     * did.
+     *
+     * In memory for the lifetime of this window only. It is never written to storage, never
+     * put in the markup, and it is cleared the moment a sign-in succeeds.
+     */
+    let draft = { username: '', password: '' };
+
     const server = () => activeServer();
     const apiFor = (origin) => createApi({ origin });
 
@@ -136,9 +149,41 @@ export function createAuth({ mount, onSignedIn }) {
 
     /* ── sign in ─────────────────────────────────────────────────────────── */
 
+    /**
+     * Put the draft back into the fields.
+     *
+     * Assigned as properties rather than rendered into the markup: a password does not
+     * belong in an HTML attribute, where it would sit in the DOM as text and in any
+     * serialisation of it.
+     */
+    async function restoreDraft(form) {
+        if (!form) return;
+
+        // Saved credentials first, then anything typed this session on top — the draft is
+        // more recent by definition, so it wins.
+        const target = server();
+        if (target && platform.credentials.available) {
+            const saved = await platform.credentials.get(target.id).catch(() => null);
+            if (saved) {
+                form.username.value = saved.username ?? '';
+                form.password.value = saved.password ?? '';
+                if (form.remember) form.remember.checked = true;
+            }
+        }
+
+        if (draft.username) form.username.value = draft.username;
+        if (draft.password) form.password.value = draft.password;
+
+        form.addEventListener('input', () => {
+            draft = { username: form.username.value, password: form.password.value };
+        });
+    }
+
     function wireSignIn() {
         const form = $('#signInForm', mount);
         if (!form) return;
+
+        restoreDraft(form);
 
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -163,6 +208,17 @@ export function createAuth({ mount, onSignedIn }) {
                 // Scoped to this server: a client that can reach several must never carry one
                 // server's credentials to another.
                 await platform.tokens.set(target.id, result.token).catch(() => {});
+
+                // Only once the credentials have actually been shown to work. Saving them
+                // on submit would persist a typo and re-fill it on every future launch.
+                if (form.remember?.checked) {
+                    await platform.credentials.set(target.id, username, password).catch(() => {});
+                } else {
+                    // Unticking is how you forget, so it has to clear what was saved before.
+                    await platform.credentials.clear(target.id).catch(() => {});
+                }
+
+                draft = { username: '', password: '' };
                 onSignedIn({ api, user: result.user, token: result.token, server: target, autoJoin });
             } catch (err) {
                 setBusy(button, false);

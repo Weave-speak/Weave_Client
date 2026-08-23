@@ -103,9 +103,26 @@ const noUpdates = {
     onChange() { return () => {}; },
 };
 
+/**
+ * Saved sign-in details.
+ *
+ * The browser build deliberately has none. A browser already has a password manager, it is
+ * better than anything we would write, and the user already trusts it — competing with it
+ * by keeping a second copy of their password in localStorage would be strictly worse.
+ * `available: false` is what makes the "Remember me" box absent there rather than broken.
+ */
+const noCredentials = {
+    available: false,
+    async get() { return null; },
+    async set() { return false; },
+    async clear() { return false; },
+};
+
 const browserPlatform = {
     target: 'browser',
     version: VERSION,
+
+    credentials: noCredentials,
 
     updates: noUpdates,
     diagnostics: { available: false, async read() { return null; }, async openFolder() {} },
@@ -139,6 +156,10 @@ const desktopPlatform = {
     tokens: (typeof window !== 'undefined' && window.weaveNative?.tokens)
         ? window.weaveNative.tokens
         : memoryTokenStore(),
+
+    credentials: (typeof window !== 'undefined' && window.weaveNative?.credentials)
+        ? window.weaveNative.credentials
+        : noCredentials,
 
     // Present only when the Electron bridge is. Running the desktop UI in a plain browser
     // during development is a supported thing to do, and it must not explode.

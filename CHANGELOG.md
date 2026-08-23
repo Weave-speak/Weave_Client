@@ -4,6 +4,24 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-08-23
+
+### Added
+- Settings. The gear and your name in the corner both open it. Working today: noise
+  suppression, echo cancellation, automatic gain, microphone selection, in-window
+  push-to-talk with a rebindable key, a still-background switch, creating an invite, the
+  AFK exemption, and your join date.
+- Every control the server cannot support yet is shown with the reason on screen rather
+  than hidden or silently disabled. Recorded in docs/placeholders.md.
+
+### Fixed
+- Signing out never told the server. The app defined `api.logout` and called it from
+  nowhere, so quitting left a usable session behind for up to twelve hours. The power
+  button in the corner did the same — it dropped the socket and rebooted the UI while the
+  session stayed live.
+- Join dates could show the wrong day. SQLite returns UTC timestamps with a space and no
+  zone marker, which JavaScript parses as local time.
+
 ## [0.1.6] - 2026-08-23
 
 ### Added

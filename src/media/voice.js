@@ -52,7 +52,19 @@ const REPLY_TIMEOUT_MS = 12_000;
 /** How often the level meter samples. Fast enough to look live, slow enough to be free. */
 const LEVEL_INTERVAL_MS = 100;
 
-export function createVoice({ link, onChange = () => {}, onLevels = () => {} } = {}) {
+export function createVoice({
+    link,
+    onChange = () => {},
+    onLevels = () => {},
+    /**
+     * Audio constraints, read fresh time the microphone is opened.
+     *
+     * A function rather than a value because the microphone is reopened on recovery, and a
+     * preference captured once at construction would silently revert to whatever was true
+     * when the room was first entered.
+     */
+    getAudioConstraints = () => ({ echoCancellation: true, noiseSuppression: true, autoGainControl: true }),
+} = {}) {
     let device = null;
     let sendTransport = null;
     let recvTransport = null;
@@ -170,11 +182,7 @@ export function createVoice({ link, onChange = () => {}, onLevels = () => {} } =
 
     async function openMicrophone() {
         micStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true,
-            },
+            audio: getAudioConstraints(),
             video: false,
         });
 
@@ -415,6 +423,25 @@ export function createVoice({ link, onChange = () => {}, onLevels = () => {} } =
             micMeter?.stop();
             micMeter = null;
             onChange({ state: 'live', talking: false });
+        },
+
+        /**
+         * Apply changed audio constraints to the live track.
+         *
+         * Without this a preference change would only take effect on the next microphone
+         * open, which for someone already in a call means "never" — they toggle noise
+         * suppression, hear no difference, and reasonably conclude it does nothing.
+         */
+        async applyAudioConstraints() {
+            const [track] = micStream?.getAudioTracks() ?? [];
+            if (!track) return false;
+            try {
+                await track.applyConstraints(getAudioConstraints());
+                return true;
+            } catch {
+                // Some devices refuse a live change. The setting still applies next time.
+                return false;
+            }
         },
 
         /**

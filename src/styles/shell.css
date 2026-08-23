@@ -790,6 +790,10 @@
     .app-body { grid-template-columns: var(--rail-w) minmax(0, 1fr); }
     .sidebar { display: none; }
 }
+@media (max-width: 720px) {
+    .settings-body { grid-template-columns: minmax(0, 1fr); }
+    .settings-nav { display: none; }
+}
 @media (max-width: 620px) {
     .app-body { grid-template-columns: minmax(0, 1fr); }
     .rail { display: none; }
@@ -914,3 +918,209 @@
 }
 .room-person.speaking .person-name,
 .member-row.speaking .member-name { color: var(--ink); }
+
+/* ── Modal ────────────────────────────────────────────────────────────────── */
+
+/* The native <dialog>. showModal() puts it in the top layer, so no z-index is needed and
+   nothing in the app can accidentally cover it. */
+.modal {
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: var(--r-4);
+    background: var(--surface-1);
+    color: var(--ink);
+    box-shadow: var(--shadow-3);
+    max-width: min(980px, 92vw);
+    max-height: 88vh;
+    overflow: hidden;
+}
+.modal::backdrop { background: var(--scrim); }
+
+/* ── Settings ─────────────────────────────────────────────────────────────── */
+
+.settings { display: grid; grid-template-rows: auto minmax(0, 1fr); width: min(980px, 92vw); height: 88vh; }
+
+.settings-crumb {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    padding: var(--s-3) var(--s-4);
+    border-bottom: 1px solid var(--line-soft);
+    font-size: var(--t-sm);
+    color: var(--ink-faint);
+}
+.crumb.current { color: var(--ink); font-weight: 550; }
+.crumb-sep { color: var(--ink-ghost); }
+.crumb-spacer { flex: 1; }
+.crumb-hint { color: var(--ink-ghost); }
+
+.settings-body { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 0; }
+
+.settings-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: var(--s-3) var(--s-2);
+    background: var(--bg-void);
+    border-right: 1px solid var(--line-soft);
+    overflow-y: auto;
+}
+.nav-group {
+    margin: var(--s-4) var(--s-3) var(--s-1);
+    font-size: var(--t-xs);
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+}
+.nav-group:first-child { margin-top: var(--s-1); }
+.nav-spacer { flex: 1; min-height: var(--s-5); }
+
+.nav-item {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    width: 100%;
+    padding: var(--s-2) var(--s-3);
+    border-radius: var(--r-2);
+    color: var(--ink-dim);
+    font-size: var(--t-base);
+    text-align: left;
+}
+.nav-item svg { width: 16px; height: 16px; flex: none; }
+.nav-item span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-item:hover { background: var(--surface-2); color: var(--ink); }
+.nav-item.current { background: var(--accent-tint-hi); color: var(--ink); }
+.nav-item.danger { color: var(--bad); }
+.nav-item.danger:hover { background: var(--bad-soft); }
+
+/* A dot rather than a word: it marks the screens that are designed but not built, without
+   shouting about it in a list you read every time. */
+.nav-flag { flex: none !important; color: var(--warn); font-size: var(--t-lg); line-height: 0; }
+
+.settings-panel { overflow-y: auto; padding: var(--s-6) var(--s-7); }
+
+.panel-title { margin: 0 0 var(--s-1); font-size: var(--t-xl); font-weight: 640; letter-spacing: -0.02em; }
+.panel-lead { margin: 0 0 var(--s-6); color: var(--ink-dim); font-size: var(--t-base); }
+.panel-section {
+    margin: var(--s-7) 0 var(--s-3);
+    font-size: var(--t-xs);
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+}
+
+/* ── Profile card ─────────────────────────────────────────────────────────── */
+
+.profile-card {
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    overflow: hidden;
+    margin-bottom: var(--s-6);
+}
+.profile-banner {
+    height: 84px;
+    background:
+        radial-gradient(600px 200px at 20% 120%, rgb(var(--accent-rgb) / 0.5) 0%, transparent 70%),
+        linear-gradient(120deg, var(--surface-3), var(--surface-2));
+}
+.profile-identity { display: flex; align-items: center; gap: var(--s-4); padding: var(--s-4); margin-top: -34px; }
+.profile-identity .avatar { border: 3px solid var(--surface-1); width: 68px; height: 68px; font-size: var(--t-xl); }
+.profile-name { display: flex; align-items: center; gap: var(--s-2); font-size: var(--t-lg); font-weight: 620; }
+.profile-meta { color: var(--ink-faint); font-size: var(--t-sm); margin-top: 2px; }
+
+/* ── Settings rows ────────────────────────────────────────────────────────── */
+
+.setting {
+    display: flex;
+    align-items: center;
+    gap: var(--s-4);
+    padding: var(--s-3) 0;
+    border-bottom: 1px solid var(--line-soft);
+}
+.setting.is-disabled { opacity: 0.5; }
+.setting-text { flex: 1; min-width: 0; cursor: pointer; }
+.setting-label { display: block; font-weight: 550; }
+.setting-hint, .setting-note { display: block; font-size: var(--t-sm); color: var(--ink-faint); margin-top: 2px; }
+.setting-note { color: var(--ink-ghost); }
+
+/* A switch built from a checkbox, so it keeps every keyboard and screen-reader behaviour
+   the native control already has. */
+.switch {
+    appearance: none;
+    flex: none;
+    width: 42px; height: 24px;
+    border-radius: var(--r-pill);
+    background: var(--surface-3);
+    border: 1px solid var(--line);
+    position: relative;
+    cursor: pointer;
+    transition: background var(--dur);
+}
+.switch::after {
+    content: "";
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: var(--ink-dim);
+    transition: transform var(--dur) var(--ease), background var(--dur);
+}
+.switch:checked { background: var(--accent); border-color: transparent; }
+.switch:checked::after { transform: translateX(18px); background: var(--on-accent); }
+.switch:disabled { cursor: not-allowed; }
+
+.key-capture {
+    flex: none;
+    min-width: 96px;
+    padding: var(--s-2) var(--s-3);
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    background: var(--surface-0);
+    font: var(--t-sm) var(--font-mono);
+    color: var(--ink);
+}
+.key-capture:hover:not(:disabled) { border-color: var(--accent); }
+.key-capture.capturing { border-color: var(--accent); color: var(--accent-hi); }
+
+/* ── Not-yet ──────────────────────────────────────────────────────────────── */
+
+/* A control that cannot work, and why. The reason is the point: it tells somebody nothing
+   is wrong with their account and nothing is wrong with their machine. */
+.not-yet {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: var(--s-3);
+    margin: var(--s-2) 0;
+    border: 1px dashed var(--line);
+    border-radius: var(--r-2);
+    background: var(--surface-0);
+}
+.not-yet.standalone { margin-top: var(--s-5); padding: var(--s-5); }
+.not-yet-what { font-weight: 550; color: var(--ink-dim); }
+.not-yet-why { font-size: var(--t-sm); color: var(--ink-faint); }
+
+/* ── Invites ──────────────────────────────────────────────────────────────── */
+
+.invite-result {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    align-items: flex-start;
+    padding: var(--s-4);
+    margin-bottom: var(--s-4);
+    border: 1px solid rgb(var(--gold-rgb) / 0.35);
+    background: rgb(var(--gold-rgb) / 0.07);
+    border-radius: var(--r-3);
+}
+.invite-label { font-size: var(--t-sm); color: var(--ink-dim); }
+.invite-code {
+    font: var(--t-xl) var(--font-mono);
+    letter-spacing: 0.14em;
+    color: var(--gold);
+    user-select: all;
+}
+.invite-meta { font-size: var(--t-sm); color: var(--ink-faint); }
+

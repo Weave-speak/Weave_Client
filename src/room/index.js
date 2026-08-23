@@ -17,6 +17,8 @@ import { messageList, typingLine, voiceNoticeMarkup } from './views/timeline.js'
 import { createRoomState } from './state.js';
 import { WeaveBackground } from '../ui/weave-background.js';
 import { createVoice } from '../media/voice.js';
+import { createSettings, readPrefs } from '../settings/index.js';
+import { platform } from '../platform/index.js';
 import { userHue } from '../ui/hue.js';
 import { $, html } from '../ui/dom.js';
 
@@ -43,7 +45,7 @@ const SPEAKING_HOLD_MS = 450;
 /** How long to wait for an animation frame before painting anyway. */
 const PAINT_FLOOR_MS = 100;
 
-export function createRoom({ mount, api, link, user, server, onSignedOut }) {
+export function createRoom({ mount, api, link, user, server, features = [], onSignedOut }) {
     const state = createRoomState({
         me: user,
         server: { name: server?.lastSeen?.name ?? server?.label ?? 'Weave' },
@@ -54,8 +56,17 @@ export function createRoom({ mount, api, link, user, server, onSignedOut }) {
     let voiceLevels = new Map();
     const speakingUntil = new Map();   // username -> when the ring may fade
 
+    let prefs = readPrefs(server.id);
+    let pttHeld = false;
+
     const voice = createVoice({
         link,
+        getAudioConstraints: () => ({
+            echoCancellation: prefs.echoCancellation !== false,
+            noiseSuppression: prefs.noiseSuppression !== false,
+            autoGainControl: prefs.autoGainControl !== false,
+            ...(prefs.micDevice ? { deviceId: { exact: prefs.micDevice } } : {}),
+        }),
         onChange: (status) => {
             voiceState = status;
             paint();
@@ -66,6 +77,65 @@ export function createRoom({ mount, api, link, user, server, onSignedOut }) {
         },
     });
     let voiceState = { state: 'idle' };
+
+    const settings = createSettings({
+        api,
+        server,
+        me: user,
+        features,
+        onPrefsChange: applyPrefs,
+        onSignOut: signOut,
+    });
+
+    /**
+     * Make a changed preference take effect now, rather than on the next launch.
+     *
+     * A settings screen whose switches only apply after a restart teaches people that the
+     * switches do not work.
+     */
+    function applyPrefs(next) {
+        const wasPushToTalk = prefs.pushToTalk;
+        prefs = next;
+        voice.applyAudioConstraints().catch(() => {});
+
+        // Switching push-to-talk ON must mute immediately. Leaving the microphone open
+        // until the first press means the setting appears to do nothing, and everything
+        // said in between is broadcast by someone who believes it is not.
+        if (prefs.pushToTalk && !wasPushToTalk) {
+            pttHeld = false;
+            voice.setMuted(true);
+            link.send('setMute', { muted: true, deafened: Boolean(state.toShell().me.deafened) });
+        }
+        if (background) {
+            background.reduceMotion = Boolean(prefs.staticBackground);
+            if (prefs.staticBackground) background.stop(); else background.start();
+        }
+    }
+
+    /**
+     * Sign out properly.
+     *
+     * The order matters and every step earns its place. The server is told first so the
+     * session is revoked rather than left live for the rest of its twelve hours — the app
+     * previously never called logout at all, so quitting left a usable session behind. The
+     * local token goes next, then the socket and the microphone, so the room sees a clean
+     * departure rather than a timeout.
+     *
+     * Saved sign-in details are deliberately NOT cleared: "sign out" and "forget me" are
+     * different requests, and someone signing out on a shared machine unticks Remember me
+     * to be forgotten. Servers and per-server preferences stay too.
+     */
+    async function signOut() {
+        await api.logout().catch(() => {
+            // A network failure must not trap somebody in a signed-in interface. The
+            // session lapses on its own; the important part is that this client forgets it.
+        });
+        api.setToken(null);
+        await platform.tokens.clear(server.id).catch(() => {});
+        voice.stop();
+        link.close();
+        onSignedOut?.();
+    }
 
     /* ── painting ────────────────────────────────────────────────────────── */
 
@@ -187,6 +257,7 @@ export function createRoom({ mount, api, link, user, server, onSignedOut }) {
         const canvas = $('#roomBg', mount);
         if (!canvas) return;
         background = new WeaveBackground(canvas, {
+            reduceMotion: prefs.staticBackground || undefined,
             getState: () => {
                 const view = state.toShell();
                 const here = view.rooms.find((r) => r.current)?.occupants ?? [];
@@ -332,8 +403,12 @@ export function createRoom({ mount, api, link, user, server, onSignedOut }) {
             }
 
             if (event.target.closest('[data-leave]')) {
-                link.close();
-                onSignedOut?.();
+                signOut();
+                return;
+            }
+
+            if (event.target.closest('[data-open-settings]')) {
+                settings.open(event.target.closest('[data-open-settings]'));
                 return;
             }
 
@@ -359,11 +434,52 @@ export function createRoom({ mount, api, link, user, server, onSignedOut }) {
             }
         });
 
+        wirePushToTalk();
+
         // Grow with the text, up to a point, so a long message is visible while it is typed.
         input?.addEventListener('input', () => {
             input.style.height = 'auto';
             input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
         });
+    }
+
+    /**
+     * Push to talk.
+     *
+     * Bound on the window with capture, so it works wherever focus happens to be — except
+     * while typing, because a push-to-talk key bound to Space would otherwise make the
+     * composer unusable. That exception is the whole reason this is not three lines.
+     *
+     * `event.code` is the physical key, so a bind survives a keyboard-layout change.
+     * `event.repeat` is ignored: holding a key fires keydown continuously, and sending an
+     * unmute frame per repeat would hammer the server for the entire time somebody speaks.
+     */
+    function wirePushToTalk() {
+        const typing = (target) => target instanceof HTMLElement
+            && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
+
+        const setTalking = (talking) => {
+            if (!prefs.pushToTalk || pttHeld === talking) return;
+            pttHeld = talking;
+            voice.setMuted(!talking);
+            link.send('setMute', { muted: !talking, deafened: Boolean(state.toShell().me.deafened) });
+        };
+
+        window.addEventListener('keydown', (event) => {
+            if (!prefs.pushToTalk || event.repeat) return;
+            if (event.code !== prefs.pushToTalkKey || typing(event.target)) return;
+            event.preventDefault();
+            setTalking(true);
+        }, true);
+
+        window.addEventListener('keyup', (event) => {
+            if (!prefs.pushToTalk || event.code !== prefs.pushToTalkKey) return;
+            setTalking(false);
+        }, true);
+
+        // Releasing the key while the window is not focused never reaches us, so a peer
+        // would be left permanently unmuted after alt-tabbing mid-sentence.
+        window.addEventListener('blur', () => setTalking(false));
     }
 
     function sendMessage() {

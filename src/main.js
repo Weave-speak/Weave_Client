@@ -126,6 +126,9 @@ function enterRoom({ api, user, token, server }) {
         link,
         user,
         server,
+        // What this server actually has switched on, learned during discovery. The settings
+        // screen uses it so a section for a disabled module says so rather than 404ing.
+        features: server?.lastSeen?.features ?? [],
         onSignedOut() {
             room.destroy();
             boot();

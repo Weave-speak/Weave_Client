@@ -4,6 +4,23 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-08-23
+
+### Added
+- You can see who is talking. A ring appears around the avatar of anyone speaking, in both
+  the room list and the member list, held briefly so it reads as a signal rather than
+  strobing on every syllable.
+
+### Fixed
+- Audio levels are keyed per connection while people are keyed per account, so somebody
+  signed in on two machines never matched and showed as silent while audibly talking. A
+  person now carries every connection they have, and the loudest wins.
+
+### Notes
+- Paired with a server fix: a move between channels served by different SFU workers now
+  rebuilds the media path instead of silently stranding it. Inert until the server runs more
+  than one worker, which is not the default.
+
 ## [0.1.5] - 2026-08-23
 
 ### Added

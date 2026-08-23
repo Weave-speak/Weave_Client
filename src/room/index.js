@@ -23,6 +23,23 @@ import { $, html } from '../ui/dom.js';
 /** Close enough to the bottom that the reader is following along. */
 const STICK_PX = 80;
 
+/**
+ * Loud enough to count as talking.
+ *
+ * Above room tone and breathing, below a quiet voice. Too low and everyone glows
+ * permanently, which is the same as nobody glowing.
+ */
+const SPEAKING_AT = 0.055;
+
+/**
+ * How long the ring stays after someone stops.
+ *
+ * Speech is full of gaps — every consonant is a moment of near-silence — so a ring driven
+ * straight off the level strobes on every syllable. Holding it briefly turns a flicker into
+ * a signal.
+ */
+const SPEAKING_HOLD_MS = 450;
+
 /** How long to wait for an animation frame before painting anyway. */
 const PAINT_FLOOR_MS = 100;
 
@@ -35,6 +52,7 @@ export function createRoom({ mount, api, link, user, server, onSignedOut }) {
     let background = null;
     let painting = false;
     let voiceLevels = new Map();
+    const speakingUntil = new Map();   // username -> when the ring may fade
 
     const voice = createVoice({
         link,
@@ -42,7 +60,10 @@ export function createRoom({ mount, api, link, user, server, onSignedOut }) {
             voiceState = status;
             paint();
         },
-        onLevels: (levels) => { voiceLevels = levels; },
+        onLevels: (levels) => {
+            voiceLevels = levels;
+            paintSpeaking();
+        },
     });
     let voiceState = { state: 'idle' };
 
@@ -88,6 +109,38 @@ export function createRoom({ mount, api, link, user, server, onSignedOut }) {
         paintConnection(view.connection);
         paintRoomHead(view.room);
         paintMessages(view.items);
+
+        // A repaint replaced those rows, so anything currently talking needs its ring back
+        // immediately rather than at the next level sample.
+        paintSpeaking();
+    }
+
+    /**
+     * Show who is talking.
+     *
+     * Deliberately NOT part of paint(). Levels arrive ten times a second, and re-rendering
+     * the sidebar and member list at that rate to add one class would be both wasteful and
+     * visibly janky — it would also destroy any hover or focus in those lists on every
+     * frame. This toggles a class on elements that already exist and touches nothing else.
+     */
+    function paintSpeaking() {
+        const view = state.toShell();
+        const now = Date.now();
+
+        for (const person of view.people) {
+            // The loudest of ALL their connections. Levels are per peer, and somebody
+            // signed in twice would otherwise be silent on screen while audibly talking.
+            let level = person.id === view.me.id ? (voiceLevels.get('self') ?? 0) : 0;
+            for (const cid of person.cids ?? []) {
+                level = Math.max(level, voiceLevels.get(cid) ?? 0);
+            }
+            if (level >= SPEAKING_AT) speakingUntil.set(person.username, now + SPEAKING_HOLD_MS);
+        }
+
+        for (const el of mount.querySelectorAll('[data-person]')) {
+            const until = speakingUntil.get(el.dataset.person) ?? 0;
+            el.classList.toggle('speaking', until > now);
+        }
     }
 
     const setHtml = (selector, markup) => {
@@ -141,9 +194,11 @@ export function createRoom({ mount, api, link, user, server, onSignedOut }) {
                 // The room's pace is how loud it actually is. Favours the loudest speaker
                 // blended with the average, so one person talking quietly in a room of
                 // eight still registers rather than being averaged into silence.
-                const values = here.map((p) => (p.id === view.me.id
-                    ? (voiceLevels.get('self') ?? 0)
-                    : (voiceLevels.get(p.cid) ?? 0)));
+                const values = here.map((p) => {
+                    let level = p.id === view.me.id ? (voiceLevels.get('self') ?? 0) : 0;
+                    for (const cid of p.cids ?? []) level = Math.max(level, voiceLevels.get(cid) ?? 0);
+                    return level;
+                });
                 const loudest = values.length ? Math.max(...values) : 0;
                 const average = values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
 

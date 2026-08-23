@@ -53,17 +53,25 @@ export function createRoomState({ me = null, server = {} } = {}) {
         for (const peer of state.peers.values()) {
             // If somebody is connected twice, the room they are visibly in is the one their
             // most recent connection is in. Picking arbitrarily makes them flicker.
-            byUser.set(peer.userId, peer);
+            const entry = byUser.get(peer.userId) ?? { peer: null, cids: [] };
+            entry.peer = peer;
+            entry.cids.push(peer.cid);
+            byUser.set(peer.userId, entry);
         }
 
         return [...state.users.values()].map((user) => {
-            const peer = byUser.get(user.id);
+            const { peer = null, cids = [] } = byUser.get(user.id) ?? {};
             const channel = peer ? state.channels.find((c) => c.id === peer.channelId) : null;
             return {
                 ...user,
                 presence: peer ? (channel?.kind === 'afk' ? 'away' : 'live') : 'offline',
                 roomId: peer?.channelId ?? null,
                 cid: peer?.cid ?? null,
+                // Every connection this person has, not just the one being displayed.
+                // Audio levels arrive per PEER, so anything asking "is this person talking"
+                // has to consider all of them — otherwise somebody signed in twice is
+                // silent on screen while audibly speaking.
+                cids,
                 muted: Boolean(peer?.muted),
                 away: channel?.kind === 'afk',
                 ...producing(peer),

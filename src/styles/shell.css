@@ -897,3 +897,20 @@
     border-color: rgb(var(--bad-rgb) / 0.35);
     color: var(--bad-text);
 }
+
+/* ── Speaking ─────────────────────────────────────────────────────────────── */
+
+/* A ring around the avatar of whoever is talking. On the avatar rather than the row so it
+   reads at a glance in a list of a dozen people, and as a ring rather than a colour change
+   so it does not fight the presence dot already sitting on the same element. */
+.room-person .avatar,
+.member-row .avatar {
+    box-shadow: 0 0 0 0 transparent;
+    transition: box-shadow var(--dur-fast) var(--ease);
+}
+.room-person.speaking .avatar,
+.member-row.speaking .avatar {
+    box-shadow: 0 0 0 2px var(--ok), 0 0 10px -2px var(--ok);
+}
+.room-person.speaking .person-name,
+.member-row.speaking .member-name { color: var(--ink); }

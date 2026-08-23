@@ -18,9 +18,10 @@
     "art": "node scripts/make-installer-art.mjs",
     "electron:dev": "electron .",
     "pack": "npm run art && npm run build:desktop && electron-builder --win --publish never",
-    "release": "npm run art && npm run build:desktop && electron-builder --win --publish always",
+    "release": "node scripts/ensure-release.mjs && npm run art && npm run build:desktop && electron-builder --win --publish always",
     "lint": "eslint .",
-    "predict-delta": "node scripts/predict-delta.mjs"
+    "predict-delta": "node scripts/predict-delta.mjs",
+    "ensure-release": "node scripts/ensure-release.mjs"
   },
   "dependencies": {
     "electron-log": "5.4.4",

@@ -45,7 +45,25 @@ and publishes to GitHub Releases as a pre-release.
 
 **Tag before you publish.** GitHub refuses to create a non-draft release for a tag that does
 not exist, and the error — "Published releases must have a valid tag" — arrives after the
-113 MB upload has already started.
+113 MB upload has already started. `npm run release` now checks this first and stops with a
+useful message instead.
+
+### Why the release is created before the upload
+
+electron-builder publishes its artifacts **concurrently**, and each publisher creates the
+release if it does not already exist. When two check at the same instant, both find nothing
+and both create one — leaving two releases sharing a tag with the assets split between them.
+
+That failure is nearly invisible. Both releases look correct in the API, but
+`/releases/download/<tag>/<file>` resolves to only one of them, so whichever assets landed
+on the other simply 404. It happened here on v0.1.2 and v0.1.3: the `.blockmap` went to the
+orphan, which would have silently pushed every client onto a full 113 MB download.
+
+`scripts/ensure-release.mjs` creates the release up front so both publishers attach to an
+existing one. If you ever see two releases for a tag, move every asset onto the one holding
+`latest.yml`, then delete the other — and check the public URLs **after** the delete, not
+before, because while the duplicate exists it shadows the tag and every check reports the
+wrong answer.
 
 ## Checking the delta before shipping
 

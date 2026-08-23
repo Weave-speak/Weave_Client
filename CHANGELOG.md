@@ -4,6 +4,19 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-08-23
+
+### Fixed
+- Sign in and register failed with "current is not defined". Scoping session tokens per
+  server changed two call sites that referenced a variable which only existed in a
+  different branch of the same file. It parsed, it built, and all 115 tests passed, because
+  the broken line only runs when somebody actually signs in.
+
+### Added
+- ESLint, running before the test suite and in CI. `no-undef` catches the class of bug
+  above in milliseconds; the rule set is deliberately narrow — things that are wrong, not
+  matters of taste.
+
 ## [Unreleased]
 
 ### Added

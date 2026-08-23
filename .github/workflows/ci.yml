@@ -88,6 +88,10 @@ jobs:
           node-version: ${{ matrix.node }}
       # npm ci needs the lockfile committed — see CONTRIBUTING.md.
       - run: npm ci
+      # Separate from `npm test` so a scope error is reported as a lint failure rather than
+      # buried in a test log. This exists because "current is not defined" once shipped to a
+      # user in a published installer: it parsed, it built, and every test passed.
+      - run: npm run lint
       - run: npm test
       # Both targets, because they are different bundles and only one is built by default.
       - run: npm run build

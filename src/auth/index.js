@@ -156,13 +156,14 @@ export function createAuth({ mount, onSignedIn }) {
 
             setBusy(button, true, 'Signing in…');
             try {
-                const api = apiFor(server().origin);
+                const target = server();
+                const api = apiFor(target.origin);
                 const result = await api.login(username, password);
                 api.setToken(result.token);
                 // Scoped to this server: a client that can reach several must never carry one
                 // server's credentials to another.
-                await platform.tokens.set(current.id, result.token).catch(() => {});
-                onSignedIn({ api, user: result.user, token: result.token, server: server(), autoJoin });
+                await platform.tokens.set(target.id, result.token).catch(() => {});
+                onSignedIn({ api, user: result.user, token: result.token, server: target, autoJoin });
             } catch (err) {
                 setBusy(button, false);
                 if (err instanceof ApiError && err.field) {
@@ -219,13 +220,14 @@ export function createAuth({ mount, onSignedIn }) {
 
             setBusy(button, true, 'Creating account…');
             try {
-                const api = apiFor(server().origin);
+                const target = server();
+                const api = apiFor(target.origin);
                 const result = await api.register(payload);
                 api.setToken(result.token);
                 // Scoped to this server: a client that can reach several must never carry one
                 // server's credentials to another.
-                await platform.tokens.set(current.id, result.token).catch(() => {});
-                onSignedIn({ api, user: result.user, token: result.token, server: server(), autoJoin: true });
+                await platform.tokens.set(target.id, result.token).catch(() => {});
+                onSignedIn({ api, user: result.user, token: result.token, server: target, autoJoin: true });
             } catch (err) {
                 setBusy(button, false);
                 if (err instanceof ApiError && err.field && setFieldError(form, err.field, err.message)) return;

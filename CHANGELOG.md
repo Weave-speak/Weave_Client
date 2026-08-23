@@ -4,6 +4,18 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2026-08-23
+
+### Added
+- A room browser, reached from the search icon beside the server name. Cards show who is in
+  each room by face rather than by number, with a live-only filter, and clicking one takes
+  you there. It stays live while open, so the counts cannot go stale under you.
+
+### Notes
+- Room descriptions and capacities appear in the design but the server stores neither, so
+  they are absent rather than invented. A fabricated "2 of 40" would look authoritative and
+  mean nothing.
+
 ## [0.1.7] - 2026-08-23
 
 ### Added

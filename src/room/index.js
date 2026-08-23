@@ -18,9 +18,11 @@ import { createRoomState } from './state.js';
 import { WeaveBackground } from '../ui/weave-background.js';
 import { createVoice } from '../media/voice.js';
 import { createSettings, readPrefs } from '../settings/index.js';
+import { createRoomBrowser } from '../rooms/browser.js';
+import { createModal } from '../ui/modal.js';
 import { platform } from '../platform/index.js';
 import { userHue } from '../ui/hue.js';
-import { $, html } from '../ui/dom.js';
+import { $, $$, html } from '../ui/dom.js';
 
 /** Close enough to the bottom that the reader is following along. */
 const STICK_PX = 80;
@@ -77,6 +79,18 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         },
     });
     let voiceState = { state: 'idle' };
+
+    const browser = createRoomBrowser({
+        state,
+        canCreate: Boolean(user?.isAdmin),
+        createModal,
+        dom: { $, $$ },
+        onEnter(channelId) {
+            if (channelId === state.raw.currentChannelId) return;
+            link.noteChannel(channelId);
+            link.send('move', { channelId });
+        },
+    });
 
     const settings = createSettings({
         api,
@@ -404,6 +418,11 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
             if (event.target.closest('[data-leave]')) {
                 signOut();
+                return;
+            }
+
+            if (event.target.closest('[data-browse-rooms]') || event.target.closest('[data-new-room]')) {
+                browser.open(event.target.closest('button'));
                 return;
             }
 

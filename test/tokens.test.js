@@ -88,7 +88,9 @@ test('every token a component references is actually defined', () => {
         for (const m of css.matchAll(/var\(\s*(--[\w-]+)\s*(?:,|\))/g)) {
             // A component may define its own local custom property inline (--av, --author);
             // those are set in markup rather than in the token file.
-            if (!defined.has(m[1]) && !['--av', '--author'].includes(m[1])) {
+            // Set inline in markup rather than in the token file: a per-person colour,
+            // a per-room hue. They are data, not design decisions.
+            if (!defined.has(m[1]) && !['--av', '--author', '--card-hue'].includes(m[1])) {
                 missing.add(`${file}: ${m[1]}`);
             }
         }

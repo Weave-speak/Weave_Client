@@ -138,8 +138,8 @@ export function sidebar({ server = {}, rooms = [], me = {} } = {}) {
       <header class="sidebar-head">
         <h2 class="sidebar-title">${esc(server.name ?? 'Weave')}</h2>
         <span class="pill-count" title="${esc(server.memberCount ?? 0)} members">${esc(server.memberCount ?? 0)}</span>
-        <button type="button" class="icon-btn" data-new-room
-                title="New room" aria-label="Create a room">${icons.plus}</button>
+        <button type="button" class="icon-btn" data-browse-rooms
+                title="Browse rooms" aria-label="Browse rooms">${icons.search}</button>
       </header>
 
       <div class="sidebar-search">

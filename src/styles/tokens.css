@@ -108,6 +108,11 @@
     --lh-tight: 1.25;
     --lh: 1.55;
 
+    /* The stream pill's glass: near-black at high alpha, and hairline separators
+       derived from white. Triplets, so alpha variants derive from one source. */
+    --pill-rgb: 13 12 20;
+    --sep-rgb: 255 255 255;
+
     /* ── Texture ───────────────────────────────────────────────────────────── */
     /* A whisper of monochrome noise, laid over large dark gradients. Smooth gradients on
        dark backgrounds band visibly on 8-bit displays — the classic hard-edged "seam"

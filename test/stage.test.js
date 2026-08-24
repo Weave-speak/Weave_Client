@@ -71,24 +71,49 @@ test('the picker splits screens from windows and escapes window titles', () => {
     assert.match(view, /id="shareAudio" checked/, 'computer audio rides along by default');
 });
 
-test('remote tiles carry listening tools; your own preview never does', () => {
-    const remote = stageView({ tiles: [t('kes', 'screen', { audio: { muted: false, volume: 0.8 } })] });
-    assert.match(remote, /data-listen-mute/);
-    assert.match(remote, /data-listen-volume[^>]*value="80"/);
-    assert.match(remote, /data-tile-full/);
+test('the FOCUSED stream carries the pill: listen controls, fullscreen, the way out', () => {
+    const focused = stageView({
+        tiles: [t('kes', 'screen', { audio: { muted: false, volume: 0.8 } })],
+        focus: 'kes:screen',
+    });
+    assert.match(focused, /stream-pill/);
+    assert.match(focused, /data-listen-mute/);
+    assert.match(focused, /data-listen-volume[^>]*value="80"/);
+    assert.match(focused, /data-tile-full/);
+    assert.match(focused, /data-stop-watching/);
+    assert.match(focused, /live-badge/);
 
-    const mine = stageView({ tiles: [t('self', 'webcam', { self: true, label: 'You' })] });
-    assert.ok(!mine.includes('data-listen-mute'));
-    assert.ok(!mine.includes('data-tile-full'));
+    // A thumbnail beside it wears its identity chip, never the pill.
+    const withThumb = stageView({
+        tiles: [t('kes', 'screen', { audio: { muted: false, volume: 1 } }), t('moth', 'webcam')],
+        focus: 'kes:screen',
+    });
+    assert.equal((withThumb.match(/stream-pill/g) ?? []).length, 1);
+    assert.match(withThumb, /tile-chip/);
 });
 
-test('a muted-for-you stream says so on its button', () => {
-    const view = stageView({ tiles: [t('kes', 'screen', { audio: { muted: true, volume: 1 } })] });
+test('a muted-for-you stream says so on the pill', () => {
+    const view = stageView({
+        tiles: [t('kes', 'screen', { audio: { muted: true, volume: 1 } })],
+        focus: 'kes:screen',
+    });
     assert.match(view, /data-listen-mute[^>]*aria-pressed="true"/);
 });
 
-test('a videoless tile still offers fullscreen but no audio tools', () => {
-    const view = stageView({ tiles: [t('kes', 'webcam', { audio: null })] });
+test('a focused stream without audio keeps fullscreen and the way out', () => {
+    const view = stageView({ tiles: [t('kes', 'webcam', { audio: null })], focus: 'kes:webcam' });
     assert.ok(!view.includes('data-listen-mute'));
     assert.match(view, /data-tile-full/);
+    assert.match(view, /data-stop-watching/);
+});
+
+test('grid tiles invite the click, screens declare LIVE, and the divider offers the drag', () => {
+    const grid = stageView({ tiles: [t('kes', 'screen'), t('moth', 'webcam')] });
+    assert.match(grid, /watch-cue/);
+    assert.match(grid, /live-badge small/);
+    assert.match(grid, /data-stage-divider/);
+    assert.ok(!grid.includes('stream-pill'), 'no pill without a focus');
+
+    const sized = stageView({ tiles: [t('kes', 'screen')], heightPx: 400 });
+    assert.match(sized, /style="height: 400px"/);
 });

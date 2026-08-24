@@ -71,6 +71,13 @@ export function toTimelineItems(records = [], { users = new Map(), me = null, no
             lastDay = day;
         }
 
+        // A locally minted system line ("Alex started streaming") is already an item;
+        // it needs the day separator logic above but none of the message shaping below.
+        if (record.kind === 'system') {
+            items.push({ ...record, at: clockTime(record.createdAt) });
+            continue;
+        }
+
         const author = users.get(record.userId);
         const mentions = resolveMentions(record.body, usernames);
 

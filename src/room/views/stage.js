@@ -11,6 +11,7 @@
 
 import { esc } from '../../ui/dom.js';
 import { icons } from '../icons.js';
+import { userHue } from '../../ui/hue.js';
 
 export const tileKey = (cid, slot) => `${cid}:${slot}`;
 
@@ -24,47 +25,70 @@ export function orderTiles(tiles) {
     return [...tiles].sort((a, b) => rank(a) - rank(b) || String(a.key).localeCompare(String(b.key)));
 }
 
-const tile = (t, focusKey) => `
-  <div class="tile${t.key === focusKey ? ' focused' : ''}${t.self ? ' self' : ''}"
+/** The identity chip every thumbnail wears: mini avatar, kind glyph, name. */
+const identityChip = (t) => `
+  <span class="tile-chip">
+    <span class="tile-chip-face" style="--av: hsl(${esc(userHue(t.chipName ?? t.label))}, 55%, 40%)">${esc(initialsOf(t.chipName ?? t.label))}</span>
+    ${t.slot === 'screen' ? icons.screen : icons.camera}
+    <span>${esc(t.label)}</span>
+  </span>`;
+
+const initialsOf = (name) => String(name ?? '?').trim().slice(0, 2).toUpperCase();
+
+/** The focused stream's floating pill: listen controls, fullscreen, the way out. */
+const streamPill = (t) => `
+  <span class="stream-pill">
+    ${t.self || !t.audio ? '' : `
+    <button type="button" class="pill-btn" data-listen-mute
+            title="${t.audio.muted ? 'Unmute for you' : 'Mute for you'}"
+            aria-pressed="${t.audio.muted ? 'true' : 'false'}"
+            aria-label="${t.audio.muted ? 'Unmute this stream for you' : 'Mute this stream for you'}">
+      ${t.audio.muted ? icons.speakerOff : icons.speaker}
+    </button>
+    <input type="range" class="pill-volume" data-listen-volume min="0" max="100"
+           value="${Math.round((t.audio.volume ?? 1) * 100)}"
+           aria-label="Volume of this stream, for you only">
+    <span class="pill-sep" aria-hidden="true"></span>`}
+    <button type="button" class="pill-btn" data-tile-full
+            title="Fullscreen — press again to leave" aria-label="Toggle fullscreen">${icons.expand}</button>
+    <span class="pill-sep" aria-hidden="true"></span>
+    <button type="button" class="pill-btn pill-stop" data-stop-watching
+            aria-label="Stop watching — show all streams as thumbnails">
+      <span aria-hidden="true">✕</span>&nbsp;Stop watching
+    </button>
+  </span>`;
+
+const tile = (t, focusKey) => {
+    const focused = t.key === focusKey;
+    return `
+  <div class="tile${focused ? ' focused' : ''}${t.self ? ' self' : ''}"
        data-tile="${esc(t.key)}" role="button" tabindex="0"
-       aria-label="${esc(t.label)}${t.slot === 'screen' ? "'s screen" : ''}${t.key === focusKey ? ', focused' : ''}">
+       aria-label="${esc(t.label)}${t.slot === 'screen' ? "'s screen" : ''}${focused ? ', focused' : ''}">
     <video autoplay playsinline ${t.self ? 'muted' : ''}></video>
+    ${focused ? `
+    <span class="live-badge"><i aria-hidden="true"></i>LIVE · ${esc(t.label)}</span>
+    ${streamPill(t)}` : `
+    ${t.slot === 'screen' ? '<span class="live-badge small"><i aria-hidden="true"></i>LIVE</span>' : ''}
+    ${identityChip(t)}
+    ${focusKey ? '' : `
     <span class="tile-bar">
-      <span class="tile-label">
-        ${t.slot === 'screen' ? icons.screen : icons.camera}
-        <span>${esc(t.label)}</span>
-      </span>
       <span class="tile-bar-spacer"></span>
-      ${t.self ? '' : `
-      ${t.audio ? `
-      <span class="volume-group">
-        <input type="range" class="tile-volume" data-listen-volume min="0" max="100"
-               value="${Math.round((t.audio.volume ?? 1) * 100)}"
-               aria-label="Volume of this stream, for you only">
-        <button type="button" class="tile-tool" data-listen-mute
-                title="${t.audio.muted ? 'Unmute for you' : 'Mute for you'}"
-                aria-pressed="${t.audio.muted ? 'true' : 'false'}"
-                aria-label="${t.audio.muted ? 'Unmute this stream for you' : 'Mute this stream for you'}">
-          ${t.audio.muted ? icons.speakerOff : icons.speaker}
-        </button>
-      </span>` : ''}
-      <button type="button" class="tile-tool" data-tile-full
-              title="Fullscreen — press again to leave"
-              aria-label="Toggle fullscreen">${icons.expand}</button>`}
-    </span>
+      <span class="watch-cue">Watch ${icons.expand}</span>
+    </span>`}`}
   </div>`;
+};
 
 /**
  * The stage. Empty tiles array renders nothing at all — the room looks exactly as it
  * always did until the first camera or screen arrives.
  */
-export function stageView({ tiles = [], focus = null } = {}) {
+export function stageView({ tiles = [], focus = null, heightPx = null } = {}) {
     if (!tiles.length) return '';
     const ordered = orderTiles(tiles);
     const focusKey = ordered.some((t) => t.key === focus) ? focus : null;
 
     return `
-    <section class="stage${focusKey ? ' has-focus' : ''}" aria-label="Live video">
+    <section class="stage${focusKey ? ' has-focus' : ''}" aria-label="Live video"${heightPx ? ` style="height: ${Math.round(heightPx)}px"` : ''}>
       ${focusKey ? `
       <div class="stage-main">${tile(ordered.find((t) => t.key === focusKey), focusKey)}</div>
       ${ordered.length > 1 ? `
@@ -73,7 +97,9 @@ export function stageView({ tiles = [], focus = null } = {}) {
       <div class="stage-grid" data-count="${Math.min(ordered.length, 9)}">
         ${ordered.map((t) => tile(t, focusKey)).join('')}
       </div>`}
-    </section>`;
+    </section>
+    <div class="stage-divider" data-stage-divider role="separator" aria-orientation="horizontal"
+         title="Drag to resize"><span></span></div>`;
 }
 
 /* ── choosing what to share ───────────────────────────────────────────────── */

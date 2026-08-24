@@ -94,6 +94,9 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
     // key `${cid}:${slot}` -> MediaStream. 'self' is our own preview.
     const videoStreams = new Map();
     let stageFocus = null;
+    // The user's own stream/chat split, in pixels, once they have dragged the divider.
+    // Null means the CSS default share.
+    let stageHeightPx = null;
     // A watch clicked from another room: focus lands when the stream does.
     let pendingFocus = null;
 
@@ -388,7 +391,10 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         for (const [key, stream] of videoStreams) {
             const [cid, slotName] = key.split(':');
             if (cid === 'self') {
-                tiles.push({ key, cid, slot: slotName, label: 'You', self: true, stream });
+                tiles.push({
+                    key, cid, slot: slotName, label: 'You', self: true, stream,
+                    chipName: me?.username ?? 'You',
+                });
                 continue;
             }
             const peer = state.raw.peers.get(cid);
@@ -400,13 +406,14 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             tiles.push({
                 key, cid, slot: slotName,
                 label: peer.displayName || peer.username || 'Someone',
+                chipName: peer.username,
                 self: peer.userId === me?.id,
                 stream,
                 audio: hasAudio ? { ...voice.getListen(cid, audioSlot), slot: audioSlot } : null,
             });
         }
 
-        slot.innerHTML = stageView({ tiles, focus: stageFocus });
+        slot.innerHTML = stageView({ tiles, focus: stageFocus, heightPx: stageHeightPx });
 
         // Streams attach after paint; a view that touched srcObject would not be a view.
         for (const el of slot.querySelectorAll('[data-tile]')) {
@@ -634,6 +641,26 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             return;
         }
 
+        // A screen starting or stopping is part of what happened in this room, so it
+        // lands in the timeline the way the design draws it — before the voice layer
+        // claims the frame. Screens only: camera toggles would be noise.
+        if ((msg.type === 'producer_new' || msg.type === 'producer_closed') && msg.slot === 'screen') {
+            const peer = state.raw.peers.get(msg.cid);
+            const channelId = peer?.channelId ?? state.raw.currentChannelId;
+            if (peer && channelId) {
+                state.addMessage(channelId, {
+                    kind: 'system',
+                    id: `sys-${msg.type === 'producer_new' ? 'start' : 'end'}-${msg.producerId}`,
+                    icon: 'screen',
+                    who: peer.displayName || peer.username,
+                    text: msg.type === 'producer_new'
+                        ? 'started streaming their screen'
+                        : 'stopped streaming',
+                    createdAt: Date.now(),
+                });
+            }
+        }
+
         // Media frames first: the voice layer is waiting on specific replies, and a frame it
         // has claimed is not something the roster needs to see.
         if (voice.handle(msg)) {
@@ -846,6 +873,12 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                 return;
             }
 
+            if (event.target.closest('[data-stop-watching]')) {
+                if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+                stageFocus = null;
+                paintStage();
+                return;
+            }
             if (event.target.closest('[data-tile-full]')) {
                 const holder = event.target.closest('[data-tile]');
                 if (document.fullscreenElement === holder) {
@@ -1031,6 +1064,28 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             const [cid, slotName] = holder.dataset.tile.split(':');
             voice.setListen(cid, slotName === 'screen' ? 'screen-audio' : 'audio',
                 { volume: Number(slider.value) / 100 });
+        });
+
+        mount.addEventListener('pointerdown', (event) => {
+            const divider = event.target.closest?.('[data-stage-divider]');
+            if (!divider) return;
+            event.preventDefault();
+            const stage = $('.stage', mount);
+            const room = $('.room', mount);
+            if (!stage || !room) return;
+            const startY = event.clientY;
+            const startH = stage.offsetHeight;
+            const max = room.clientHeight * 0.62;
+            const move = (ev) => {
+                stageHeightPx = Math.min(max, Math.max(220, startH + ev.clientY - startY));
+                stage.style.height = `${Math.round(stageHeightPx)}px`;
+            };
+            const up = () => {
+                window.removeEventListener('pointermove', move);
+                window.removeEventListener('pointerup', up);
+            };
+            window.addEventListener('pointermove', move);
+            window.addEventListener('pointerup', up);
         });
 
         mount.addEventListener('dblclick', (event) => {

@@ -848,7 +848,11 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
             if (event.target.closest('[data-tile-full]')) {
                 const holder = event.target.closest('[data-tile]');
-                holder?.requestFullscreen?.().catch(() => { /* denied is fine */ });
+                if (document.fullscreenElement === holder) {
+                    document.exitFullscreen().catch(() => { /* already leaving */ });
+                } else {
+                    holder?.requestFullscreen?.().catch(() => { /* denied is fine */ });
+                }
                 return;
             }
             if (event.target.closest('[data-listen-volume]')) return;   // the slider is not a focus click
@@ -1031,7 +1035,12 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
         mount.addEventListener('dblclick', (event) => {
             const holder = event.target.closest?.('[data-tile]');
-            holder?.requestFullscreen?.().catch(() => { /* denied is fine */ });
+            if (!holder) return;
+            if (document.fullscreenElement === holder) {
+                document.exitFullscreen().catch(() => { /* already leaving */ });
+            } else {
+                holder.requestFullscreen?.().catch(() => { /* denied is fine */ });
+            }
         });
 
         wirePushToTalk();

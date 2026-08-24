@@ -597,48 +597,64 @@
 .tile.self video { transform: scaleX(-1); }
 .tile.self[data-tile$=":screen"] video { transform: none; }
 
-.tile-label {
+/* The tile's control bar: invisible until the pointer arrives, and it LINGERS —
+   the fade waits three seconds after the pointer leaves, so reaching for the volume
+   never becomes a race. Pure CSS: the delay lives on the resting state's transition
+   and is zeroed while hovered. */
+.tile-bar {
     position: absolute;
-    left: var(--s-2); bottom: var(--s-2);
+    left: 0; right: 0; bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    padding: var(--s-5) var(--s-3) var(--s-2);
+    background: linear-gradient(180deg, transparent, var(--scrim) 78%);
+    opacity: 0;
+    transition: opacity var(--dur) var(--ease) 3s;
+}
+.tile:hover .tile-bar,
+.tile-bar:focus-within { opacity: 1; transition-delay: 0s; }
+.tile-bar-spacer { flex: 1; }
+
+.tile-label {
     display: inline-flex;
     align-items: center;
     gap: var(--s-1);
-    padding: 3px var(--s-2);
-    border-radius: var(--r-1);
-    background: var(--scrim);
     color: var(--on-accent);
     font-size: var(--t-xs);
     font-weight: 600;
-    max-width: calc(100% - var(--s-4));
+    min-width: 0;
+    max-width: 55%;
 }
 .tile-label svg { width: 12px; height: 12px; flex: none; }
 .tile-label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Listening tools: yours alone, shown when the pointer says you care. */
-.tile-tools {
-    position: absolute;
-    right: var(--s-2); bottom: var(--s-2);
-    display: inline-flex;
-    align-items: center;
-    gap: var(--s-1);
-    padding: 3px var(--s-1);
-    border-radius: var(--r-2);
-    background: var(--scrim);
-    opacity: 0;
-    transition: opacity var(--dur-fast) var(--ease);
-}
-.tile:hover .tile-tools,
-.tile-tools:focus-within { opacity: 1; }
 .tile-tool {
     display: grid;
     place-items: center;
-    width: 26px; height: 26px;
+    width: 28px; height: 28px;
     border-radius: var(--r-1);
     color: var(--on-accent);
+    flex: none;
 }
 .tile-tool:hover { background: rgb(var(--accent-rgb) / 0.35); }
-.tile-tool svg { width: 14px; height: 14px; }
-.tile-volume { width: 74px; accent-color: var(--accent); }
+.tile-tool svg { width: 15px; height: 15px; }
+
+/* The dial unfolds from the mute button when the pointer means it. */
+.volume-group { display: inline-flex; align-items: center; flex: none; }
+.tile-volume {
+    width: 0;
+    opacity: 0;
+    margin: 0;
+    accent-color: var(--accent);
+    transition: width var(--dur) var(--ease), opacity var(--dur) var(--ease), margin var(--dur) var(--ease);
+}
+.volume-group:hover .tile-volume,
+.tile-volume:focus-visible {
+    width: 82px;
+    opacity: 1;
+    margin-right: var(--s-1);
+}
 
 /* A watchable mark is a small door, and it looks pressable. */
 .mark-watch { cursor: pointer; border-radius: var(--r-1); padding: 1px; }

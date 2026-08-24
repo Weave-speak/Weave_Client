@@ -204,12 +204,17 @@ export const roomGlyph = (room = {}) => (room.private ? icons.lock
  * Without this a fresh room is an unexplained black void — indistinguishable from a room
  * that failed to load. The one sentence is the difference.
  */
-export const emptyState = (room = {}) => `
+export const emptyState = (room = {}) => (room.id ? `
   <div class="timeline-empty">
     <span class="empty-mark" aria-hidden="true">${icons.weave}</span>
     <p class="empty-title">This is the start of ${esc(room.name ?? 'the room')}</p>
     <p class="empty-sub">Say something, or just be here — the strands move when you do.</p>
-  </div>`;
+  </div>` : `
+  <div class="timeline-empty">
+    <span class="empty-mark" aria-hidden="true">${icons.weave}</span>
+    <p class="empty-title">You're not in a room</p>
+    <p class="empty-sub">Pick one on the left to talk — or just read; every text channel is open to you.</p>
+  </div>`);
 
 export function timeline({ room = {}, items = [], typing = [], voice = {} } = {}) {
     return `

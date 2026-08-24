@@ -12,7 +12,7 @@ import './styles.css';
 
 import { createAuth } from './auth/index.js';
 import { platform, VERSION, noteOriginIsWeave } from './platform/index.js';
-import { activeServer } from './server/store.js';
+import { activeServer, rememberServer } from './server/store.js';
 import { discover, OUTCOME } from './server/discover.js';
 import { createUpdateBanner } from './updates/banner.js';
 import { createLink } from './net/link.js';
@@ -123,8 +123,20 @@ async function sendDiagnostics(report) {
  * other is four columns edge to edge. So the room replaces the app element outright rather
  * than mounting inside the auth shell.
  */
-function enterRoom({ api, user, token, server }) {
-    const link = createLink({ origin: server.origin, token });
+async function enterRoom({ api, user, token, server, autoJoin = true }) {
+    // Features are re-learned at every entry, never trusted from the stored snapshot.
+    // The cached copy dates from when the server was ADDED — a server upgraded since
+    // then would leave whole features (the DM rail, browsing) silently dead here.
+    let features = server?.lastSeen?.features ?? [];
+    try {
+        const info = await api.request('GET', '/api/server-info');
+        if (Array.isArray(info?.features)) {
+            features = info.features;
+            rememberServer({ address: server.origin, info });
+        }
+    } catch { /* offline start: the stored snapshot is the best truth available */ }
+
+    const link = createLink({ origin: server.origin, token, autoJoin });
 
     app.innerHTML = '';
     const room = createRoom({
@@ -133,9 +145,8 @@ function enterRoom({ api, user, token, server }) {
         link,
         user,
         server,
-        // What this server actually has switched on, learned during discovery. The settings
-        // screen uses it so a section for a disabled module says so rather than 404ing.
-        features: server?.lastSeen?.features ?? [],
+        // What this server actually has switched on, learned moments ago.
+        features,
         onSignedOut() {
             room.destroy();
             boot();
@@ -172,8 +183,8 @@ async function boot() {
 
     const auth = createAuth({
         mount: $('#stage'),
-        onSignedIn({ api, user, token, server }) {
-            enterRoom({ api, user, token, server });
+        onSignedIn({ api, user, token, server, autoJoin }) {
+            enterRoom({ api, user, token, server, autoJoin });
         },
     });
 

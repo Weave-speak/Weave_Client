@@ -77,6 +77,7 @@ export function createLink({
     origin,
     token,
     channelId = null,
+    autoJoin = true,
     onEvent = () => {},
     onState = () => {},
     // Injected in tests. Nothing else about the logic changes.
@@ -107,6 +108,10 @@ export function createLink({
     let cid = null;
     let wantOpen = false;
     let joined = false;
+    // Standing NOWHERE is a standing too, and it must survive a reconnect: without
+    // this, a network blip would rejoin a deliberately-roomless reader straight into
+    // the default room. Seeded from the arrival preference, updated by noteChannel.
+    let nowhere = autoJoin === false;
     let lastChannelId = channelId;
     let failure = null;
     const queue = [];
@@ -235,7 +240,12 @@ export function createLink({
                 raw('join', {
                     token,
                     protocol: { min: CLIENT_PROTOCOL.MIN, max: CLIENT_PROTOCOL.MAX },
-                    ...(lastChannelId ? { channelId: lastChannelId } : {}),
+                    ...(!nowhere && lastChannelId ? { channelId: lastChannelId } : {}),
+                    // False means "arrive standing nowhere": signed in, reading anything,
+                    // heard by no one until a room is chosen. Applied on the first join
+                    // from the arrival preference, and on reconnects from wherever the
+                    // session actually stood when the line dropped.
+                    ...(nowhere ? { autoJoin: false } : {}),
                 });
                 return;
 
@@ -319,7 +329,12 @@ export function createLink({
         },
 
         /** Remember where we are, so a reconnect returns here rather than to the default. */
-        noteChannel(id) { lastChannelId = id ?? lastChannelId; },
+        noteChannel(id) {
+            // null is a statement, not an omission: the session now stands nowhere.
+            if (id === null) { nowhere = true; return; }
+            nowhere = false;
+            lastChannelId = id;
+        },
 
         /** Deliberate. The server announces the departure at once instead of waiting. */
         close() {

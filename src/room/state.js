@@ -161,13 +161,18 @@ export function createRoomState({ me = null, server = {} } = {}) {
             switch (msg.type) {
                 case 'joined':
                 case 'moved': {
-                    const target = msg.channel?.id ?? state.currentChannelId;
+                    const target = msg.channel?.id ?? null;
 
-                    // A snapshot REPLACES the roster for the room being entered rather than
-                    // merging into it. Merging is how a peer that left while we were away
-                    // lingers for ever: nothing ever tells us about a departure we missed.
-                    for (const [cid, peer] of state.peers) {
-                        if (peer.channelId === target) state.peers.delete(cid);
+                    // 'joined' now carries the WHOLE roster — every room, and the people
+                    // standing nowhere — so it replaces everything. Anything held from
+                    // before the (re)connection is exactly the stale state that made
+                    // departed peers linger. 'moved' still scopes to the room entered.
+                    if (msg.type === 'joined') {
+                        state.peers.clear();
+                    } else {
+                        for (const [cid, peer] of state.peers) {
+                            if (peer.channelId === target) state.peers.delete(cid);
+                        }
                     }
                     for (const peer of msg.peers ?? []) state.peers.set(peer.cid, peer);
 
@@ -185,8 +190,18 @@ export function createRoomState({ me = null, server = {} } = {}) {
                     }
 
                     state.currentChannelId = target;
-                    // Joining a room is also choosing to look at it.
+                    // Joining a room is also choosing to look at it. Arriving NOWHERE
+                    // views nothing until something is picked.
                     state.viewChannelId = null;
+                    break;
+                }
+
+                case 'left': {
+                    // Out of the room, still on the server: presence survives, the view
+                    // stays on whatever was being read (or nothing, honestly shown).
+                    const self = state.peers.get(state.selfCid);
+                    if (self) self.channelId = null;
+                    state.currentChannelId = null;
                     break;
                 }
 

@@ -396,3 +396,55 @@ test('a fresh word moves its thread to the top and duplicates are refused', () =
     state.clearDmUnread('t2');
     assert.equal(state.toShell().dms.find((d) => d.id === 't2').unread, 0);
 });
+
+/* ── standing nowhere ─────────────────────────────────────────────────────── */
+
+test('a joined snapshot replaces the WHOLE roster, not one room of it', () => {
+    const state = fresh();
+    // A stale record from before a reconnect, in a different room than the join target.
+    state.apply({ type: 'peer_joined', peer: peer('cid-old', 'u-moth', 'moth', { channelId: 'c-lib' }) });
+
+    state.apply({
+        type: 'joined',
+        channel: { id: 'c-hall', name: 'The Great Hall', kind: 'both' },
+        self: peer('cid-me', 'u-me', 'ghostbyte'),
+        peers: [peer('cid-kes', 'u-kes', 'kestrel', { channelId: 'c-lib' })],
+    });
+
+    assert.equal(state.raw.peers.has('cid-old'), false, 'the stale record is gone');
+    const lib = state.toShell().rooms.find((r) => r.id === 'c-lib');
+    assert.deepEqual(lib.occupants.map((p) => p.username), ['kestrel'],
+        'people in OTHER rooms arrive with the snapshot');
+});
+
+test('arriving nowhere views nothing and stands nowhere', () => {
+    const state = fresh();
+    state.apply({
+        type: 'joined',
+        channel: null,
+        self: peer('cid-me', 'u-me', 'ghostbyte', { channelId: null }),
+        peers: [],
+    });
+    const view = state.toShell();
+    assert.equal(view.room.id, undefined);
+    assert.equal(view.me.roomName, null);
+    assert.equal(state.raw.currentChannelId, null);
+});
+
+test('leaving stands you nowhere but keeps what you were reading', () => {
+    const state = fresh();
+    state.apply({
+        type: 'joined',
+        channel: { id: 'c-hall', name: 'The Great Hall', kind: 'both' },
+        self: peer('cid-me', 'u-me', 'ghostbyte'),
+        peers: [],
+    });
+    state.setView('c-notes');
+    state.apply({ type: 'left', channel: null });
+
+    const view = state.toShell();
+    assert.equal(view.me.roomName, null, 'out of the room');
+    assert.equal(view.room.id, 'c-notes', 'still reading what was open');
+    const hall = view.rooms.find((r) => r.id === 'c-hall');
+    assert.deepEqual(hall.occupants, [], 'the room forgot you');
+});

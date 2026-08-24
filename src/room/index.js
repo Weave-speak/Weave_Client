@@ -399,6 +399,11 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         }
         if (msg.type === 'dm:accepted') return;   // our own echo carries the message frame
 
+        if (msg.type === 'left') {
+            state.apply(msg);
+            return;
+        }
+
         if (msg.type === 'moved' || msg.type === 'joined') {
             msgNoise.reset();
             state.apply(msg);
@@ -414,9 +419,11 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             }
             // Entering a room is seeing its latest page, so the backlog is acked too —
             // without this, days of history in your home room stay "unread" for ever.
-            loadHistory(msg.channel?.id)
-                .then(() => { if (canBrowse && msg.channel?.id) ackRead(msg.channel.id); })
+            // Arriving NOWHERE loads nothing and starts nothing.
+            if (msg.channel?.id) loadHistory(msg.channel.id)
+                .then(() => { if (canBrowse) ackRead(msg.channel.id); })
                 .catch(() => {});
+            if (!msg.channel) return;
             startVoice(msg).catch((err) => {
                 voiceState = { state: 'failed', message: err.message };
                 paint();
@@ -617,7 +624,12 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             }
 
             if (event.target.closest('[data-leave]')) {
-                signOut();
+                // Disconnect from VOICE, stay on the server — the tooltip always said
+                // "Leave the room" and it now means it. Sign out lives in settings.
+                voice.stop();
+                voiceState = { state: 'idle' };
+                link.noteChannel(null);
+                link.send('leave');
                 return;
             }
 
@@ -944,6 +956,8 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         input.style.height = 'auto';
         if (state.raw.activeDmId) {
             link.send('dm:send', { threadId: state.raw.activeDmId, body });
+        } else if (!(state.raw.viewChannelId ?? state.raw.currentChannelId)) {
+            return;   // standing nowhere, viewing nothing: there is no "here" to message
         } else {
             link.send('text-chat:send', {
                 channelId: state.raw.viewChannelId ?? state.raw.currentChannelId,

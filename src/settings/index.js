@@ -140,6 +140,10 @@ export function createSettings({ api, server, me: signedInAs, features = [], onP
                 input.addEventListener('input', () => {
                     const readout = $(`[data-value-for="${input.id}"]`, modal.element);
                     if (readout) readout.textContent = input.value + (input.id === 'micGain' ? '%' : '');
+                    if (input.id === 'micGain') {
+                        const reset = $('[data-reset-gain]', modal.element);
+                        if (reset) reset.hidden = Number(input.value) === 100;
+                    }
                     if (input.id === 'gateSensitivity') {
                         const mark = $('#micThreshMark', modal.element);
                         if (mark) mark.style.left = `${input.value}%`;
@@ -177,6 +181,16 @@ export function createSettings({ api, server, me: signedInAs, features = [], onP
 
         $('[data-capture-key]', modal.element)?.addEventListener('click', (event) => {
             captureKey(event.currentTarget);
+        });
+
+        $('[data-reset-gain]', modal.element)?.addEventListener('click', async () => {
+            const input = $('#micGain', modal.element);
+            if (input) {
+                input.value = 100;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+            await set('micGain', '100');
+            renderPanel();
         });
 
         $('[data-create-invite]', modal.element)?.addEventListener('click', createInvite);

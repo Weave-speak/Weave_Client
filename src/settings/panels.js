@@ -142,18 +142,6 @@ export function profilePanel({ me = {}, features = [] } = {}) {
     <p class="panel-lead">Microphone and voice behaviour has moved to Voice &amp; Audio.</p>`;
 }
 
-/** A range row: label, live value readout, and the slider itself. */
-const slider = ({ id, label, hint, min, max, value, unit = '' }) => `
-  <div class="setting">
-    <label class="setting-text" for="${esc(id)}">
-      <span class="setting-label">${esc(label)}
-        <span class="slider-value" data-value-for="${esc(id)}">${esc(value)}${esc(unit)}</span></span>
-      ${hint ? `<span class="setting-hint">${esc(hint)}</span>` : ''}
-    </label>
-    <input class="setting-range" type="range" id="${esc(id)}" data-setting="${esc(id)}"
-           min="${esc(min)}" max="${esc(max)}" value="${esc(value)}">
-  </div>`;
-
 const choose = ({ id, label, hint, value, options }) => `
   <div class="setting">
     <label class="setting-text" for="${esc(id)}">
@@ -201,12 +189,17 @@ export function voicePanel({ prefs = {}, devices = [], cameras = [], features = 
 
     <h3 class="panel-section">Processing</h3>
 
-    ${slider({
-        id: 'micGain',
-        label: 'Input gain',
-        hint: 'Your loudness before anything else. 100 is untouched; above it boosts a quiet microphone.',
-        min: 0, max: 200, value: prefs.micGain ?? 100, unit: '%',
-    })}
+    <div class="setting">
+      <label class="setting-text" for="micGain">
+        <span class="setting-label">Input gain
+          <span class="slider-value" data-value-for="micGain">${esc(prefs.micGain ?? 100)}%</span>
+          <button type="button" class="reset-link" data-reset-gain
+                  ${Number(prefs.micGain ?? 100) === 100 ? 'hidden' : ''}>reset</button></span>
+        <span class="setting-hint">Your loudness before anything else. 100 is untouched; above it boosts a quiet microphone.</span>
+      </label>
+      <input class="setting-range" type="range" id="micGain" data-setting="micGain"
+             min="0" max="200" value="${esc(prefs.micGain ?? 100)}">
+    </div>
 
     ${toggle({
         id: 'noiseGate',
@@ -215,19 +208,21 @@ export function voicePanel({ prefs = {}, devices = [], cameras = [], features = 
         checked: Boolean(prefs.noiseGate),
     })}
 
-    <div class="setting${prefs.noiseGate ? '' : ' is-disabled'}">
-      <label class="setting-text" for="gateSensitivity">
+    <div class="setting gate-setting${prefs.noiseGate ? '' : ' is-disabled'}">
+      <div class="setting-text">
         <span class="setting-label">Sensitivity
           <span class="slider-value" data-value-for="gateSensitivity">${esc(prefs.gateSensitivity ?? 64)}</span></span>
-        <span class="setting-hint">Higher closes on more. Set it just above where the bar sits while you are silent.</span>
-        <span class="mic-meter" aria-hidden="true">
+        <span class="setting-hint">One bar, two facts: the fill is your microphone, the line is the gate.
+          Drag the line to sit just above where the fill rests while you are silent.</span>
+        <span class="mic-meter is-control">
           <i class="mic-meter-fill" id="micMeterFill"></i>
           <i class="mic-meter-mark" id="micThreshMark" style="left: ${esc(prefs.gateSensitivity ?? 64)}%"></i>
+          <input class="meter-range" type="range" id="gateSensitivity" data-setting="gateSensitivity"
+                 min="0" max="100" value="${esc(prefs.gateSensitivity ?? 64)}"
+                 aria-label="Gate sensitivity" ${prefs.noiseGate ? '' : 'disabled'}>
         </span>
         <span class="setting-note" id="gateState">The meter runs while you are in a voice room.</span>
-      </label>
-      <input class="setting-range" type="range" id="gateSensitivity" data-setting="gateSensitivity"
-             min="0" max="100" value="${esc(prefs.gateSensitivity ?? 64)}" ${prefs.noiseGate ? '' : 'disabled'}>
+      </div>
     </div>
 
     ${toggle({
@@ -296,8 +291,7 @@ export function voicePanel({ prefs = {}, devices = [], cameras = [], features = 
             checked: Boolean(prefs.afkExempt),
         })
         : notYet('AFK exemption', 'The away module is switched off on this server.')}
-
-    ${notYet('Noise gate, input gain and volume boost', 'Arrives with the media update, alongside camera and screen share.')}`;
+`;
 }
 
 export function appearancePanel({ prefs = {} } = {}) {

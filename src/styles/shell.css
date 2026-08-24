@@ -1425,6 +1425,29 @@
 .switch:checked::after { transform: translateX(18px); background: var(--on-accent); }
 .switch:disabled { cursor: not-allowed; }
 
+/* Selects in settings rows were NAKED natives — Windows painted them highlight-blue
+   with unreadable text. They dress like every other input now. */
+.setting select {
+    flex: none;
+    max-width: 240px;
+    background: var(--surface-0);
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    color: var(--ink);
+    padding: var(--s-2) var(--s-3);
+    font-size: var(--t-base);
+}
+.setting select option { background: var(--surface-1); color: var(--ink); }
+
+.reset-link {
+    margin-left: var(--s-2);
+    font-size: var(--t-xs);
+    color: var(--accent-hi);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+.reset-link:hover { color: var(--ink); }
+
 /* Sliders and the mic meter: the reflexive half of the panel. */
 .setting-range { flex: none; width: 190px; accent-color: var(--accent); }
 .slider-value {
@@ -1443,6 +1466,28 @@
     border: 1px solid var(--line-soft);
     overflow: hidden;
 }
+/* The one-bar form: the meter IS the slider. The range rides invisibly on top; its
+   thumb is the same line the mark draws, so dragging feels like moving the line. */
+.mic-meter.is-control { height: 22px; overflow: visible; border-radius: var(--r-2); }
+.mic-meter.is-control .mic-meter-fill { border-radius: var(--r-2) 0 0 var(--r-2); }
+.meter-range {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    margin: 0;
+    appearance: none;
+    background: transparent;
+    cursor: ew-resize;
+}
+.meter-range::-webkit-slider-thumb {
+    appearance: none;
+    width: 10px;
+    height: 30px;
+    border-radius: var(--r-1);
+    background: transparent;
+    border: 0;
+}
+.meter-range:disabled { cursor: not-allowed; }
 .mic-meter-fill {
     display: block;
     height: 100%;
@@ -1454,9 +1499,12 @@
 .mic-meter-fill.open { background: var(--ok); }
 .mic-meter-mark {
     position: absolute;
-    top: -2px; bottom: -2px;
-    width: 2px;
+    top: -3px; bottom: -3px;
+    width: 3px;
+    border-radius: var(--r-1);
     background: var(--accent-hi);
+    box-shadow: 0 0 6px rgb(var(--accent-rgb) / 0.6);
+    pointer-events: none;
 }
 
 .key-capture {

@@ -91,9 +91,16 @@ async function sendDiagnostics(report) {
     const server = activeServer();
     if (!server || !report?.text) return false;
     try {
+        // Attributed when possible, anonymous when not. A signed-in report carries the
+        // stored token so the server can name the account; the endpoint accepts either,
+        // because an updater that broke before sign-in still deserves to be heard.
+        const token = await platform.tokens.get(server.id).catch(() => null);
         const response = await fetch(`${server.origin}/api/diagnostics`, {
             method: 'POST',
-            headers: { 'content-type': 'application/json' },
+            headers: {
+                'content-type': 'application/json',
+                ...(token ? { authorization: `Bearer ${token}` } : {}),
+            },
             credentials: 'omit',
             body: JSON.stringify({
                 kind: 'update-failure',

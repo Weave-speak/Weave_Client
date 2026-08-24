@@ -12,6 +12,7 @@
 
 import { shell, connection as connectionPill } from './shell.js';
 import { roomGroups, selfBar } from './views/sidebar.js';
+import { rail, dmSearchView, dmSearchResults } from './views/rail.js';
 import { memberGroups } from './views/members.js';
 import { messageList, typingLine, voiceNoticeMarkup, emptyState, roomGlyph } from './views/timeline.js';
 import { createRoomState } from './state.js';
@@ -72,6 +73,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
     // Text channels are openable-from-anywhere only when the server broadcasts chat
     // that way; against an older server every click is still a move.
     const canBrowse = features.includes('chat.browse');
+    const canDm = features.includes('module.dm');
 
     const voice = createVoice({
         link,
@@ -218,6 +220,8 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
         setHtml('#roomScroll', roomGroups(view.rooms, view.me));
         setHtml('#selfBarSlot', selfBar({ ...view.me, pttOn: Boolean(prefs.pushToTalk) }));
+        const railEl = $('.rail', mount);
+        if (railEl) railEl.outerHTML = rail({ dms: view.dms, inRoom: !view.dmOpen });
         setHtml('#membersScroll', memberGroups(view.people, view.room.id));
         setText('#membersCount', `Members — ${view.people.length}`);
         setHtml('.typing', typingLine(view.typing));
@@ -278,6 +282,11 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         if (title) title.textContent = room.name ?? 'Room';
         const icon = $('#roomIcon', mount);
         if (icon) icon.innerHTML = roomGlyph(room);
+        const topic = $('#roomTopic', mount);
+        if (topic) {
+            topic.textContent = room.topic ?? '';
+            topic.hidden = !room.topic;
+        }
         const composer = $('#composerInput', mount);
         if (composer) composer.placeholder = `Message ${room.name ?? 'the room'}…`;
     }
@@ -368,6 +377,28 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             return;
         }
 
+        if (msg.type === 'dm:message' && msg.message) {
+            const record = msg.message;
+            const known = state.raw.dms.some((t) => t.id === record.threadId);
+            if (!known) {
+                // Someone opened a brand-new thread by writing into it: fetch the rail
+                // fresh so their tile appears, then account for this first word.
+                api.request('GET', '/api/dm/threads')
+                    .then(({ threads = [] }) => { state.setDmThreads(threads); paint(); })
+                    .catch(() => {});
+            }
+            state.addDmMessage(record.threadId, record);
+            if (record.authorId !== state.raw.me?.id) {
+                if (state.raw.activeDmId === record.threadId && document.visibilityState !== 'hidden') {
+                    ackDmRead(record.threadId);
+                } else {
+                    state.bumpDmUnread(record.threadId);
+                }
+            }
+            return;
+        }
+        if (msg.type === 'dm:accepted') return;   // our own echo carries the message frame
+
         if (msg.type === 'moved' || msg.type === 'joined') {
             msgNoise.reset();
             state.apply(msg);
@@ -375,6 +406,11 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                 api.request('GET', '/api/chat/reads')
                     .then(({ channels = [] }) => state.setReads(channels))
                     .catch(() => { /* badges start at zero; the frames keep them honest */ });
+            }
+            if (msg.type === 'joined' && canDm) {
+                api.request('GET', '/api/dm/threads')
+                    .then(({ threads = [] }) => state.setDmThreads(threads))
+                    .catch(() => { /* the rail stays empty; a reconnect retries */ });
             }
             // Entering a room is seeing its latest page, so the backlog is acked too —
             // without this, days of history in your home room stay "unread" for ever.
@@ -510,6 +546,21 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
     function wire() {
         mount.addEventListener('click', (event) => {
+            const dmTile = event.target.closest('[data-dm]');
+            if (dmTile) {
+                openDm(dmTile.dataset.dm);
+                return;
+            }
+            if (event.target.closest('[data-home]')) {
+                state.closeDm();
+                paint();
+                return;
+            }
+            if (event.target.closest('[data-new-dm]')) {
+                if (canDm) toggleDmSearch();
+                return;
+            }
+
             const chat = event.target.closest('[data-open-chat]');
             if (chat) {
                 openTextChannel(chat.dataset.openChat);
@@ -521,6 +572,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             if (room) {
                 const id = room.dataset.open;
                 const target = state.raw.channels.find((c) => c.id === id);
+                state.closeDm();
                 if (canBrowse && target?.kind === 'text') {
                     // A text channel is opened, not entered: voice stays wherever the
                     // reader is standing.
@@ -749,6 +801,25 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         paint();
     }
 
+    async function openDm(threadId) {
+        state.openDm(threadId);
+        paint();
+        try {
+            const reply = await api.request('GET', `/api/dm/threads/${encodeURIComponent(threadId)}/messages?limit=50`);
+            state.setDmMessages(threadId, reply.messages ?? []);
+            ackDmRead(threadId);
+        } catch { /* the thread renders empty; sending still works */ }
+        paint();
+    }
+
+    function ackDmRead(threadId) {
+        const list = state.raw.dmMessages.get(threadId) ?? [];
+        const newest = list.at(-1);
+        state.clearDmUnread(threadId);
+        if (!newest?.id) return;
+        link.send('dm:read', { threadId, createdAt: newest.createdAt, id: newest.id });
+    }
+
     let ackTimer = 0;
 
     /** Tell the server the newest message here has been seen, account-wide. */
@@ -773,6 +844,55 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         const scroller = $('#timeline', mount);
         if (!scroller) return false;
         return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < STICK_PX;
+    }
+
+    /* ── starting a new DM ───────────────────────────────────────────────── */
+
+    function toggleDmSearch() {
+        const existing = $('#dmSearch', mount);
+        if (existing) { existing.remove(); return; }
+
+        const panel = document.createElement('div');
+        panel.id = 'dmSearch';
+        panel.className = 'dm-search';
+        panel.innerHTML = dmSearchView();
+        mount.append(panel);
+
+        const input = panel.querySelector('#dmSearchInput');
+        const list = panel.querySelector('#dmSearchList');
+
+        const paintList = () => {
+            const q = input.value.trim().toLowerCase();
+            const me = state.raw.me?.username;
+            const options = state.toShell().people
+                .filter((p) => p.username && p.username !== me)
+                .filter((p) => !q
+                    || p.username.toLowerCase().includes(q)
+                    || (p.displayName ?? '').toLowerCase().includes(q))
+                .slice(0, 12);
+            list.innerHTML = dmSearchResults(options);
+
+            list.querySelectorAll('[data-dm-person]').forEach((row) => {
+                row.addEventListener('click', async () => {
+                    panel.remove();
+                    try {
+                        const { thread } = await api.request('POST', '/api/dm/threads', {
+                            body: { userId: row.dataset.dmPerson },
+                        });
+                        const { threads = [] } = await api.request('GET', '/api/dm/threads');
+                        state.setDmThreads(threads);
+                        openDm(thread.id);
+                    } catch { /* the rail is unchanged; nothing was promised */ }
+                });
+            });
+        };
+
+        input.addEventListener('input', paintList);
+        panel.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') panel.remove();
+        });
+        paintList();
+        input.focus();
     }
 
     /** The narrow-window drawer: the sidebar, floating over the room. */
@@ -822,10 +942,14 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         // that on a slow link people retype, or send twice.
         input.value = '';
         input.style.height = 'auto';
-        link.send('text-chat:send', {
-            channelId: state.raw.viewChannelId ?? state.raw.currentChannelId,
-            body,
-        });
+        if (state.raw.activeDmId) {
+            link.send('dm:send', { threadId: state.raw.activeDmId, body });
+        } else {
+            link.send('text-chat:send', {
+                channelId: state.raw.viewChannelId ?? state.raw.currentChannelId,
+                body,
+            });
+        }
     }
 
     /* ── lifecycle ───────────────────────────────────────────────────────── */

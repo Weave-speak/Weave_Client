@@ -225,3 +225,11 @@ test('every interactive control has an accessible name', () => {
     const suspicious = unnamed.filter((tag) => !namedByContent.test(tag));
     assert.deepEqual(suspicious, [], 'icon-only buttons must carry aria-label');
 });
+
+test('the DM picker list is inert against hostile names', async () => {
+    const { dmSearchResults } = await import('../src/room/views/rail.js');
+    const markup = dmSearchResults([{ id: 'u1', username: '<script>x</script>', displayName: '<b>bold</b>' }]);
+    assert.ok(!markup.includes('<script>'));
+    assert.ok(!markup.includes('<b>bold</b>'));
+    assert.match(dmSearchResults([]), /Nobody by that name/);
+});

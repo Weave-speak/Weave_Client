@@ -7,7 +7,7 @@
 import { esc } from '../../ui/dom.js';
 import { userHue } from '../../ui/hue.js';
 import { icons } from '../icons.js';
-import { initials } from './parts.js';
+import { initials, avatar } from './parts.js';
 
 /** Anything past this reads as "a lot", and the exact number stops being useful. */
 const BADGE_CAP = 99;
@@ -47,3 +47,24 @@ export function rail({ dms = [], inRoom = true } = {}) {
               title="New message" aria-label="Start a direct message">${icons.plus}</button>
     </nav>`;
 }
+
+/* ── starting a new DM ────────────────────────────────────────────────────── */
+
+/** The picker panel beside the plus button. The list is painted separately as you type. */
+export const dmSearchView = () => `
+  <p class="dm-search-title">Message someone</p>
+  <div class="search-box">
+    ${icons.search}
+    <input type="search" id="dmSearchInput" placeholder="Find a person"
+           autocomplete="off" spellcheck="false" aria-label="Find a person">
+  </div>
+  <ul class="dm-search-list" id="dmSearchList"></ul>`;
+
+export const dmSearchResults = (people = []) => (people.length
+    ? people.map((p) => `
+        <li><button type="button" class="dm-search-row" data-dm-person="${esc(p.id)}">
+          ${avatar(p, { size: 'sm' })}
+          <span class="mention-name">${esc(p.displayName ?? p.username)}</span>
+          <span class="mention-user">@${esc(p.username)}</span>
+        </button></li>`).join('')
+    : '<li class="dm-search-none">Nobody by that name here.</li>');

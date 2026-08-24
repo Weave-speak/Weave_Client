@@ -335,3 +335,64 @@ test('typing indicators follow the viewed channel, not the voice room', () => {
     state.setView('c-notes');
     assert.deepEqual(state.toShell().typing, ['kestrel']);
 });
+
+/* ── direct messages ──────────────────────────────────────────────────────── */
+
+const thread = (id, username, extra = {}) => ({
+    id, other: { id: `u-${username}`, username, displayName: username, presence: 'online' },
+    unread: 0, lastMessageAt: null, ...extra,
+});
+
+test('opening a DM takes over the middle column and the rail knows', () => {
+    const state = fresh();
+    state.apply({
+        type: 'joined',
+        channel: { id: 'c-hall', name: 'The Great Hall', kind: 'both' },
+        self: peer('cid-me', 'u-me', 'ghostbyte'),
+        peers: [],
+    });
+    state.setDmThreads([thread('t1', 'kestrel')]);
+    state.openDm('t1');
+
+    const view = state.toShell();
+    assert.equal(view.dmOpen, true);
+    assert.equal(view.room.kind, 'dm');
+    assert.equal(view.room.name, 'kestrel');
+    assert.match(view.room.topic, /just the two of you/i);
+    assert.equal(view.dms[0].current, true);
+    assert.equal(view.me.roomName, 'The Great Hall', 'voice presence is untouched');
+
+    state.closeDm();
+    assert.equal(state.toShell().dmOpen, false);
+});
+
+test('DM records render through the same timeline pipeline', () => {
+    const state = fresh();
+    state.setDmThreads([thread('t1', 'kestrel')]);
+    state.openDm('t1');
+    state.addDmMessage('t1', {
+        id: 'd1', threadId: 't1', authorId: 'u-kes', authorName: 'kestrel',
+        body: 'psst', createdAt: 1000,
+    });
+    const items = state.toShell().items.filter((i) => i.kind === 'message');
+    assert.equal(items.length, 1);
+    assert.equal(items[0].text, 'psst');
+    assert.equal(items[0].author.username, 'kestrel', 'authorId maps onto the users table');
+});
+
+test('a fresh word moves its thread to the top and duplicates are refused', () => {
+    const state = fresh();
+    state.setDmThreads([
+        thread('t1', 'kestrel', { lastMessageAt: 2000 }),
+        thread('t2', 'moth', { lastMessageAt: 1000 }),
+    ]);
+    const record = { id: 'd1', threadId: 't2', authorId: 'u-moth', authorName: 'moth', body: 'hi', createdAt: 3000 };
+    assert.equal(state.addDmMessage('t2', record), true);
+    assert.equal(state.addDmMessage('t2', record), false);
+    assert.equal(state.raw.dms[0].id, 't2', 'activity reorders the rail');
+
+    state.bumpDmUnread('t2');
+    assert.equal(state.toShell().dms.find((d) => d.id === 't2').unread, 1);
+    state.clearDmUnread('t2');
+    assert.equal(state.toShell().dms.find((d) => d.id === 't2').unread, 0);
+});

@@ -40,6 +40,11 @@ export function createRoomState({ me = null, server = {} } = {}) {
         // channelId -> { unread, mentions } for text-capable rooms, from the server's
         // read markers plus live message frames.
         unreads: new Map(),
+        // Direct messages: the rail. Threads come from GET /api/dm/threads; opening one
+        // takes over the middle column the way viewing a text channel does.
+        dms: [],
+        activeDmId: null,
+        dmMessages: new Map(),    // threadId -> [records]
         selfCid: null,
         messages: new Map(),      // channelId -> [items]
         typing: new Map(),        // channelId -> Map(username -> expiresAt)
@@ -302,6 +307,53 @@ export function createRoomState({ me = null, server = {} } = {}) {
             emit();
         },
 
+        /* ── direct messages ─────────────────────────────────────────────── */
+
+        setDmThreads(threads = []) {
+            state.dms = threads;
+            emit();
+        },
+
+        openDm(threadId) {
+            state.activeDmId = threadId;
+            emit();
+        },
+
+        closeDm() {
+            if (!state.activeDmId) return;
+            state.activeDmId = null;
+            emit();
+        },
+
+        setDmMessages(threadId, items = []) {
+            state.dmMessages.set(threadId, items);
+            emit();
+        },
+
+        addDmMessage(threadId, record) {
+            const list = state.dmMessages.get(threadId) ?? [];
+            if (record.id && list.some((m) => m.id === record.id)) return false;
+            state.dmMessages.set(threadId, [...list, record]);
+            // The rail orders by activity; a fresh word moves the thread up.
+            const thread = state.dms.find((t) => t.id === threadId);
+            if (thread) {
+                thread.lastMessageAt = record.createdAt;
+                state.dms = [...state.dms].sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0));
+            }
+            emit();
+            return true;
+        },
+
+        bumpDmUnread(threadId) {
+            const thread = state.dms.find((t) => t.id === threadId);
+            if (thread) { thread.unread = (thread.unread ?? 0) + 1; emit(); }
+        },
+
+        clearDmUnread(threadId) {
+            const thread = state.dms.find((t) => t.id === threadId);
+            if (thread && thread.unread) { thread.unread = 0; emit(); }
+        },
+
         noteTyping(channelId, username, forMs = 5000) {
             const forChannel = state.typing.get(channelId) ?? new Map();
             forChannel.set(username, Date.now() + forMs);
@@ -315,11 +367,20 @@ export function createRoomState({ me = null, server = {} } = {}) {
             const viewed = viewedChannel();
             const roster = people();
             const self = roster.find((p) => p.id === state.me?.id);
+            const activeDm = state.dms.find((t) => t.id === state.activeDmId) ?? null;
 
             return {
                 connection: state.connection,
                 server: { name: state.server.name, memberCount: state.users.size },
-                dms: [],
+                dmOpen: Boolean(activeDm),
+                dms: state.dms.map((t) => ({
+                    id: t.id,
+                    username: t.other?.username,
+                    displayName: t.other?.displayName || t.other?.username,
+                    presence: t.other?.presence,
+                    unread: t.unread ?? 0,
+                    current: t.id === state.activeDmId,
+                })),
                 rooms: state.channels.map((c) => ({
                     id: c.id,
                     name: c.name,
@@ -336,9 +397,16 @@ export function createRoomState({ me = null, server = {} } = {}) {
                     mentions: state.unreads.get(c.id)?.mentions ?? 0,
                     occupants: occupantsOf(c.id),
                 })),
-                room: viewed
-                    ? { id: viewed.id, name: viewed.name, kind: viewed.kind }
-                    : {},
+                room: activeDm
+                    ? {
+                        id: activeDm.id,
+                        name: activeDm.other?.displayName || activeDm.other?.username || 'Direct message',
+                        kind: 'dm',
+                        topic: 'Private thread · just the two of you',
+                    }
+                    : viewed
+                        ? { id: viewed.id, name: viewed.name, kind: viewed.kind }
+                        : {},
                 me: {
                     ...state.me,
                     presence: self?.presence ?? 'live',
@@ -352,11 +420,13 @@ export function createRoomState({ me = null, server = {} } = {}) {
                 },
                 // Stored records become timeline items here, so the views never have to
                 // know what a database row looks like and day separators are computed once.
-                items: toTimelineItems(state.messages.get(state.viewChannelId ?? state.currentChannelId) ?? [], {
+                items: toTimelineItems(activeDm
+                    ? (state.dmMessages.get(activeDm.id) ?? []).map((m) => ({ ...m, userId: m.authorId }))
+                    : state.messages.get(state.viewChannelId ?? state.currentChannelId) ?? [], {
                     users: state.users,
                     me: state.me,
                 }),
-                typing: liveTyping(),
+                typing: activeDm ? [] : liveTyping(),
                 people: roster,
             };
         },

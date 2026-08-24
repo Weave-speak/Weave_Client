@@ -1101,6 +1101,36 @@
 }
 .history-note.cap { color: var(--ink-ghost); }
 
+/* ── Starting a DM ────────────────────────────────────────────────────────── */
+
+/* Anchored beside the rail's plus button: pick a person, get a thread. */
+.dm-search {
+    position: fixed;
+    left: calc(var(--rail-w) + var(--s-2));
+    top: calc(var(--titlebar-h) + 96px);
+    width: 280px;
+    padding: var(--s-3);
+    background: var(--surface-4);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    box-shadow: var(--shadow-2);
+    z-index: var(--z-menu);
+    animation: pop-in var(--dur-fast) var(--ease);
+}
+.dm-search-title { margin: 0 0 var(--s-2); font-weight: 620; font-size: var(--t-base); }
+.dm-search-list { list-style: none; margin: var(--s-2) 0 0; padding: 0; max-height: 300px; overflow-y: auto; }
+.dm-search-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    width: 100%;
+    padding: var(--s-1) var(--s-2);
+    border-radius: var(--r-2);
+    text-align: left;
+}
+.dm-search-row:hover { background: var(--accent-tint-hi); }
+.dm-search-none { padding: var(--s-3); color: var(--ink-faint); font-size: var(--t-sm); }
+
 /* ── The empty room ───────────────────────────────────────────────────────── */
 
 .timeline-empty {

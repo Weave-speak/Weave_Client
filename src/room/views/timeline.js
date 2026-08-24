@@ -194,8 +194,9 @@ export const voiceNoticeMarkup = (status) => {
 
 /** The glyph for what kind of place this is. Painted at mount and on every view change. */
 export const roomGlyph = (room = {}) => (room.private ? icons.lock
-    : room.kind === 'text' ? '<span class="room-hash" aria-hidden="true">#</span>'
-        : icons.speaker);
+    : room.kind === 'dm' ? icons.chat
+        : room.kind === 'text' ? '<span class="room-hash" aria-hidden="true">#</span>'
+            : icons.speaker);
 
 /**
  * A room with no messages yet, saying so.
@@ -220,7 +221,7 @@ export function timeline({ room = {}, items = [], typing = [], voice = {} } = {}
                 title="Rooms" aria-label="Show the room list">${icons.menu}</button>
         <span id="roomIcon" class="room-icon">${roomGlyph(room)}</span>
         <h1>${esc(room.name ?? 'Room')}</h1>
-        ${room.topic ? `<span class="room-topic">${esc(room.topic)}</span>` : ''}
+        <span class="room-topic" id="roomTopic" ${room.topic ? '' : 'hidden'}>${esc(room.topic ?? '')}</span>
         <span class="room-head-spacer"></span>
         <button type="button" class="icon-btn" data-toggle-members
                 title="Members" aria-label="Show or hide the member list">${icons.dots}</button>

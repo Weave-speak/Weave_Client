@@ -85,6 +85,11 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
     // that way; against an older server every click is still a move.
     const canBrowse = features.includes('chat.browse');
     const canDm = features.includes('module.dm');
+    const canCall = features.includes('dm.calls');
+    // The call the user is part of, and where to stand again when it ends.
+    let activeCallThreadId = null;
+    let preCallChannelId = null;
+    let ringModal = null;
 
     // key `${cid}:${slot}` -> MediaStream. 'self' is our own preview.
     const videoStreams = new Map();
@@ -358,6 +363,11 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         // Private huddles only. A DM is a strict pair — the server has no operation that
         // could grow one — so the button never shows there, whatever else is true.
         if (addBtn) addBtn.hidden = !(room.private && room.member && room.kind !== 'dm');
+        const callBtn = $('#dmCallBtn', mount);
+        const hangupBtn = $('#dmHangupBtn', mount);
+        const inThisCall = room.kind === 'dm' && activeCallThreadId === room.id;
+        if (callBtn) callBtn.hidden = !(canCall && room.kind === 'dm' && !inThisCall);
+        if (hangupBtn) hangupBtn.hidden = !inThisCall;
         const composer = $('#composerInput', mount);
         if (composer) composer.placeholder = `Message ${room.name ?? 'the room'}…`;
     }
@@ -414,7 +424,10 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
     /** The header's camera and screen buttons: shown where sending is possible, lit while on. */
     function paintMediaButtons() {
         const standing = state.raw.channels.find((c) => c.id === state.raw.currentChannelId);
-        const canSend = Boolean(standing) && standing.allowVideo !== false;
+        // A room the list does not contain is a call room: video belongs there most of all.
+        const canSend = standing
+            ? standing.allowVideo !== false
+            : Boolean(state.raw.currentChannelId);
         const cam = $('#camBtn', mount);
         const screen = $('#screenBtn', mount);
         if (cam) {
@@ -537,6 +550,49 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         }
         if (msg.type === 'dm:accepted') return;   // our own echo carries the message frame
 
+        if (msg.type === 'dm:ring') {
+            showRing(msg);
+            return;
+        }
+        if (msg.type === 'dm:call_live') {
+            activeCallThreadId = msg.threadId;
+            ringModal?.close();
+            ringModal = null;
+            paint();
+            return;
+        }
+        if (msg.type === 'dm:call_ended') {
+            ringModal?.close();
+            ringModal = null;
+            const wasMine = activeCallThreadId === msg.threadId || msg.threadId;
+            activeCallThreadId = null;
+            if (wasMine) {
+                const back = preCallChannelId;
+                preCallChannelId = null;
+                const standing = state.raw.currentChannelId;
+                const inCallRoom = standing && !state.raw.channels.some((c) => c.id === standing);
+                if (inCallRoom) {
+                    if (back && state.raw.channels.some((c) => c.id === back)) {
+                        link.noteChannel(back);
+                        link.send('move', { channelId: back });
+                    } else {
+                        voice.stop();
+                        link.noteChannel(null);
+                        link.send('leave');
+                    }
+                }
+                voiceState = {
+                    state: 'unavailable',
+                    message: msg.reason === 'declined' ? 'Call declined.'
+                        : msg.reason === 'no_answer' ? 'No answer.'
+                            : 'Call ended.',
+                };
+                paint();
+                setTimeout(() => { voiceState = { state: 'idle' }; paint(); }, 4000);
+            }
+            return;
+        }
+
         if (msg.type === 'left') {
             state.apply(msg);
             return;
@@ -545,6 +601,11 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         if (msg.type === 'moved' || msg.type === 'joined') {
             msgNoise.reset();
             stageFocus = null;
+            // Stepping INTO a call room remembers the room being left, so ending the
+            // call puts you back where you stood rather than nowhere.
+            if (msg.channel?.system && !state.raw.channels.some((c) => c.id === msg.channel.id)) {
+                preCallChannelId ??= state.raw.currentChannelId;
+            }
             state.apply(msg);
             // Both fetches land AFTER the joined frame has painted, so they must paint
             // again themselves — without it the rail and the badges sat empty until the
@@ -613,8 +674,11 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             await voice.consumePeer(peer);
         }
         // And one reconciliation straight after: anything that changed WHILE the loop
-        // above was awaiting is caught now rather than at the next beat.
+        // above was awaiting is caught now rather than at the next beat — and once more
+        // shortly after, for the peer whose arrival raced this very join (the second
+        // party of a call answering while the first was still setting up).
         voice.sync(roomPeers()).catch(() => {});
+        setTimeout(() => voice.sync(roomPeers()).catch(() => {}), 3000);
 
         if (channel?.allowVoice === false) {
             voiceState = { state: 'unavailable', message: `Voice is off in ${channel.name}.` };
@@ -718,6 +782,31 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             }
             if (event.target.closest('[data-new-dm]')) {
                 if (canDm) toggleDmSearch();
+                return;
+            }
+            if (event.target.closest('[data-dm-call]')) {
+                if (state.raw.activeDmId) {
+                    activeCallThreadId = state.raw.activeDmId;
+                    link.send('dm:call', { threadId: state.raw.activeDmId });
+                    paint();
+                }
+                return;
+            }
+            if (event.target.closest('[data-dm-hangup]')) {
+                // Hanging up is walking home: the move empties the call room, which is
+                // what tells the server — and the other side — that the call is over.
+                const back = preCallChannelId;
+                preCallChannelId = null;
+                activeCallThreadId = null;
+                if (back && state.raw.channels.some((c) => c.id === back)) {
+                    link.noteChannel(back);
+                    link.send('move', { channelId: back });
+                } else {
+                    voice.stop();
+                    link.noteChannel(null);
+                    link.send('leave');
+                }
+                paint();
                 return;
             }
             if (event.target.closest('[data-add-member]')) {
@@ -1194,6 +1283,40 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         });
         paintList();
         input.focus();
+    }
+
+    /* ── incoming calls ──────────────────────────────────────────────────── */
+
+    function showRing({ threadId, from }) {
+        ringModal?.close();
+        ringModal = createModal({
+            className: 'ring-modal',
+            label: 'Incoming call',
+            onClose: () => { ringModal = null; },
+        });
+        const name = from?.displayName || from?.username || 'Someone';
+        ringModal.open({
+            content: `
+              <div class="ring-card">
+                <p class="ring-name">${esc(name)}</p>
+                <p class="ring-sub">is calling you privately</p>
+                <div class="ring-actions">
+                  <button type="button" class="btn primary" data-ring-accept>Accept</button>
+                  <button type="button" class="btn" data-ring-decline>Decline</button>
+                </div>
+              </div>`,
+        });
+        ringModal.element.addEventListener('click', (event) => {
+            if (event.target.closest('[data-ring-accept]')) {
+                activeCallThreadId = threadId;
+                link.send('dm:accept', { threadId });
+                if (state.raw.dms.some((t) => t.id === threadId)) openDm(threadId);
+                ringModal?.close();
+            } else if (event.target.closest('[data-ring-decline]')) {
+                link.send('dm:decline', { threadId });
+                ringModal?.close();
+            }
+        });
     }
 
     /* ── the desktop share picker ────────────────────────────────────────── */

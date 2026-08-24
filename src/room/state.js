@@ -433,7 +433,10 @@ export function createRoomState({ me = null, server = {} } = {}) {
                 me: {
                     ...state.me,
                     presence: self?.presence ?? 'live',
-                    roomName: channel?.name ?? null,
+                    // Standing somewhere the channel list does not contain is standing
+                    // in a call room — the one kind of room kept off every list.
+                    roomName: channel?.name
+                        ?? (state.currentChannelId ? 'Private call' : null),
                     // A room literally called "Away" would otherwise read "Away · Away".
                     status: channel?.kind === 'afk'
                         ? (/away|afk/i.test(channel.name) ? null : 'Away')

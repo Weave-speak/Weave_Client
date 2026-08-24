@@ -655,6 +655,20 @@
     background: var(--accent-tint);
 }
 
+/* ── Incoming calls ───────────────────────────────────────────────────────── */
+
+.ring-card { padding: var(--s-7); text-align: center; min-width: 300px; }
+.ring-name { margin: 0; font-size: var(--t-2xl); font-weight: 650; letter-spacing: -0.02em; }
+.ring-sub { margin: var(--s-1) 0 var(--s-6); color: var(--ink-dim); }
+.ring-actions { display: flex; gap: var(--s-3); justify-content: center; }
+.ring-modal { animation: ring-pulse 1.6s ease-in-out infinite; }
+@keyframes ring-pulse {
+    0%, 100% { box-shadow: var(--shadow-3); }
+    50% { box-shadow: var(--shadow-3), 0 0 0 6px rgb(var(--accent-rgb) / 0.18); }
+}
+
+.danger-btn:hover { color: var(--bad); border-color: var(--bad); }
+
 /* ── The share picker ─────────────────────────────────────────────────────── */
 
 .share-picker { width: min(680px, 92vw); max-height: 82vh; overflow-y: auto; padding: var(--s-6); }

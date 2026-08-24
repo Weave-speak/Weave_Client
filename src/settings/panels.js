@@ -22,7 +22,7 @@ export const SECTIONS = [
         items: [
             { id: 'profile', label: 'My Profile', icon: 'weave' },
             { id: 'security', label: 'Security & Recovery', icon: 'lock', placeholder: true },
-            { id: 'sessions', label: 'Sessions & Devices', icon: 'screen', placeholder: true },
+            { id: 'sessions', label: 'Sessions & Devices', icon: 'screen' },
         ],
     },
     {
@@ -139,9 +139,15 @@ export function profilePanel({ me = {}, features = [] } = {}) {
         ? notYet('Join and leave sounds', 'Sound library not loaded yet.')
         : notYet('Join and leave sounds', 'The personas module is switched off on this server.')}
 
-    <p class="panel-lead">Microphone and voice behaviour has moved to Voice &amp; Audio.</p>
+    <p class="panel-lead">Microphone and voice behaviour has moved to Voice &amp; Audio.</p>`;
+}
 
-    <h3 class="panel-section">Application</h3>
+export function sessionsPanel() {
+    return `
+    <h2 class="panel-title">Sessions &amp; Devices</h2>
+    <p class="panel-lead">This installation, and the account's other ones.</p>
+
+    <h3 class="panel-section">This app</h3>
     <div class="setting">
       <span class="setting-text">
         <span class="setting-label">Updates</span>
@@ -150,7 +156,9 @@ export function profilePanel({ me = {}, features = [] } = {}) {
         <span class="setting-note" id="updateCheckNote"></span>
       </span>
       <button type="button" class="btn" data-check-updates>Check for updates</button>
-    </div>`;
+    </div>
+
+    ${notYet('Signed-in sessions', 'Listing and revoking other sessions needs a server update.')}`;
 }
 
 const choose = ({ id, label, hint, value, options }) => `

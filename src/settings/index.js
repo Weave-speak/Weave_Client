@@ -13,7 +13,7 @@ import { createModal } from '../ui/modal.js';
 import { settingsFor } from '../server/store.js';
 import { $, $$ } from '../ui/dom.js';
 import {
-    settingsFrame, profilePanel, voicePanel, appearancePanel, invitesPanel,
+    settingsFrame, profilePanel, voicePanel, appearancePanel, invitesPanel, sessionsPanel,
     placeholderPanel, sectionById, PLACEHOLDER_REASONS,
 } from './panels.js';
 
@@ -61,6 +61,7 @@ export function createSettings({
         switch (current) {
             case 'profile': return profilePanel({ me, prefs, features });
             case 'voice': return voicePanel({ prefs, devices, cameras, features });
+            case 'sessions': return sessionsPanel();
             case 'appearance': return appearancePanel({ prefs });
             case 'invites': return invitesPanel({
                 invite, busy: inviteBusy, error: inviteError,

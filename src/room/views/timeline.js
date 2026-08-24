@@ -232,6 +232,10 @@ export function timeline({ room = {}, items = [], typing = [], voice = {} } = {}
                 title="Turn your camera on" aria-label="Turn your camera on" aria-pressed="false">${icons.camera}</button>
         <button type="button" class="icon-btn media-btn" id="screenBtn" data-toggle-screen hidden
                 title="Share your screen" aria-label="Share your screen" aria-pressed="false">${icons.screen}</button>
+        <button type="button" class="icon-btn" id="dmCallBtn" data-dm-call hidden
+                title="Start a private call" aria-label="Start a private call">${icons.phone}</button>
+        <button type="button" class="icon-btn danger-btn" id="dmHangupBtn" data-dm-hangup hidden
+                title="End the call" aria-label="End the call">${icons.phoneOff}</button>
         <button type="button" class="icon-btn" id="addMemberBtn" data-add-member
                 ${room.private && room.member ? '' : 'hidden'}
                 title="Add people to this room" aria-label="Add people to this private room">${icons.plus}</button>

@@ -192,12 +192,27 @@ export const voiceNoticeMarkup = (status) => {
     return `<div class="voice-notice ${esc(view.tone)}">${esc(view.text)}</div>`;
 };
 
+/**
+ * A room with no messages yet, saying so.
+ *
+ * Without this a fresh room is an unexplained black void — indistinguishable from a room
+ * that failed to load. The one sentence is the difference.
+ */
+export const emptyState = (room = {}) => `
+  <div class="timeline-empty">
+    <span class="empty-mark" aria-hidden="true">${icons.weave}</span>
+    <p class="empty-title">This is the start of ${esc(room.name ?? 'the room')}</p>
+    <p class="empty-sub">Say something, or just be here — the strands move when you do.</p>
+  </div>`;
+
 export function timeline({ room = {}, items = [], typing = [], voice = {} } = {}) {
     return `
     <main class="room">
       <canvas class="room-bg" id="roomBg" aria-hidden="true"></canvas>
 
       <header class="room-head" id="roomHead">
+        <button type="button" class="icon-btn drawer-toggle" data-open-drawer
+                title="Rooms" aria-label="Show the room list">${icons.menu}</button>
         ${room.private ? icons.lock : icons.speaker}
         <h1>${esc(room.name ?? 'Room')}</h1>
         ${room.topic ? `<span class="room-topic">${esc(room.topic)}</span>` : ''}
@@ -209,6 +224,7 @@ export function timeline({ room = {}, items = [], typing = [], voice = {} } = {}
       <div class="timeline" id="timeline" tabindex="0" aria-label="Messages">
         <div class="timeline-inner">
           <ol class="msg-list" id="msgList">${messageList(items)}</ol>
+          ${items.length ? '' : emptyState(room)}
           <div class="typing" aria-live="polite">${typingLine(typing)}</div>
         </div>
       </div>
@@ -222,8 +238,6 @@ export function timeline({ room = {}, items = [], typing = [], voice = {} } = {}
           <textarea class="composer-input" id="composerInput" rows="1"
                     placeholder="Message ${esc(room.name ?? 'the room')}…"
                     aria-label="Write a message"></textarea>
-          <button type="button" class="composer-btn" data-gif
-                  title="GIF" aria-label="Insert a GIF">GIF</button>
           <button type="button" class="composer-btn" data-emoji
                   title="Emoji" aria-label="Insert an emoji">${icons.emoji}</button>
           <button type="submit" class="composer-btn send" aria-label="Send">${icons.send}</button>

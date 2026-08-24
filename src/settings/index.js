@@ -137,9 +137,33 @@ export function createSettings({ api, server, me: signedInAs, features = [], onP
         });
 
         $('[data-create-invite]', modal.element)?.addEventListener('click', createInvite);
-        $('[data-copy-invite]', modal.element)?.addEventListener('click', () => {
-            if (invite?.code) navigator.clipboard?.writeText(invite.code).catch(() => {});
+        $('[data-copy-invite]', modal.element)?.addEventListener('click', async (event) => {
+            const button = event.currentTarget;
+            if (!invite?.code) return;
+            try {
+                await navigator.clipboard.writeText(invite.code);
+                flash(button, 'Copied ✓');
+            } catch {
+                // The clipboard can be refused. Select the code so one keystroke finishes
+                // the job, and say so — a button that silently does nothing reads as broken
+                // because it is.
+                const code = $('.invite-code', modal.element);
+                if (code) getSelection()?.selectAllChildren(code);
+                flash(button, 'Press Ctrl+C');
+            }
         });
+    }
+
+    /** Show the outcome ON the button, then give the button back. */
+    function flash(button, text) {
+        if (button.dataset.flashing) return;
+        button.dataset.flashing = '1';
+        const label = button.textContent;
+        button.textContent = text;
+        setTimeout(() => {
+            button.textContent = label;
+            delete button.dataset.flashing;
+        }, 1400);
     }
 
     /**

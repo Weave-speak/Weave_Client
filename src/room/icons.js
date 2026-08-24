@@ -20,6 +20,7 @@ export const icons = {
     lock: svg('<rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'),
 
     search: svg('<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/>'),
+    menu: svg('<path d="M4 7h16M4 12h16M4 17h16"/>'),
     plus: svg('<path d="M12 5v14M5 12h14"/>'),
     dots: svg('<circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none"/>'),
 

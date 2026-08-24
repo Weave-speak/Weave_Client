@@ -4,14 +4,20 @@
  * share nothing structurally — before sign-in there are no columns, no rooms and no people.
  */
 
-/* The soft off-centre glow, so a flat dark page has some depth to it. */
+/* The soft off-centre glow, so a flat dark page has some depth to it.
+ *
+ * The noise layer on top matters more than it looks: without it these gradients band into
+ * visible hard-edged steps on most displays — a literal seam across the page. The glows
+ * are also larger and quieter than feels necessary, for the same reason: fewer lightness
+ * steps per pixel is what keeps a dark gradient smooth. */
 .app {
     display: flex;
     flex-direction: column;
     min-height: 100%;
     background:
-        radial-gradient(1100px 620px at 18% 12%, rgb(var(--accent-rgb) / 0.13) 0%, transparent 62%),
-        radial-gradient(900px 560px at 86% 88%, rgb(var(--accent-rgb) / 0.11) 0%, transparent 58%),
+        var(--noise),
+        radial-gradient(1400px 900px at 16% 8%, rgb(var(--accent-rgb) / 0.11) 0%, transparent 70%),
+        radial-gradient(1300px 900px at 88% 94%, rgb(var(--accent-rgb) / 0.09) 0%, transparent 66%),
         var(--bg-void);
     overflow-y: auto;
 }
@@ -83,6 +89,11 @@
     border-radius: var(--r-5);
     padding: 34px 34px var(--s-6);
     box-shadow: var(--shadow-3);
+    animation: card-in var(--dur-slow) var(--ease);
+}
+@keyframes card-in {
+    from { opacity: 0; transform: translateY(6px) scale(0.99); }
+    to { opacity: 1; transform: none; }
 }
 .card.wide-card { width: min(560px, 100%); }
 
@@ -303,6 +314,7 @@
 .server-name { font-weight: 550; }
 .server-origin { font: var(--t-xs) / 1 var(--font-mono); color: var(--ink-faint); }
 
+.server-result[hidden] { display: none; }
 .server-result {
     border-radius: var(--r-3);
     padding: var(--s-3) var(--s-4);

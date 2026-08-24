@@ -113,12 +113,18 @@ export function selfBar(me = {}) {
         </span>
       </button>
       <span class="self-actions">
+        ${me.pttOn ? `
+        <button type="button" class="round-btn ptt" data-toggle-mic disabled
+                title="Push-to-talk is on — hold your key to speak"
+                aria-label="Microphone is controlled by push-to-talk">
+          ${icons.mic}
+        </button>` : `
         <button type="button" class="round-btn${me.muted ? ' on' : ''}" data-toggle-mic
                 aria-pressed="${me.muted ? 'true' : 'false'}"
                 title="${me.muted ? 'Unmute' : 'Mute'}"
                 aria-label="${me.muted ? 'Unmute your microphone' : 'Mute your microphone'}">
           ${me.muted ? icons.micOff : icons.mic}
-        </button>
+        </button>`}
         <button type="button" class="round-btn${me.deafened ? ' on' : ''}" data-toggle-audio
                 aria-pressed="${me.deafened ? 'true' : 'false'}"
                 title="${me.deafened ? 'Undeafen' : 'Deafen'}"
@@ -137,9 +143,11 @@ export function sidebar({ server = {}, rooms = [], me = {} } = {}) {
     <div class="sidebar">
       <header class="sidebar-head">
         <h2 class="sidebar-title">${esc(server.name ?? 'Weave')}</h2>
-        <span class="pill-count" title="${esc(server.memberCount ?? 0)} members">${esc(server.memberCount ?? 0)}</span>
+        ${(server.memberCount ?? 0) > 0
+        ? `<span class="pill-count" title="${esc(server.memberCount)} members">${esc(server.memberCount)}</span>`
+        : ''}
         <button type="button" class="icon-btn" data-browse-rooms
-                title="Browse rooms" aria-label="Browse rooms">${icons.search}</button>
+                title="Where is everyone?" aria-label="Browse rooms">${icons.weave}</button>
       </header>
 
       <div class="sidebar-search">

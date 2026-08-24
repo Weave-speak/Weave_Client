@@ -44,11 +44,14 @@ export function shell(state = {}) {
     <div class="app-shell">
       <header class="titlebar">
         <span class="app-chip" aria-hidden="true">${icons.weave}</span>
+        <span class="titlebar-word">Weave</span>
         ${connection(state.connection)}
         <span class="titlebar-spacer"></span>
         <button type="button" class="icon-btn" data-open-settings
                 title="Settings" aria-label="Settings">${icons.gear}</button>
       </header>
+
+      <div class="drawer-scrim" data-drawer-scrim aria-hidden="true"></div>
 
       <div class="app-body">
         ${rail({ dms: state.dms, inRoom: !state.dmOpen })}

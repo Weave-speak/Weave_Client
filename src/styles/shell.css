@@ -7,12 +7,15 @@
  * off the bottom of the screen" bugs, and it does not announce itself.
  */
 
+/* The columns are PANELS — rounded, separated, floating on the void — rather than four
+ * flush rectangles divided by seam lines. The seams-and-squares version is what made the
+ * whole app read as a decade old however good the contents were. */
 .app-shell {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     height: 100vh;
     height: 100dvh;
-    background: var(--bg-app);
+    background: var(--bg-void);
     overflow: hidden;
 }
 
@@ -24,11 +27,18 @@
     gap: var(--s-3);
     height: var(--titlebar-h);
     padding: 0 var(--s-3);
-    background: var(--bg-void);
-    border-bottom: 1px solid var(--line-soft);
+    /* No background and no border: the bar shares the void the panels float on, so the
+       window has one calm frame instead of a stacked pair of dark strips. */
     /* The desktop shell makes this the window drag region; interactive children opt out
        again below, or they become impossible to click. */
     -webkit-app-region: drag;
+}
+
+.titlebar-word {
+    font-weight: 620;
+    letter-spacing: -0.01em;
+    font-size: var(--t-base);
+    color: var(--ink-dim);
 }
 .titlebar button,
 .titlebar .conn-pill { -webkit-app-region: no-drag; }
@@ -47,7 +57,9 @@
 }
 .app-chip svg { width: 18px; height: 18px; }
 
-/* The one honest readout of whether this thing is working. */
+/* The one honest readout of whether this thing is working. While it IS working it fades
+   to ambient telemetry — quiet text, no box. Chrome that shouts "Connected" all day is
+   noise, and noise teaches people to stop reading the place real problems appear. */
 .conn-pill {
     display: inline-flex;
     align-items: center;
@@ -59,6 +71,12 @@
     font-size: var(--t-sm);
     color: var(--ink-dim);
     white-space: nowrap;
+    transition: background var(--dur), border-color var(--dur), color var(--dur);
+}
+.conn-pill[data-state="live"] {
+    background: transparent;
+    border-color: transparent;
+    color: var(--ink-faint);
 }
 .conn-dot {
     width: 7px; height: 7px;
@@ -77,6 +95,8 @@
 .app-body {
     display: grid;
     grid-template-columns: var(--rail-w) var(--sidebar-w) minmax(0, 1fr) var(--members-w);
+    gap: var(--s-2);
+    padding: 0 var(--s-2) var(--s-2);
     min-height: 0;
     min-width: 0;
 }
@@ -90,8 +110,6 @@
     align-items: center;
     gap: var(--s-2);
     padding: var(--s-3) 0;
-    background: var(--bg-void);
-    border-right: 1px solid var(--line-soft);
     overflow-y: auto;
     overflow-x: hidden;
 }
@@ -168,7 +186,9 @@
     display: grid;
     grid-template-rows: auto auto minmax(0, 1fr) auto;
     background: var(--surface-1);
-    border-right: 1px solid var(--line-soft);
+    border: 1px solid var(--line-soft);
+    border-radius: var(--r-4);
+    overflow: hidden;
 }
 
 .sidebar-head {
@@ -355,7 +375,7 @@
     align-items: center;
     gap: var(--s-2);
     padding: var(--s-2) var(--s-2) var(--s-2) var(--s-3);
-    background: var(--bg-void);
+    background: var(--surface-0);
     border-top: 1px solid var(--line-soft);
 }
 .self-id {
@@ -406,7 +426,13 @@
     position: relative;
     display: grid;
     grid-template-rows: auto minmax(0, 1fr) auto;
-    background: var(--bg-app);
+    background:
+        var(--noise),
+        radial-gradient(900px 480px at 50% -10%, rgb(var(--accent-rgb) / 0.05) 0%, transparent 70%),
+        var(--bg-app);
+    border: 1px solid var(--line-soft);
+    border-radius: var(--r-4);
+    overflow: hidden;
 }
 
 /* The living background. Sits behind everything in this column; the message gutter is
@@ -460,8 +486,9 @@
     overflow-x: hidden;
     padding: var(--s-5) 0 var(--s-3);
 }
+/* Full width. There was a --reading-max cap here on typographic grounds; on a wide
+   window it read as text refusing to use the room it was given, and it went. */
 .timeline-inner {
-    max-width: var(--reading-max);
     padding: 0 var(--s-5);
 }
 
@@ -641,12 +668,46 @@
 
 /* ── Composer ─────────────────────────────────────────────────────────────── */
 
-.composer-wrap { padding: 0 var(--s-5) var(--s-5); }
+.composer-wrap { position: relative; padding: 0 var(--s-5) var(--s-5); }
+
+/* ── Mention autocomplete ─────────────────────────────────────────────────── */
+
+.mention-pop {
+    position: absolute;
+    left: var(--s-5);
+    right: var(--s-5);
+    bottom: calc(100% + var(--s-1));
+    max-width: 420px;
+    max-height: 264px;
+    overflow-y: auto;
+    padding: var(--s-1);
+    background: var(--surface-4);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    box-shadow: var(--shadow-2);
+    z-index: var(--z-popover);
+    animation: pop-in var(--dur-fast) var(--ease);
+}
+@keyframes pop-in {
+    from { opacity: 0; transform: translateY(3px); }
+    to { opacity: 1; transform: none; }
+}
+.mention-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    width: 100%;
+    padding: var(--s-1) var(--s-2);
+    border-radius: var(--r-2);
+    text-align: left;
+}
+.mention-row:hover, .mention-row.current { background: var(--accent-tint-hi); }
+.mention-name { font-weight: 550; }
+.mention-user { color: var(--ink-faint); font-size: var(--t-sm); }
 .composer {
     display: flex;
     align-items: center;
     gap: var(--s-2);
-    max-width: var(--reading-max);
     padding: var(--s-2);
     background: var(--surface-2);
     border: 1px solid var(--line);
@@ -691,13 +752,17 @@
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     background: var(--surface-1);
-    border-left: 1px solid var(--line-soft);
+    border: 1px solid var(--line-soft);
+    border-radius: var(--r-4);
+    overflow: hidden;
 }
+/* Hidden on request at any width — the header button toggles it. */
+.app-shell.members-hidden .members { display: none; }
 .members-head {
     display: flex;
     align-items: center;
     gap: var(--s-2);
-    padding: var(--s-5) var(--s-4) var(--s-3);
+    padding: var(--s-5) var(--s-4) var(--s-1);
     font-size: var(--t-xs);
     font-weight: 700;
     letter-spacing: 0.09em;
@@ -776,28 +841,88 @@
 .avatar.sm[data-presence]::after { width: 9px; height: 9px; border-width: 2px; }
 
 /* Avatars on the darker columns need their ring to match what is behind them. */
-.rail .avatar[data-presence]::after,
-.self-bar .avatar[data-presence]::after { border-color: var(--bg-void); }
+.rail .avatar[data-presence]::after { border-color: var(--bg-void); }
+.self-bar .avatar[data-presence]::after { border-color: var(--surface-0); }
 
 /* ── Narrower windows ─────────────────────────────────────────────────────── */
 
-/* Columns are dropped rather than squeezed. A 140px member list is not a member list. */
+/* Columns are dropped rather than squeezed — a 140px member list is not a member list —
+ * but every dropped column stays REACHABLE as an overlay. The earlier version simply
+ * removed them, which below 860px left no way to switch rooms, open settings or sign
+ * out: a trap, not a layout. */
+
+.drawer-toggle { display: none; }
+.drawer-scrim { display: none; }
+
 @media (max-width: 1180px) {
     .app-body { grid-template-columns: var(--rail-w) var(--sidebar-w) minmax(0, 1fr); }
     .members { display: none; }
+    /* Summoned by the header button: the same panel, floating over the room. */
+    .app-shell.members-open .members {
+        display: grid;
+        position: fixed;
+        top: var(--titlebar-h);
+        right: var(--s-2);
+        bottom: var(--s-2);
+        width: var(--members-w);
+        z-index: var(--z-menu);
+        box-shadow: var(--shadow-3);
+        animation: slide-in-right var(--dur) var(--ease);
+    }
 }
+
 @media (max-width: 860px) {
     .app-body { grid-template-columns: var(--rail-w) minmax(0, 1fr); }
     .sidebar { display: none; }
+    .titlebar-word { display: none; }
+    .drawer-toggle { display: grid; }
+    /* The room list as a drawer, summoned by the hamburger in the room header. */
+    .app-shell.drawer-open .sidebar {
+        display: grid;
+        position: fixed;
+        top: var(--titlebar-h);
+        left: calc(var(--rail-w) + var(--s-2));
+        bottom: var(--s-2);
+        width: min(var(--sidebar-w), 84vw);
+        z-index: var(--z-menu);
+        box-shadow: var(--shadow-3);
+        animation: slide-in-left var(--dur) var(--ease);
+    }
+    .app-shell.drawer-open .drawer-scrim {
+        display: block;
+        position: fixed;
+        inset: 0;
+        z-index: var(--z-popover);
+        background: var(--scrim);
+        animation: fade-in var(--dur) var(--ease);
+    }
 }
+
 @media (max-width: 720px) {
     .settings-body { grid-template-columns: minmax(0, 1fr); }
     .settings-nav { display: none; }
 }
+
+/* The rail SURVIVES the narrowest widths: it is 66px of always-reachable navigation, and
+ * removing it was what stranded people. Only the telemetry pill gives way. */
 @media (max-width: 620px) {
-    .app-body { grid-template-columns: minmax(0, 1fr); }
-    .rail { display: none; }
+    .conn-pill { display: none; }
+    .app-shell.drawer-open .sidebar { left: var(--s-2); }
     .timeline-inner, .composer-wrap { padding-left: var(--s-3); padding-right: var(--s-3); }
+    .app-body { grid-template-columns: var(--rail-w) minmax(0, 1fr); }
+}
+
+@keyframes slide-in-left {
+    from { transform: translateX(-24px); opacity: 0; }
+    to { transform: none; opacity: 1; }
+}
+@keyframes slide-in-right {
+    from { transform: translateX(24px); opacity: 0; }
+    to { transform: none; opacity: 1; }
+}
+@keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
 }
 
 /* ── Update bar ───────────────────────────────────────────────────────────── */
@@ -919,6 +1044,50 @@
 .room-person.speaking .person-name,
 .member-row.speaking .member-name { color: var(--ink); }
 
+/* ── The empty room ───────────────────────────────────────────────────────── */
+
+.timeline-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s-1);
+    padding: var(--s-7) var(--s-3) var(--s-5);
+    animation: fade-in var(--dur-slow) var(--ease);
+}
+.empty-mark {
+    display: grid;
+    place-items: center;
+    width: 52px; height: 52px;
+    border-radius: 50%;
+    background: var(--accent-tint);
+    color: var(--accent-hi);
+    margin-bottom: var(--s-2);
+}
+.empty-mark svg { width: 30px; height: 30px; }
+.empty-title { margin: 0; font-size: var(--t-xl); font-weight: 640; letter-spacing: -0.02em; }
+.empty-sub { margin: 0; color: var(--ink-faint); font-size: var(--t-base); }
+
+/* ── Touch: presses acknowledge, everywhere ───────────────────────────────── */
+
+/* One rule for every button-shaped thing: pressing it visibly gives, releasing springs
+   back. This 40ms of physicality is most of the difference between "snappy" and "dead". */
+.icon-btn, .round-btn, .btn, .chip, .rail-item, .composer-btn, .card-action, .update-action {
+    transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+        border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease),
+        transform var(--dur-fast) var(--ease);
+}
+.icon-btn:active, .round-btn:active, .btn:active, .chip:active,
+.composer-btn:active, .card-action:active, .update-action:active { transform: scale(0.95); }
+.rail-item:active { transform: scale(0.92); }
+
+/* The microphone under push-to-talk: visibly present, visibly not yours to click. */
+.round-btn.ptt {
+    opacity: 0.45;
+    cursor: not-allowed;
+    background: var(--surface-2);
+}
+.round-btn.ptt:active { transform: none; }
+
 /* ── Modal ────────────────────────────────────────────────────────────────── */
 
 /* The native <dialog>. showModal() puts it in the top layer, so no z-index is needed and
@@ -934,7 +1103,12 @@
     max-height: 88vh;
     overflow: hidden;
 }
-.modal::backdrop { background: var(--scrim); }
+.modal[open] { animation: modal-in var(--dur) var(--ease); }
+.modal::backdrop { background: var(--scrim); animation: fade-in var(--dur-slow) var(--ease); }
+@keyframes modal-in {
+    from { opacity: 0; transform: translateY(8px) scale(0.985); }
+    to { opacity: 1; transform: none; }
+}
 
 /* ── Settings ─────────────────────────────────────────────────────────────── */
 
@@ -1089,14 +1263,28 @@
 /* A control that cannot work, and why. The reason is the point: it tells somebody nothing
    is wrong with their account and nothing is wrong with their machine. */
 .not-yet {
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: 2px;
-    padding: var(--s-3);
+    padding: var(--s-3) 76px var(--s-3) var(--s-3);
     margin: var(--s-2) 0;
-    border: 1px dashed var(--line);
+    border: 1px solid var(--line-soft);
     border-radius: var(--r-2);
     background: var(--surface-0);
+}
+/* Named as a plan, so the muted card reads as "coming" rather than "broken". */
+.not-yet::after {
+    content: "Planned";
+    position: absolute;
+    top: var(--s-3); right: var(--s-3);
+    padding: 2px var(--s-2);
+    border-radius: var(--r-pill);
+    background: var(--accent-tint);
+    color: var(--accent-hi);
+    font-size: var(--t-xs);
+    font-weight: 650;
+    letter-spacing: 0.04em;
 }
 .not-yet.standalone { margin-top: var(--s-5); padding: var(--s-5); }
 .not-yet-what { font-weight: 550; color: var(--ink-dim); }
@@ -1162,9 +1350,10 @@
     border-radius: var(--r-3);
     background: var(--surface-2);
     overflow: hidden;
-    transition: border-color var(--dur-fast), transform var(--dur-fast) var(--ease);
+    transition: border-color var(--dur-fast), transform var(--dur-fast) var(--ease),
+        box-shadow var(--dur-fast) var(--ease);
 }
-.room-card:hover { border-color: var(--line-strong); transform: translateY(-1px); }
+.room-card:hover { border-color: var(--line-strong); transform: translateY(-2px); box-shadow: var(--shadow-2); }
 /* The room you are in is marked in gold rather than the accent, so it does not read as
    "selected, click me" — you are already there. */
 .room-card.current { border-color: rgb(var(--gold-rgb) / 0.55); }
@@ -1175,11 +1364,12 @@
     gap: var(--s-2);
     padding: var(--s-3);
     /* A stable colour per room, derived from its name, so a card is recognisable before it
-       is read. */
+       is read. Low chroma on purpose: at full saturation the hashes hand out grass-green
+       and maroon headers that fight the app; a tint identifies without shouting. */
     background:
         linear-gradient(120deg,
-            hsl(var(--card-hue, 268) 60% 22% / 0.85),
-            hsl(calc(var(--card-hue, 268) + 34) 55% 16% / 0.85));
+            hsl(var(--card-hue, 268) 32% 19% / 0.75),
+            hsl(calc(var(--card-hue, 268) + 34) 26% 14% / 0.6));
     border-bottom: 1px solid var(--line-soft);
 }
 .card-icon { display: grid; place-items: center; width: 18px; color: var(--ink-dim); flex: none; }

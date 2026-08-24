@@ -39,6 +39,10 @@ export function createModal({ className = '', label = 'Dialog', onClose = null }
         element: dialog,
 
         open({ from = null, content = '' } = {}) {
+            // Reset the latch. Without this, the second open of the same modal has a dead
+            // close() — the ✕ button does nothing while Escape (the browser's own path)
+            // still works, which is exactly how the bug was reported.
+            closed = false;
             opener = from ?? document.activeElement;
             dialog.innerHTML = content;
             document.body.append(dialog);

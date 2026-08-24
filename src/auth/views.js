@@ -75,7 +75,7 @@ export function signIn({ servers = [], activeId = null, instanceName = null } = 
 
       <label class="check-row">
         <input type="checkbox" name="autoJoin" checked>
-        <span>Drop me straight in <em>(uncheck to pick a channel yourself)</em></span>
+        <span>Drop me straight in <em>— joins a room for you</em></span>
       </label>
 
       <button class="btn primary wide" type="submit">
@@ -88,7 +88,7 @@ export function signIn({ servers = [], activeId = null, instanceName = null } = 
         <a href="#/forgot" data-nav>Forgot Password</a>
       </p>
 
-      <p class="card-foot">End-to-end voice · Self-hosted · Your crew, your rules</p>
+      <p class="card-foot">Self-hosted · Your crew, your rules</p>
     </form>`;
 }
 

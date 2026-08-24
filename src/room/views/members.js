@@ -8,7 +8,6 @@
 // The grouping order below is that question in order of usefulness.
 
 import { esc } from '../../ui/dom.js';
-import { icons } from '../icons.js';
 import { avatar, personMarks, displayName, adminBadge } from './parts.js';
 
 /** In the room with you first, then reachable, then not. */
@@ -61,8 +60,6 @@ export function members({ people = [], roomId = null } = {}) {
     <aside class="members" aria-label="Members">
       <header class="members-head">
         <span class="members-title" id="membersCount">Members — ${esc(people.length)}</span>
-        <button type="button" class="icon-btn" data-members-menu
-                title="Member options" aria-label="Member options">${icons.dots}</button>
       </header>
       <div class="members-scroll" id="membersScroll">${memberGroups(people, roomId)}</div>
     </aside>`;

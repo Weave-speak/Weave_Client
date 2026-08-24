@@ -13,15 +13,19 @@
 import { shell, connection as connectionPill } from './shell.js';
 import { roomGroups, selfBar } from './views/sidebar.js';
 import { memberGroups } from './views/members.js';
-import { messageList, typingLine, voiceNoticeMarkup } from './views/timeline.js';
+import { messageList, typingLine, voiceNoticeMarkup, emptyState } from './views/timeline.js';
 import { createRoomState } from './state.js';
-import { WeaveBackground } from '../ui/weave-background.js';
+import { WeaveBackground, createMessageNoise } from '../ui/weave-background.js';
 import { createVoice } from '../media/voice.js';
+import { effectiveMute, onPushToTalkChange } from '../media/mute-policy.js';
 import { createSettings, readPrefs } from '../settings/index.js';
 import { createRoomBrowser } from '../rooms/browser.js';
 import { createModal } from '../ui/modal.js';
 import { platform } from '../platform/index.js';
 import { userHue } from '../ui/hue.js';
+import { mentionQuery, matchMentions, insertMention } from './mentions.js';
+import { avatar } from './views/parts.js';
+import { esc } from '../ui/dom.js';
 import { $, $$, html } from '../ui/dom.js';
 
 /** Close enough to the bottom that the reader is following along. */
@@ -57,6 +61,9 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
     let painting = false;
     let voiceLevels = new Map();
     const speakingUntil = new Map();   // username -> when the ring may fade
+    // Text rooms breathe too: the strands pulse with message rate, exactly as the previous
+    // client did. Without this a text channel is a room full of people and a dead canvas.
+    const msgNoise = createMessageNoise();
 
     let prefs = readPrefs(server.id);
     let pttHeld = false;
@@ -112,13 +119,19 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         prefs = next;
         voice.applyAudioConstraints().catch(() => {});
 
-        // Switching push-to-talk ON must mute immediately. Leaving the microphone open
-        // until the first press means the setting appears to do nothing, and everything
-        // said in between is broadcast by someone who believes it is not.
-        if (prefs.pushToTalk && !wasPushToTalk) {
-            pttHeld = false;
-            voice.setMuted(true);
-            link.send('setMute', { muted: true, deafened: Boolean(state.toShell().me.deafened) });
+        // Flipping push-to-talk changes who owns the microphone, in both directions.
+        // ON closes the gate immediately — leaving the mic open until the first press
+        // means the setting appears to do nothing, and everything said in between is
+        // broadcast by someone who believes it is not. OFF returns to an OPEN mic:
+        // the person just asked for an open microphone, so making them hunt for the
+        // unmute button after every settings visit would teach them the setting is broken.
+        if (prefs.pushToTalk !== wasPushToTalk) {
+            const deafened = Boolean(state.toShell().me.deafened);
+            const next = onPushToTalkChange({ turnedOn: prefs.pushToTalk, deafened });
+            pttHeld = next.held;
+            voice.setMuted(next.muted);
+            link.send('setMute', { muted: next.muted, deafened });
+            paint();   // the mute button greys out (or comes back) right now
         }
         if (background) {
             background.reduceMotion = Boolean(prefs.staticBackground);
@@ -185,7 +198,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         const view = state.toShell();
 
         setHtml('#roomScroll', roomGroups(view.rooms, view.me));
-        setHtml('#selfBarSlot', selfBar(view.me));
+        setHtml('#selfBarSlot', selfBar({ ...view.me, pttOn: Boolean(prefs.pushToTalk) }));
         setHtml('#membersScroll', memberGroups(view.people, view.room.id));
         setText('#membersCount', `Members — ${view.people.length}`);
         setHtml('.typing', typingLine(view.typing));
@@ -262,6 +275,13 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
         const wasAtBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < STICK_PX;
         list.innerHTML = messageList(items);
+
+        // The "this is the start" note lives outside the list. Rebuilt every paint rather
+        // than cached, so it always names the CURRENT room — it once said "the room"
+        // forever because it rendered before the roster arrived.
+        $('.timeline-empty', mount)?.remove();
+        if (!items.length) list.insertAdjacentHTML('afterend', emptyState(state.toShell().room));
+
         if (wasAtBottom) scroller.scrollTop = scroller.scrollHeight;
     }
 
@@ -289,7 +309,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
                 return {
                     participants: here.map((p) => ({ id: p.username, hue: userHue(p.username) })),
-                    noise: Math.min(1, Math.max(loudest, average * 1.4)),
+                    noise: Math.min(1, Math.max(loudest, average * 1.4, msgNoise.value(Date.now()))),
                 };
             },
         });
@@ -303,10 +323,12 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         if (msg.type === 'text-chat:message' && msg.message) {
             const record = msg.message;
             state.addMessage(record.channelId, record);
+            if (record.channelId === state.raw.currentChannelId) msgNoise.record(Date.now());
             return;
         }
 
         if (msg.type === 'moved' || msg.type === 'joined') {
+            msgNoise.reset();
             state.apply(msg);
             loadHistory(msg.channel?.id).catch(() => {});
             startVoice(msg).catch((err) => {
@@ -356,7 +378,12 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
         try {
             await voice.enableMic();
-            voice.setMuted(state.toShell().me.muted);
+            voice.setMuted(effectiveMute({
+                pushToTalk: Boolean(prefs.pushToTalk),
+                held: pttHeld,
+                muted: state.toShell().me.muted,
+                deafened: Boolean(state.toShell().me.deafened),
+            }));
         } catch (err) {
             // A refused microphone is a completely normal thing for someone to do, and the
             // room still works without one — you can read, type and listen.
@@ -394,10 +421,23 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                     link.noteChannel(id);
                     link.send('move', { channelId: id });
                 }
+                setDrawer(false);   // picking a room is why the drawer was opened
+                return;
+            }
+
+            if (event.target.closest('[data-open-drawer]')) {
+                setDrawer(!$('.app-shell', mount)?.classList.contains('drawer-open'));
+                return;
+            }
+            if (event.target.closest('[data-drawer-scrim]')) {
+                setDrawer(false);
                 return;
             }
 
             if (event.target.closest('[data-toggle-mic]')) {
+                // Under push-to-talk the key owns the stream; the button is disabled in the
+                // markup, and this guard is the same rule for anything synthesising clicks.
+                if (prefs.pushToTalk) return;
                 const me = state.toShell().me;
                 const next = !me.muted;
                 // Locally first so the button responds immediately, then tell the room. The
@@ -432,7 +472,14 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             }
 
             if (event.target.closest('[data-toggle-members]')) {
-                $('.members', mount)?.classList.toggle('hidden');
+                // One button, two situations. Wide: the list is there, hide it. Narrow:
+                // the layout dropped it, summon it as an overlay.
+                const shellEl = $('.app-shell', mount);
+                if (window.matchMedia('(max-width: 1180px)').matches) {
+                    shellEl?.classList.toggle('members-open');
+                } else {
+                    shellEl?.classList.toggle('members-hidden');
+                }
             }
         });
 
@@ -445,6 +492,28 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         });
 
         input?.addEventListener('keydown', (event) => {
+            // While the mention popover is open it owns the navigation keys — Enter picks
+            // a person rather than sending half a name to the room.
+            if (mention?.items.length) {
+                if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                    event.preventDefault();
+                    const delta = event.key === 'ArrowDown' ? 1 : -1;
+                    mention.index = (mention.index + delta + mention.items.length) % mention.items.length;
+                    paintMentionPop();
+                    return;
+                }
+                if (event.key === 'Enter' || event.key === 'Tab') {
+                    event.preventDefault();
+                    pickMention(mention.items[mention.index].username);
+                    return;
+                }
+                if (event.key === 'Escape') {
+                    mention = null;
+                    paintMentionPop();
+                    return;
+                }
+            }
+
             // Enter sends, Shift+Enter starts a new line. The other way round is a choice
             // some apps make and everyone else finds baffling.
             if (event.key === 'Enter' && !event.shiftKey) {
@@ -453,7 +522,21 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             }
         });
 
+        window.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') setDrawer(false);
+        });
+
         wirePushToTalk();
+
+        input?.addEventListener('input', updateMention);
+        input?.addEventListener('click', updateMention);
+        input?.addEventListener('keyup', (event) => {
+            if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) updateMention();
+        });
+        input?.addEventListener('blur', () => {
+            // Give a popover mousedown its moment before withdrawing the offer.
+            setTimeout(() => { mention = null; paintMentionPop(); }, 120);
+        });
 
         // Grow with the text, up to a point, so a long message is visible while it is typed.
         input?.addEventListener('input', () => {
@@ -473,6 +556,79 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
      * `event.repeat` is ignored: holding a key fires keydown continuously, and sending an
      * unmute frame per repeat would hammer the server for the entire time somebody speaks.
      */
+    /* ── mention autocomplete ────────────────────────────────────────────── */
+
+    // Which token is being completed, and which row is highlighted. Null when closed.
+    let mention = null;
+
+    function paintMentionPop() {
+        const wrap = $('.composer-wrap', mount);
+        if (!wrap) return;
+        let pop = $('#mentionPop', mount);
+
+        if (!mention || !mention.items.length) {
+            pop?.remove();
+            return;
+        }
+        if (!pop) {
+            pop = document.createElement('div');
+            pop.id = 'mentionPop';
+            pop.className = 'mention-pop';
+            wrap.append(pop);
+        }
+        pop.innerHTML = mention.items.map((p, i) => `
+            <button type="button" class="mention-row${i === mention.index ? ' current' : ''}"
+                    data-mention="${esc(p.username)}">
+              ${avatar(p, { size: 'sm', presence: false })}
+              <span class="mention-name">${esc(p.displayName ?? p.username)}</span>
+              <span class="mention-user">@${esc(p.username)}</span>
+            </button>`).join('');
+
+        // mousedown, not click: click fires after the input's blur has already closed
+        // the popover, and the pick would be lost.
+        pop.querySelectorAll('[data-mention]').forEach((row) => {
+            row.addEventListener('mousedown', (event) => {
+                event.preventDefault();
+                pickMention(row.dataset.mention);
+            });
+        });
+    }
+
+    function updateMention() {
+        const input = $('#composerInput', mount);
+        if (!input) return;
+        const found = mentionQuery(input.value, input.selectionStart ?? input.value.length);
+        if (!found) { mention = null; paintMentionPop(); return; }
+
+        const view = state.toShell();
+        const items = matchMentions(found.query, view.people, {
+            roomId: view.room.id,
+            exclude: view.me.username,
+        });
+        // Keep the highlight on the same row across keystrokes when possible.
+        const keep = mention?.items[mention.index]?.username;
+        const index = Math.max(0, items.findIndex((p) => p.username === keep));
+        mention = { ...found, items, index };
+        paintMentionPop();
+    }
+
+    function pickMention(username) {
+        const input = $('#composerInput', mount);
+        if (!input || !mention) return;
+        const caret = input.selectionStart ?? input.value.length;
+        const next = insertMention(input.value, mention.start, caret, username);
+        input.value = next.text;
+        input.setSelectionRange(next.caret, next.caret);
+        mention = null;
+        paintMentionPop();
+        input.focus();
+    }
+
+    /** The narrow-window drawer: the sidebar, floating over the room. */
+    function setDrawer(open) {
+        $('.app-shell', mount)?.classList.toggle('drawer-open', Boolean(open));
+    }
+
     function wirePushToTalk() {
         const typing = (target) => target instanceof HTMLElement
             && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
@@ -480,8 +636,10 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         const setTalking = (talking) => {
             if (!prefs.pushToTalk || pttHeld === talking) return;
             pttHeld = talking;
-            voice.setMuted(!talking);
-            link.send('setMute', { muted: !talking, deafened: Boolean(state.toShell().me.deafened) });
+            const deafened = Boolean(state.toShell().me.deafened);
+            const muted = effectiveMute({ pushToTalk: true, held: talking, deafened });
+            voice.setMuted(muted);
+            link.send('setMute', { muted, deafened });
         };
 
         window.addEventListener('keydown', (event) => {
@@ -505,6 +663,9 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         const input = $('#composerInput', mount);
         const body = input?.value.trim();
         if (!body) return;
+        mention = null;
+        paintMentionPop();
+        msgNoise.record(Date.now());
 
         // Cleared immediately. Waiting for the server to acknowledge before clearing means
         // that on a slow link people retype, or send twice.
@@ -517,7 +678,12 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
     async function start() {
         mount.innerHTML = '';
-        mount.append(html(shell({ ...state.toShell(), voice: voiceState })));
+        const view = state.toShell();
+        mount.append(html(shell({
+            ...view,
+            me: { ...view.me, pttOn: Boolean(prefs.pushToTalk) },
+            voice: voiceState,
+        })));
         wire();
         startBackground();
 

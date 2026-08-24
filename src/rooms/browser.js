@@ -136,6 +136,9 @@ export function browserView({ rooms = [], filter = 'all', canCreate = false } = 
               ${esc(f.label)}
             </button>`).join('')}
         </div>
+        ${canCreate
+        ? '<button type="button" class="btn primary" data-new-room-here>Create a room</button>'
+        : ''}
         <button type="button" class="icon-btn" data-close-browser aria-label="Close">✕</button>
       </header>
 
@@ -146,7 +149,7 @@ export function browserView({ rooms = [], filter = 'all', canCreate = false } = 
             : 'This server has no rooms yet.'}</p>`}
 
       ${canCreate
-        ? '<button type="button" class="btn" data-new-room-here>Create a room</button>'
+        ? ''
         : `<p class="browser-note">
              Only an administrator can create rooms on this server.
            </p>`}

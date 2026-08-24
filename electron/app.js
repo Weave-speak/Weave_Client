@@ -162,10 +162,13 @@ function createWindow() {
         return { action: 'deny' };
     });
 
-    // Nothing here needs a camera-less permission like geolocation or MIDI. Media is
-    // requested explicitly by the app itself and allowed; everything else is refused.
+    // Media is requested explicitly by the app itself and allowed. Writing to the
+    // clipboard is what the invite "Copy" button does — denying it made that button
+    // silently dead on desktop while working in a browser. Reading the clipboard stays
+    // refused, along with geolocation, MIDI and everything else nothing here uses.
+    const GRANTED = new Set(['media', 'display-capture', 'clipboard-sanitized-write']);
     win.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
-        callback(permission === 'media' || permission === 'display-capture');
+        callback(GRANTED.has(permission));
     });
 
     if (isDev) {

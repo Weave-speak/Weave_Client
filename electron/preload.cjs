@@ -48,6 +48,8 @@ contextBridge.exposeInMainWorld('weaveNative', {
         state: () => ipcRenderer.invoke('weave:update.state'),
         /** Restart into the downloaded version. Refused unless one is actually ready. */
         install: () => ipcRenderer.invoke('weave:update.install'),
+        /** Run the launch-time check again, on demand. The banner reports the rest. */
+        check: () => ipcRenderer.invoke('weave:update.checkNow'),
         /**
          * Subscribe to progress. Returns an unsubscribe function.
          *

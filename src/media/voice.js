@@ -714,6 +714,46 @@ export function createVoice({
          * open, which for someone already in a call means "never" — they toggle noise
          * suppression, hear no difference, and reasonably conclude it does nothing.
          */
+        /**
+         * Switch to a different microphone, live.
+         *
+         * applyConstraints silently ignores deviceId — a device change NEEDS a fresh
+         * getUserMedia. The old track is swapped out of the live producer in place, so
+         * the room hears a blink, not a rebuild. This was a real bug: picking a mic in
+         * settings changed nothing, and the meter went on reading the Windows default
+         * endpoint — which on gaming headsets can be a driver mix that hears the GAME.
+         */
+        async switchMicrophone() {
+            if (!micProducer || !micStream) return false;
+            const oldStream = micStream;
+            const oldChain = micChain;
+            micStream = null;
+            micChain = null;
+            try {
+                const track = await openMicrophone();
+                await micProducer.replaceTrack({ track });
+                micMeter?.stop();
+                micMeter = meterFor(micStream, 'self');
+                for (const t of oldStream.getTracks()) t.stop();
+                oldChain?.stop();
+                if (micChain?.processed) verifyChainCarries();
+                return true;
+            } catch (err) {
+                // The new device refused; the old one keeps working.
+                micStream = oldStream;
+                micChain = oldChain;
+                throw err;
+            }
+        },
+
+        /** The device the live track ACTUALLY captures — the ground truth for the panel. */
+        activeMicrophone() {
+            const [track] = micStream?.getAudioTracks() ?? [];
+            if (!track) return null;
+            const s = track.getSettings?.() ?? {};
+            return { deviceId: s.deviceId ?? null, label: track.label || null };
+        },
+
         /** Nudge the live chain: gain and gate follow the sliders without re-producing. */
         applyChainSettings() {
             if (!micChain?.processed) return false;

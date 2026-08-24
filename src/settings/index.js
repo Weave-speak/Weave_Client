@@ -40,7 +40,9 @@ export function readPrefs(serverId) {
     return prefs;
 }
 
-export function createSettings({ api, server, me: signedInAs, features = [], onPrefsChange = () => {}, onSignOut = () => {} }) {
+export function createSettings({
+    getActiveMicrophone = null,
+    checkForUpdates = null, api, server, me: signedInAs, features = [], onPrefsChange = () => {}, onSignOut = () => {} }) {
     const store = settingsFor(server.id);
     let me = signedInAs;
     let current = 'profile';
@@ -96,6 +98,8 @@ export function createSettings({ api, server, me: signedInAs, features = [], onP
         prefs = { ...prefs, [key]: value };
         store.set(key, value);
         onPrefsChange(prefs, key);
+        // The truth line under the mic picker follows the switch it may have caused.
+        if (key === 'micDevice') setTimeout(() => paintActiveMic(), 600);
 
         // The AFK exemption is the one preference that belongs to the ACCOUNT rather than
         // the device: being exempt on your desktop and not on your laptop would be a
@@ -126,7 +130,21 @@ export function createSettings({ api, server, me: signedInAs, features = [], onP
         wirePanel();
     }
 
+    /** What the live track ACTUALLY captures, next to what was asked for. */
+    function paintActiveMic() {
+        const line = $('#activeMic', modal.element);
+        if (!line) return;
+        const active = getActiveMicrophone?.() ?? null;
+        if (!active) { line.textContent = 'Not capturing — join a voice room.'; return; }
+        line.textContent = `Capturing: ${active.label ?? 'unnamed device'}`;
+        const wanted = prefs.micDevice;
+        const mismatch = wanted && active.deviceId && wanted !== active.deviceId && active.deviceId !== 'default';
+        line.classList.toggle('is-warn', Boolean(mismatch));
+        if (mismatch) line.textContent += ' — NOT the device selected above';
+    }
+
     function wirePanel() {
+        paintActiveMic();
         $$('[data-setting]', modal.element).forEach((input) => {
             input.addEventListener('change', async () => {
                 const value = input.type === 'checkbox' ? input.checked : input.value;
@@ -181,6 +199,20 @@ export function createSettings({ api, server, me: signedInAs, features = [], onP
 
         $('[data-capture-key]', modal.element)?.addEventListener('click', (event) => {
             captureKey(event.currentTarget);
+        });
+
+        $('[data-check-updates]', modal.element)?.addEventListener('click', async (event) => {
+            const button = event.currentTarget;
+            const note = $('#updateCheckNote', modal.element);
+            button.disabled = true;
+            if (note) note.textContent = 'Checking…';
+            const result = await Promise.resolve(checkForUpdates?.()).catch((err) => ({ started: false, message: String(err) }));
+            button.disabled = false;
+            if (note) {
+                note.textContent = result?.started
+                    ? (result.version ? `Found ${result.version} — the update bar takes it from here.` : 'Checked. You are on the newest version.')
+                    : (result?.message ?? 'The check could not run.');
+            }
         });
 
         $('[data-reset-gain]', modal.element)?.addEventListener('click', async () => {

@@ -1439,6 +1439,8 @@
 }
 .setting select option { background: var(--surface-1); color: var(--ink); }
 
+#activeMic.is-warn { color: var(--warn); }
+
 .reset-link {
     margin-left: var(--s-2);
     font-size: var(--t-xs);

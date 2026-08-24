@@ -188,6 +188,8 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         features,
         onPrefsChange: applyPrefs,
         onSignOut: signOut,
+        getActiveMicrophone: () => voice.activeMicrophone(),
+        checkForUpdates: () => platform.updates.check?.(),
     });
 
     /**
@@ -196,10 +198,17 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
      * A settings screen whose switches only apply after a restart teaches people that the
      * switches do not work.
      */
-    function applyPrefs(next) {
+    function applyPrefs(next, changedKey) {
         const wasPushToTalk = prefs.pushToTalk;
+        const wasMicDevice = prefs.micDevice;
         prefs = next;
-        voice.applyAudioConstraints().catch(() => {});
+        // A device change cannot ride applyConstraints — it needs a fresh capture,
+        // swapped into the live producer.
+        if (changedKey === 'micDevice' || (next.micDevice ?? null) !== (wasMicDevice ?? null)) {
+            voice.switchMicrophone().catch(() => { /* the old device keeps working */ });
+        } else {
+            voice.applyAudioConstraints().catch(() => {});
+        }
         voice.applyChainSettings();
 
         // Flipping push-to-talk changes who owns the microphone, in both directions.

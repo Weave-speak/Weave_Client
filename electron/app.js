@@ -416,6 +416,17 @@ function registerBridge() {
 
     ipcMain.handle('weave:update.state', () => updateState);
 
+    ipcMain.handle('weave:update.checkNow', () => {
+        // The same sequence launch runs: listeners are already registered, so every
+        // outcome flows to the banner exactly as a boot-time check would.
+        return autoUpdater.checkForUpdates()
+            .then((r) => ({ started: true, version: r?.updateInfo?.version ?? null }))
+            .catch((err) => {
+                updaterLog.error('Manual update check threw', err);
+                return { started: false, message: String(err?.message ?? err) };
+            });
+    });
+
     ipcMain.handle('weave:update.install', () => {
         if (updateState.status !== 'ready') return false;
         // Both arguments matter, and the bare call gets both wrong.

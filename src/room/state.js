@@ -33,6 +33,13 @@ export function createRoomState({ me = null, server = {} } = {}) {
         users: new Map(),         // userId -> account
         peers: new Map(),         // cid -> live connection
         currentChannelId: null,
+        // What the middle column SHOWS. Null means "follow the voice room" — the
+        // default, and what joining a room resets to. A text channel is only ever
+        // viewed; standing stays where it is.
+        viewChannelId: null,
+        // channelId -> { unread, mentions } for text-capable rooms, from the server's
+        // read markers plus live message frames.
+        unreads: new Map(),
         selfCid: null,
         messages: new Map(),      // channelId -> [items]
         typing: new Map(),        // channelId -> Map(username -> expiresAt)
@@ -105,10 +112,12 @@ export function createRoomState({ me = null, server = {} } = {}) {
     }
 
     const currentChannel = () => state.channels.find((c) => c.id === state.currentChannelId) ?? null;
+    const viewedId = () => state.viewChannelId ?? state.currentChannelId;
+    const viewedChannel = () => state.channels.find((c) => c.id === viewedId()) ?? null;
 
     function liveTyping() {
         const now = Date.now();
-        const forChannel = state.typing.get(state.currentChannelId);
+        const forChannel = state.typing.get(viewedId());
         if (!forChannel) return [];
         for (const [name, expires] of forChannel) if (expires <= now) forChannel.delete(name);
         return [...forChannel.keys()].filter((n) => n !== state.me?.username);
@@ -171,6 +180,8 @@ export function createRoomState({ me = null, server = {} } = {}) {
                     }
 
                     state.currentChannelId = target;
+                    // Joining a room is also choosing to look at it.
+                    state.viewChannelId = null;
                     break;
                 }
 
@@ -249,6 +260,42 @@ export function createRoomState({ me = null, server = {} } = {}) {
             return true;
         },
 
+        /**
+         * Look at a channel without going anywhere.
+         *
+         * Viewing the room you are standing in clears the override, so a later move
+         * carries the view with it again.
+         */
+        setView(channelId) {
+            state.viewChannelId = channelId === state.currentChannelId ? null : channelId;
+            emit();
+        },
+
+        /** The server's account-wide unread state, fetched once per connection. */
+        setReads(channels = []) {
+            state.unreads = new Map(channels.map((c) => [c.channelId, {
+                unread: c.unread ?? 0,
+                mentions: c.mentions ?? 0,
+            }]));
+            emit();
+        },
+
+        /** A message arrived for a channel nobody here is looking at. */
+        bumpUnread(channelId, { mention = false } = {}) {
+            const entry = state.unreads.get(channelId) ?? { unread: 0, mentions: 0 };
+            entry.unread += 1;
+            if (mention) entry.mentions += 1;
+            state.unreads.set(channelId, entry);
+            emit();
+        },
+
+        clearUnread(channelId) {
+            const entry = state.unreads.get(channelId);
+            if (!entry || (!entry.unread && !entry.mentions)) return;
+            state.unreads.set(channelId, { unread: 0, mentions: 0 });
+            emit();
+        },
+
         noteTyping(channelId, username, forMs = 5000) {
             const forChannel = state.typing.get(channelId) ?? new Map();
             forChannel.set(username, Date.now() + forMs);
@@ -259,6 +306,7 @@ export function createRoomState({ me = null, server = {} } = {}) {
         /** The shape the views want, derived rather than stored. */
         toShell() {
             const channel = currentChannel();
+            const viewed = viewedChannel();
             const roster = people();
             const self = roster.find((p) => p.id === state.me?.id);
 
@@ -272,11 +320,17 @@ export function createRoomState({ me = null, server = {} } = {}) {
                     // The server's kinds are voice | text | both | afk. Only a pure text
                     // channel belongs in the text group; everything else is somewhere you go.
                     kind: c.kind === 'text' ? 'text' : 'voice',
-                    current: c.id === state.currentChannelId,
+                    // What the reader is LOOKING at is the highlighted row; where they are
+                    // STANDING keeps its occupant marker. Usually the same row; while
+                    // browsing a text channel they diverge, exactly like Discord.
+                    current: c.id === (state.viewChannelId ?? state.currentChannelId),
+                    occupied: c.id === state.currentChannelId,
+                    unread: state.unreads.get(c.id)?.unread ?? 0,
+                    mentions: state.unreads.get(c.id)?.mentions ?? 0,
                     occupants: occupantsOf(c.id),
                 })),
-                room: channel
-                    ? { id: channel.id, name: channel.name, kind: channel.kind }
+                room: viewed
+                    ? { id: viewed.id, name: viewed.name, kind: viewed.kind }
                     : {},
                 me: {
                     ...state.me,
@@ -291,7 +345,7 @@ export function createRoomState({ me = null, server = {} } = {}) {
                 },
                 // Stored records become timeline items here, so the views never have to
                 // know what a database row looks like and day separators are computed once.
-                items: toTimelineItems(state.messages.get(state.currentChannelId) ?? [], {
+                items: toTimelineItems(state.messages.get(state.viewChannelId ?? state.currentChannelId) ?? [], {
                     users: state.users,
                     me: state.me,
                 }),

@@ -41,7 +41,14 @@ function roomIcon(room) {
  */
 function roomCount(room) {
     if (room.kind === 'text') {
+        const mentions = room.mentions ?? 0;
         const n = room.unread ?? 0;
+        // A mention outranks a count: it is addressed to YOU, so it gets the bell.
+        if (mentions) {
+            return `<span class="room-mention" aria-label="${esc(mentions)} mention${mentions === 1 ? '' : 's'}">
+                      ${icons.bell}${mentions > UNREAD_CAP ? `${UNREAD_CAP}+` : esc(mentions)}
+                    </span>`;
+        }
         return n
             ? `<span class="room-unread" aria-label="${esc(n)} unread">${n > UNREAD_CAP ? `${UNREAD_CAP}+` : esc(n)}</span>`
             : '';
@@ -55,7 +62,7 @@ function roomItem(room, me) {
     const isVoice = room.kind !== 'text';
 
     return `
-    <li class="room-item${room.current ? ' current' : ''}" data-room="${esc(room.id)}">
+    <li class="room-item${room.current ? ' current' : ''}${room.occupied && !room.current ? ' occupied' : ''}" data-room="${esc(room.id)}">
       <button type="button" class="room-row" data-open="${esc(room.id)}"
               ${room.current ? 'aria-current="true"' : ''}>
         ${roomIcon(room)}

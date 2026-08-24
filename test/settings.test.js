@@ -40,7 +40,7 @@ test('a placeholder panel says what it is and why it is empty', () => {
 
 test('an unknown section falls back rather than rendering nothing', () => {
     assert.equal(sectionById('no-such-panel').id, SECTIONS[0].items[0].id);
-    assert.equal(sectionById('voice').label, 'Voice & Video');
+    assert.equal(sectionById('voice').label, 'Voice & Audio');
 });
 
 test('a join date is shown when the server sent one, and skipped when it did not', () => {
@@ -78,20 +78,24 @@ test('the profile panel is honest about what it cannot change', () => {
 test('a disabled module is named as the reason, not hidden', () => {
     // "The personas module is switched off" is actionable — an admin can turn it on.
     // Silently omitting the control leaves somebody hunting for a feature they were shown.
-    const off = profilePanel({ me: ME, prefs: {}, features: [] });
+    const off = profilePanel({ me: ME, features: [] });
     assert.match(off, /personas module is switched off/);
-    assert.match(off, /away module is switched off/);
 
-    const on = profilePanel({ me: ME, prefs: {}, features: ['module.afk'] });
-    assert.match(on, /Exempt me from being moved when idle/);
-    assert.ok(!on.includes('away module is switched off'));
+    // AFK behaviour lives with the microphone now, in Voice & Audio.
+    const voiceOff = voicePanel({ prefs: {}, features: [] });
+    assert.match(voiceOff, /away module is switched off/);
+
+    const voiceOn = voicePanel({ prefs: {}, features: ['module.afk'] });
+    assert.match(voiceOn, /Exempt me from being moved when idle/);
+    assert.ok(!voiceOn.includes('away module is switched off'));
 });
 
 test('push-to-talk reveals its key only when it is on', () => {
-    const off = profilePanel({ me: ME, prefs: { pushToTalk: false }, features: [] });
+    // Moved to Voice & Audio: everything the microphone does lives on one screen.
+    const off = voicePanel({ prefs: { pushToTalk: false } });
     assert.match(off, /id="pttKey"[^>]*disabled/);
 
-    const on = profilePanel({ me: ME, prefs: { pushToTalk: true, pushToTalkKey: 'KeyV' }, features: [] });
+    const on = voicePanel({ prefs: { pushToTalk: true, pushToTalkKey: 'KeyV' } });
     assert.match(on, /KeyV/);
     assert.ok(!/id="pttKey"[^>]*disabled/.test(on));
 });

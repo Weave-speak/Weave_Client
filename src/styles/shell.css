@@ -288,6 +288,27 @@
     flex: none;
 }
 
+/* Addressed to YOU: the bell plus how many times. Louder than a plain unread count. */
+.room-mention {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    min-width: 19px;
+    padding: 0 6px;
+    border-radius: var(--r-pill);
+    background: rgb(var(--gold-rgb) / 0.16);
+    color: var(--gold);
+    font-size: var(--t-xs);
+    font-weight: 700;
+    line-height: 18px;
+    flex: none;
+}
+.room-mention svg { width: 11px; height: 11px; }
+
+/* The voice room you are STANDING in while reading somewhere else. */
+.room-item.occupied > .room-row svg { color: var(--ok); }
+.room-item.occupied > .room-row .room-name { color: var(--ink); }
+
 .room-row {
     display: flex;
     align-items: center;
@@ -457,6 +478,8 @@
     border-bottom: 1px solid var(--line-soft);
 }
 .room-head svg { width: 19px; height: 19px; color: var(--ink-dim); flex: none; }
+.room-icon { display: grid; place-items: center; flex: none; }
+.room-icon .room-hash { width: auto; font-size: var(--t-xl); }
 .room-head h1 {
     margin: 0;
     font-size: var(--t-lg);

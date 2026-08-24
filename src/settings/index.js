@@ -57,7 +57,7 @@ export function createSettings({ api, server, me: signedInAs, features = [], onP
     function panelBody() {
         switch (current) {
             case 'profile': return profilePanel({ me, prefs, features });
-            case 'voice': return voicePanel({ prefs, devices });
+            case 'voice': return voicePanel({ prefs, devices, features });
             case 'appearance': return appearancePanel({ prefs });
             case 'invites': return invitesPanel({ invite, busy: inviteBusy, error: inviteError });
             default:

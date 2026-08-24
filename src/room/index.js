@@ -13,7 +13,7 @@
 import { shell, connection as connectionPill } from './shell.js';
 import { roomGroups, selfBar } from './views/sidebar.js';
 import { memberGroups } from './views/members.js';
-import { messageList, typingLine, voiceNoticeMarkup, emptyState } from './views/timeline.js';
+import { messageList, typingLine, voiceNoticeMarkup, emptyState, roomGlyph } from './views/timeline.js';
 import { createRoomState } from './state.js';
 import { WeaveBackground, createMessageNoise } from '../ui/weave-background.js';
 import { createVoice } from '../media/voice.js';
@@ -69,6 +69,9 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
     let prefs = readPrefs(server.id);
     let pttHeld = false;
+    // Text channels are openable-from-anywhere only when the server broadcasts chat
+    // that way; against an older server every click is still a move.
+    const canBrowse = features.includes('chat.browse');
 
     const voice = createVoice({
         link,
@@ -259,6 +262,8 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
     function paintRoomHead(room) {
         const title = $('#roomHead h1', mount);
         if (title) title.textContent = room.name ?? 'Room';
+        const icon = $('#roomIcon', mount);
+        if (icon) icon.innerHTML = roomGlyph(room);
         const composer = $('#composerInput', mount);
         if (composer) composer.placeholder = `Message ${room.name ?? 'the room'}…`;
     }
@@ -331,15 +336,37 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         // Module messages arrive namespaced, so a module can never shadow a core type.
         if (msg.type === 'text-chat:message' && msg.message) {
             const record = msg.message;
+            const viewId = state.raw.viewChannelId ?? state.raw.currentChannelId;
             state.addMessage(record.channelId, record);
-            if (record.channelId === state.raw.currentChannelId) msgNoise.record(Date.now());
+            if (record.channelId === viewId) msgNoise.record(Date.now());
+
+            // Seen or owed: a message in front of a reader at the bottom of the timeline
+            // is acked; anything else becomes the badge on that channel's row.
+            if (record.userId !== state.raw.me?.id) {
+                if (readingNow(record.channelId)) {
+                    ackRead(record.channelId);
+                } else if (record.channelId !== state.raw.currentChannelId || canBrowse) {
+                    state.bumpUnread(record.channelId, {
+                        mention: (record.mentions ?? []).includes(state.raw.me?.username),
+                    });
+                }
+            }
             return;
         }
 
         if (msg.type === 'moved' || msg.type === 'joined') {
             msgNoise.reset();
             state.apply(msg);
-            loadHistory(msg.channel?.id).catch(() => {});
+            if (msg.type === 'joined' && canBrowse) {
+                api.request('GET', '/api/chat/reads')
+                    .then(({ channels = [] }) => state.setReads(channels))
+                    .catch(() => { /* badges start at zero; the frames keep them honest */ });
+            }
+            // Entering a room is seeing its latest page, so the backlog is acked too —
+            // without this, days of history in your home room stay "unread" for ever.
+            loadHistory(msg.channel?.id)
+                .then(() => { if (canBrowse && msg.channel?.id) ackRead(msg.channel.id); })
+                .catch(() => {});
             startVoice(msg).catch((err) => {
                 voiceState = { state: 'failed', message: err.message };
                 paint();
@@ -472,7 +499,12 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             const room = event.target.closest('[data-open]');
             if (room) {
                 const id = room.dataset.open;
-                if (id !== state.raw.currentChannelId) {
+                const target = state.raw.channels.find((c) => c.id === id);
+                if (canBrowse && target?.kind === 'text') {
+                    // A text channel is opened, not entered: voice stays wherever the
+                    // reader is standing.
+                    openTextChannel(id);
+                } else if (id !== state.raw.currentChannelId) {
                     link.noteChannel(id);
                     link.send('move', { channelId: id });
                 }
@@ -688,6 +720,40 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         input.focus();
     }
 
+    /* ── reading without standing ────────────────────────────────────────── */
+
+    function openTextChannel(id) {
+        state.setView(id);
+        loadHistory(id).then(() => ackRead(id)).catch(() => {});
+        paint();
+    }
+
+    let ackTimer = 0;
+
+    /** Tell the server the newest message here has been seen, account-wide. */
+    function ackRead(channelId) {
+        const list = state.raw.messages.get(channelId) ?? [];
+        const newest = list.at(-1);
+        if (!newest?.id) { state.clearUnread(channelId); return; }
+        clearTimeout(ackTimer);
+        ackTimer = setTimeout(() => {
+            link.send('text-chat:read', {
+                channelId, createdAt: newest.createdAt, id: newest.id,
+            });
+        }, 400);
+        state.clearUnread(channelId);
+    }
+
+    /** Whether the reader is actually following the timeline right now. */
+    function readingNow(channelId) {
+        const viewId = state.raw.viewChannelId ?? state.raw.currentChannelId;
+        if (channelId !== viewId) return false;
+        if (document.visibilityState === 'hidden') return false;
+        const scroller = $('#timeline', mount);
+        if (!scroller) return false;
+        return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < STICK_PX;
+    }
+
     /** The narrow-window drawer: the sidebar, floating over the room. */
     function setDrawer(open) {
         $('.app-shell', mount)?.classList.toggle('drawer-open', Boolean(open));
@@ -735,7 +801,10 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         // that on a slow link people retype, or send twice.
         input.value = '';
         input.style.height = 'auto';
-        link.send('text-chat:send', { body });
+        link.send('text-chat:send', {
+            channelId: state.raw.viewChannelId ?? state.raw.currentChannelId,
+            body,
+        });
     }
 
     /* ── lifecycle ───────────────────────────────────────────────────────── */

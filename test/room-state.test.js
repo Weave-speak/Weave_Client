@@ -245,3 +245,93 @@ test('subscribers are told when something changes', () => {
     state.apply({ type: 'peer_left', cid: 'cid-kes' });
     assert.equal(calls, 1, 'unsubscribing must actually stop them');
 });
+
+/* ── reading without standing ─────────────────────────────────────────────── */
+
+test('viewing a text channel changes what shows, not where you stand', () => {
+    const state = fresh();
+    state.setChannels?.([]) ?? null;
+    state.apply({
+        type: 'joined',
+        channel: { id: 'c-hall', name: 'Hall', kind: 'both' },
+        self: peer('cid-me', 'u-me', 'ghostbyte'),
+        peers: [],
+    });
+    state.raw.channels = [
+        { id: 'c-hall', name: 'Hall', kind: 'both' },
+        { id: 'c-notes', name: 'notes', kind: 'text' },
+    ];
+
+    state.setView('c-notes');
+    const view = state.toShell();
+    assert.equal(view.room.id, 'c-notes', 'the middle column shows the text channel');
+    assert.equal(view.me.roomName, 'Hall', 'the self bar still says where you stand');
+
+    const rows = Object.fromEntries(view.rooms.map((r) => [r.id, r]));
+    assert.equal(rows['c-notes'].current, true, 'the viewed row is highlighted');
+    assert.equal(rows['c-hall'].current, false);
+    assert.equal(rows['c-hall'].occupied, true, 'the room you stand in keeps its marker');
+});
+
+test('viewing the room you stand in clears the override, and moving re-follows', () => {
+    const state = fresh();
+    state.apply({
+        type: 'joined',
+        channel: { id: 'c-hall', name: 'Hall', kind: 'both' },
+        self: peer('cid-me', 'u-me', 'ghostbyte'),
+        peers: [],
+    });
+    state.raw.channels = [
+        { id: 'c-hall', name: 'Hall', kind: 'both' },
+        { id: 'c-den', name: 'Den', kind: 'both' },
+        { id: 'c-notes', name: 'notes', kind: 'text' },
+    ];
+
+    state.setView('c-notes');
+    state.setView('c-hall');
+    assert.equal(state.raw.viewChannelId, null, 'viewing home is not an override');
+
+    state.setView('c-notes');
+    state.apply({ type: 'moved', channel: { id: 'c-den', name: 'Den', kind: 'both' }, peers: [] });
+    assert.equal(state.toShell().room.id, 'c-den', 'joining a room is choosing to look at it');
+});
+
+test('unread and mention counts follow the row, and clearing zeroes both', () => {
+    const state = fresh();
+    state.raw.channels = [{ id: 'c-notes', name: 'notes', kind: 'text' }];
+
+    state.setReads([{ channelId: 'c-notes', unread: 3, mentions: 1 }]);
+    let row = state.toShell().rooms.find((r) => r.id === 'c-notes');
+    assert.equal(row.unread, 3);
+    assert.equal(row.mentions, 1);
+
+    state.bumpUnread('c-notes', { mention: true });
+    row = state.toShell().rooms.find((r) => r.id === 'c-notes');
+    assert.equal(row.unread, 4);
+    assert.equal(row.mentions, 2);
+
+    state.clearUnread('c-notes');
+    row = state.toShell().rooms.find((r) => r.id === 'c-notes');
+    assert.equal(row.unread, 0);
+    assert.equal(row.mentions, 0);
+});
+
+test('typing indicators follow the viewed channel, not the voice room', () => {
+    const state = fresh();
+    state.apply({
+        type: 'joined',
+        channel: { id: 'c-hall', name: 'Hall', kind: 'both' },
+        self: peer('cid-me', 'u-me', 'ghostbyte'),
+        peers: [],
+    });
+    state.raw.channels = [
+        { id: 'c-hall', name: 'Hall', kind: 'both' },
+        { id: 'c-notes', name: 'notes', kind: 'text' },
+    ];
+
+    state.noteTyping('c-notes', 'kestrel');
+    assert.deepEqual(state.toShell().typing, [], 'someone typing elsewhere is not shown here');
+
+    state.setView('c-notes');
+    assert.deepEqual(state.toShell().typing, ['kestrel']);
+});

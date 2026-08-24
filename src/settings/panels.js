@@ -28,7 +28,7 @@ export const SECTIONS = [
     {
         group: 'App',
         items: [
-            { id: 'voice', label: 'Voice & Video', icon: 'mic' },
+            { id: 'voice', label: 'Voice & Audio', icon: 'mic' },
             { id: 'notifications', label: 'Notifications', icon: 'speaker', placeholder: true },
             { id: 'appearance', label: 'Appearance', icon: 'image' },
         ],
@@ -100,10 +100,9 @@ export function joinedOn(value) {
 
 /* ── panels ───────────────────────────────────────────────────────────────── */
 
-export function profilePanel({ me = {}, prefs = {}, features = [] } = {}) {
+export function profilePanel({ me = {}, features = [] } = {}) {
     const joined = joinedOn(me.createdAt);
     const hasPersonas = features.includes('module.personas');
-    const hasAfk = features.includes('module.afk');
 
     return `
     <h2 class="panel-title">My Profile</h2>
@@ -140,12 +139,31 @@ export function profilePanel({ me = {}, prefs = {}, features = [] } = {}) {
         ? notYet('Join and leave sounds', 'Sound library not loaded yet.')
         : notYet('Join and leave sounds', 'The personas module is switched off on this server.')}
 
-    <h3 class="panel-section">Behaviour</h3>
+    <p class="panel-lead">Microphone and voice behaviour has moved to Voice &amp; Audio.</p>`;
+}
+
+export function voicePanel({ prefs = {}, devices = [], features = [] } = {}) {
+    const hasAfk = features.includes('module.afk');
+    return `
+    <h2 class="panel-title">Voice &amp; Audio</h2>
+    <p class="panel-lead">Everything about your microphone and what you hear. Per device.</p>
+
+    <h3 class="panel-section">Microphone</h3>
+
+    ${devices.length
+        ? `<div class="field">
+             <label for="micDevice">Input device</label>
+             <select id="micDevice" data-setting="micDevice">
+               ${devices.map((d) => `<option value="${esc(d.deviceId)}"
+                    ${d.deviceId === prefs.micDevice ? 'selected' : ''}>${esc(d.label || 'Microphone')}</option>`).join('')}
+             </select>
+           </div>`
+        : notYet('Input device', 'Device names are only readable once microphone access has been granted.')}
 
     ${toggle({
         id: 'pushToTalk',
         label: 'Push to talk',
-        hint: 'Hold a key to speak instead of an open microphone.',
+        hint: 'Hold a key to speak instead of an open microphone. The mute button hands over to the key while this is on.',
         checked: Boolean(prefs.pushToTalk),
     })}
 
@@ -158,27 +176,7 @@ export function profilePanel({ me = {}, prefs = {}, features = [] } = {}) {
               ${prefs.pushToTalk ? '' : 'disabled'}>${esc(prefs.pushToTalkKey ?? 'Space')}</button>
     </div>
 
-    ${toggle({
-        id: 'noiseSuppression',
-        label: 'Noise suppression',
-        hint: 'Removes keyboard clatter and fan hum before it reaches the server.',
-        checked: prefs.noiseSuppression !== false,
-    })}
-
-    ${hasAfk
-        ? toggle({
-            id: 'afkExempt',
-            label: 'Exempt me from being moved when idle',
-            hint: 'Weave normally moves you to the away room after a stretch of silence.',
-            checked: Boolean(prefs.afkExempt),
-        })
-        : notYet('AFK exemption', 'The away module is switched off on this server.')}`;
-}
-
-export function voicePanel({ prefs = {}, devices = [] } = {}) {
-    return `
-    <h2 class="panel-title">Voice &amp; Video</h2>
-    <p class="panel-lead">How your microphone behaves. These are per device.</p>
+    <h3 class="panel-section">Processing</h3>
 
     ${toggle({
         id: 'noiseSuppression',
@@ -201,17 +199,18 @@ export function voicePanel({ prefs = {}, devices = [] } = {}) {
         checked: prefs.autoGainControl !== false,
     })}
 
-    ${devices.length
-        ? `<div class="field">
-             <label for="micDevice">Microphone</label>
-             <select id="micDevice" data-setting="micDevice">
-               ${devices.map((d) => `<option value="${esc(d.deviceId)}"
-                    ${d.deviceId === prefs.micDevice ? 'selected' : ''}>${esc(d.label || 'Microphone')}</option>`).join('')}
-             </select>
-           </div>`
-        : notYet('Microphone selection', 'Device names are only readable once microphone access has been granted.')}
+    <h3 class="panel-section">Presence</h3>
 
-    ${notYet('Camera and screen share', 'Not built yet — voice first.')}`;
+    ${hasAfk
+        ? toggle({
+            id: 'afkExempt',
+            label: 'Exempt me from being moved when idle',
+            hint: 'Weave normally moves you to the away room after a stretch of silence.',
+            checked: Boolean(prefs.afkExempt),
+        })
+        : notYet('AFK exemption', 'The away module is switched off on this server.')}
+
+    ${notYet('Noise gate, input gain and volume boost', 'Arrives with the media update, alongside camera and screen share.')}`;
 }
 
 export function appearancePanel({ prefs = {} } = {}) {

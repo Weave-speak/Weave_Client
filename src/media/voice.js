@@ -78,6 +78,8 @@ export function createVoice({
     getScreenConstraints = () => ({ video: { frameRate: { ideal: 30, max: 60 } }, audio: true }),
     /** 'detail' keeps text readable under motion; 'motion' keeps games smooth. */
     getScreenContentHint = () => 'detail',
+    /** Encoder budget for a screen share, read fresh per share so presets apply next time. */
+    getScreenEncodings = () => [{ maxBitrate: 4_000_000 }],
     /** The stage's feed: called with { cid, slot, stream } and stream null on teardown. */
     onVideo = () => {},
 } = {}) {
@@ -296,6 +298,13 @@ export function createVoice({
             codecOptions: { opusDtx: true, opusFec: true },
         });
 
+        // TRUST NOTHING ABOUT THE CHAIN. On at least one Chromium build, a worklet graph
+        // fed by a MediaStreamSource silently never processes — the produced track is
+        // pure silence while every API reports success. So: if the chain claims to be
+        // processing, listen to its OUTPUT for a moment; if the raw microphone is live
+        // and the chain is a flatline, swap the producer back to the raw track in place.
+        if (micChain?.processed) verifyChainCarries();
+
         // A successful produce proves the path works end to end, so this is the only place
         // the recovery counter is allowed to reset. Resetting it on a socket reconnect
         // instead is what produced 51 rebuilds in 18 minutes.
@@ -307,6 +316,45 @@ export function createVoice({
         // survive, so this re-produces without a single new permission prompt.
         await restoreVideo().catch(() => { /* voice is up; video can be retried by hand */ });
         return micProducer;
+    }
+
+    /**
+     * Prove the processed track carries audio, or stop using it.
+     *
+     * Compares the chain's output level against the raw device over ~700ms. Quiet raw
+     * proves nothing (the person may simply not be talking), so the check re-arms on a
+     * timer until the raw track is audibly live at least once.
+     */
+    function verifyChainCarries() {
+        const chain = micChain;
+        if (!chain?.processed || !micProducer) return;
+        const outMeter = meterFor(new MediaStream([chain.track]), 'chain-verify');
+        if (!outMeter) return;
+
+        let rawPeak = 0;
+        let outPeak = 0;
+        let samples = 0;
+        const timer = setInterval(() => {
+            if (micChain !== chain || !micProducer) { cleanup(); return; }
+            rawPeak = Math.max(rawPeak, micMeter?.read() ?? 0);
+            outPeak = Math.max(outPeak, outMeter.read());
+            samples += 1;
+            if (samples < 7) return;
+
+            if (rawPeak < 0.02) { rawPeak = 0; outPeak = 0; samples = 0; return; }   // nothing said yet
+            cleanup();
+            if (outPeak < 0.002) {
+                // The graph is dead. The device track is alive and already granted —
+                // swap it into the live producer; the room never hears the difference,
+                // because until now it heard nothing at all.
+                const [raw] = micStream?.getAudioTracks() ?? [];
+                if (raw) micProducer.replaceTrack({ track: raw }).catch(() => {});
+                chain.stop();
+                if (micChain === chain) micChain = null;
+                console.warn('[weave] mic chain produced silence on this engine; raw track restored');
+            }
+        }, 100);
+        const cleanup = () => { clearInterval(timer); outMeter.stop(); };
     }
 
     /* ── producing video ─────────────────────────────────────────────────── */
@@ -378,8 +426,9 @@ export function createVoice({
         screenProducer = await sendTransport.produce({
             track: video,
             appData: { slot: SLOTS.SCREEN },
-            // One high-rate layer: a screen is one truth, not a face to be downscaled.
-            encodings: [{ maxBitrate: 4_000_000 }],
+            // One layer whose budget the preset decides: a screen is one truth, not a
+            // face to be downscaled.
+            encodings: getScreenEncodings(),
             codecOptions: { videoGoogleStartBitrate: 1200 },
         });
 
@@ -546,7 +595,16 @@ export function createVoice({
             for (const entry of consumers.values()) {
                 if (entry.meter) levels.set(entry.cid, entry.meter.read());
             }
-            if (micMeter) levels.set('self', muted ? 0 : micMeter.read());
+            if (micMeter) {
+                const level = muted ? 0 : micMeter.read();
+                levels.set('self', level);
+                // The settings meter runs on THIS path — the analyser provably reads
+                // every engine we have met, where worklet telemetry has not.
+                onMicTelemetry({
+                    level,
+                    db: level > 0 ? Math.max(-100, 20 * Math.log10(level)) : -100,
+                });
+            }
             onLevels(new Map(levels));
         }, LEVEL_INTERVAL_MS);
     }

@@ -67,6 +67,7 @@ export async function createMicChain(context, micStream, {
 
         const [track] = destination.stream.getAudioTracks();
         if (!track) return fallback;
+        console.warn('[weave] mic chain active (gate wired, telemetry on)');
 
         return {
             track,
@@ -88,7 +89,10 @@ export async function createMicChain(context, micStream, {
                 try { gate.port.onmessage = null; } catch { /* closing */ }
             },
         };
-    } catch {
+    } catch (err) {
+        // Falling back is correct; falling back SILENTLY cost a debugging session. One
+        // line names the reason the enhancement is off.
+        console.warn('[weave] mic chain fell back to the raw track:', err?.message ?? err);
         return fallback;
     }
 }

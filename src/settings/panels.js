@@ -142,7 +142,30 @@ export function profilePanel({ me = {}, features = [] } = {}) {
     <p class="panel-lead">Microphone and voice behaviour has moved to Voice &amp; Audio.</p>`;
 }
 
-export function voicePanel({ prefs = {}, devices = [], features = [] } = {}) {
+/** A range row: label, live value readout, and the slider itself. */
+const slider = ({ id, label, hint, min, max, value, unit = '' }) => `
+  <div class="setting">
+    <label class="setting-text" for="${esc(id)}">
+      <span class="setting-label">${esc(label)}
+        <span class="slider-value" data-value-for="${esc(id)}">${esc(value)}${esc(unit)}</span></span>
+      ${hint ? `<span class="setting-hint">${esc(hint)}</span>` : ''}
+    </label>
+    <input class="setting-range" type="range" id="${esc(id)}" data-setting="${esc(id)}"
+           min="${esc(min)}" max="${esc(max)}" value="${esc(value)}">
+  </div>`;
+
+const choose = ({ id, label, hint, value, options }) => `
+  <div class="setting">
+    <label class="setting-text" for="${esc(id)}">
+      <span class="setting-label">${esc(label)}</span>
+      ${hint ? `<span class="setting-hint">${esc(hint)}</span>` : ''}
+    </label>
+    <select id="${esc(id)}" data-setting="${esc(id)}">
+      ${options.map(([v, text]) => `<option value="${esc(v)}" ${String(v) === String(value) ? 'selected' : ''}>${esc(text)}</option>`).join('')}
+    </select>
+  </div>`;
+
+export function voicePanel({ prefs = {}, devices = [], cameras = [], features = [] } = {}) {
     const hasAfk = features.includes('module.afk');
     return `
     <h2 class="panel-title">Voice &amp; Audio</h2>
@@ -178,6 +201,35 @@ export function voicePanel({ prefs = {}, devices = [], features = [] } = {}) {
 
     <h3 class="panel-section">Processing</h3>
 
+    ${slider({
+        id: 'micGain',
+        label: 'Input gain',
+        hint: 'Your loudness before anything else. 100 is untouched; above it boosts a quiet microphone.',
+        min: 0, max: 200, value: prefs.micGain ?? 100, unit: '%',
+    })}
+
+    ${toggle({
+        id: 'noiseGate',
+        label: 'Noise gate',
+        hint: 'Transmit only when you are actually speaking. Watch the meter: the gate opens when the bar crosses the line.',
+        checked: Boolean(prefs.noiseGate),
+    })}
+
+    <div class="setting${prefs.noiseGate ? '' : ' is-disabled'}">
+      <label class="setting-text" for="gateSensitivity">
+        <span class="setting-label">Sensitivity
+          <span class="slider-value" data-value-for="gateSensitivity">${esc(prefs.gateSensitivity ?? 64)}</span></span>
+        <span class="setting-hint">Higher closes on more. Set it just above where the bar sits while you are silent.</span>
+        <span class="mic-meter" aria-hidden="true">
+          <i class="mic-meter-fill" id="micMeterFill"></i>
+          <i class="mic-meter-mark" id="micThreshMark" style="left: ${esc(prefs.gateSensitivity ?? 64)}%"></i>
+        </span>
+        <span class="setting-note" id="gateState">The meter runs while you are in a voice room.</span>
+      </label>
+      <input class="setting-range" type="range" id="gateSensitivity" data-setting="gateSensitivity"
+             min="0" max="100" value="${esc(prefs.gateSensitivity ?? 64)}" ${prefs.noiseGate ? '' : 'disabled'}>
+    </div>
+
     ${toggle({
         id: 'noiseSuppression',
         label: 'Noise suppression',
@@ -197,6 +249,41 @@ export function voicePanel({ prefs = {}, devices = [], features = [] } = {}) {
         label: 'Automatic gain',
         hint: 'Evens out how loud you are. Turn this off if you use your own mixer.',
         checked: prefs.autoGainControl !== false,
+    })}
+
+    <h3 class="panel-section">Camera</h3>
+
+    ${cameras.length
+        ? choose({
+            id: 'camDevice', label: 'Camera',
+            value: prefs.camDevice ?? cameras[0]?.deviceId,
+            options: cameras.map((c) => [c.deviceId, c.label || 'Camera']),
+        })
+        : notYet('Camera selection', 'Device names are readable once a camera has been used.')}
+    ${choose({
+        id: 'camRes', label: 'Camera quality',
+        value: prefs.camRes ?? '720',
+        options: [['720', '720p — kind to upload'], ['1080', '1080p — sharper, heavier']],
+    })}
+
+    <h3 class="panel-section">Screen sharing</h3>
+
+    ${choose({
+        id: 'streamPreset', label: 'Stream quality',
+        hint: 'Applies from your next share.',
+        value: prefs.streamPreset ?? '1080p30',
+        options: [
+            ['720p30', '720p · 30fps — kind to every connection'],
+            ['1080p30', '1080p · 30fps — the everyday default'],
+            ['1080p60', '1080p · 60fps — games'],
+            ['source', 'Source — your screen exactly as it is'],
+        ],
+    })}
+    ${choose({
+        id: 'streamPrefer', label: 'When the connection tightens',
+        hint: 'The encoder cannot always keep both. Pick what survives.',
+        value: prefs.streamPrefer ?? 'detail',
+        options: [['detail', 'Keep text readable'], ['motion', 'Keep motion smooth']],
     })}
 
     <h3 class="panel-section">Presence</h3>

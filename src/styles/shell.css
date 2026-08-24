@@ -1425,6 +1425,40 @@
 .switch:checked::after { transform: translateX(18px); background: var(--on-accent); }
 .switch:disabled { cursor: not-allowed; }
 
+/* Sliders and the mic meter: the reflexive half of the panel. */
+.setting-range { flex: none; width: 190px; accent-color: var(--accent); }
+.slider-value {
+    margin-left: var(--s-2);
+    font-size: var(--t-sm);
+    color: var(--accent-hi);
+    font-variant-numeric: tabular-nums;
+}
+.mic-meter {
+    position: relative;
+    display: block;
+    height: 8px;
+    margin-top: var(--s-2);
+    border-radius: var(--r-pill);
+    background: var(--surface-0);
+    border: 1px solid var(--line-soft);
+    overflow: hidden;
+}
+.mic-meter-fill {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: var(--ink-faint);
+    border-radius: var(--r-pill);
+    transition: width 70ms linear, background var(--dur-fast);
+}
+.mic-meter-fill.open { background: var(--ok); }
+.mic-meter-mark {
+    position: absolute;
+    top: -2px; bottom: -2px;
+    width: 2px;
+    background: var(--accent-hi);
+}
+
 .key-capture {
     flex: none;
     min-width: 96px;

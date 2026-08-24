@@ -18,6 +18,7 @@ import { createRoomState } from './state.js';
 import { WeaveBackground, createMessageNoise } from '../ui/weave-background.js';
 import { createVoice } from '../media/voice.js';
 import { effectiveMute, onPushToTalkChange } from '../media/mute-policy.js';
+import { screenShareSettings, cameraConstraints } from '../media/presets.js';
 import { createSettings, readPrefs } from '../settings/index.js';
 import { createRoomBrowser } from '../rooms/browser.js';
 import { createModal } from '../ui/modal.js';
@@ -116,6 +117,28 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             autoGainControl: prefs.autoGainControl !== false,
             ...(prefs.micDevice ? { deviceId: { exact: prefs.micDevice } } : {}),
         }),
+        getChainSettings: () => ({
+            micGain: Number(prefs.micGain ?? 100),
+            noiseGate: Boolean(prefs.noiseGate),
+            gateSensitivity: Number(prefs.gateSensitivity ?? 64),
+        }),
+        onMicTelemetry(data) {
+            try { window.dispatchEvent(new CustomEvent('weave:mic-level', { detail: data })); } catch { /* no DOM */ }
+        },
+        getVideoConstraints: () => cameraConstraints({
+            device: prefs.camDevice ?? null,
+            res: prefs.camRes ?? '720',
+            fps: Number(prefs.camFps ?? 30),
+        }),
+        getScreenConstraints: () => screenShareSettings({
+            preset: prefs.streamPreset, prefer: prefs.streamPrefer,
+        }).constraints,
+        getScreenContentHint: () => screenShareSettings({
+            preset: prefs.streamPreset, prefer: prefs.streamPrefer,
+        }).contentHint,
+        getScreenEncodings: () => screenShareSettings({
+            preset: prefs.streamPreset, prefer: prefs.streamPrefer,
+        }).encodings,
         onChange: (status) => {
             voiceState = status;
             paint();
@@ -177,6 +200,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         const wasPushToTalk = prefs.pushToTalk;
         prefs = next;
         voice.applyAudioConstraints().catch(() => {});
+        voice.applyChainSettings();
 
         // Flipping push-to-talk changes who owns the microphone, in both directions.
         // ON closes the gate immediately — leaving the mic open until the first press

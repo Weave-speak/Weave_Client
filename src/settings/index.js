@@ -46,6 +46,7 @@ export function createSettings({ api, server, me: signedInAs, features = [], onP
     let current = 'profile';
     let prefs = readPrefs(server.id);
     let devices = [];
+    let cameras = [];
     let invite = null;
     let inviteBusy = false;
     let inviteError = null;
@@ -57,7 +58,7 @@ export function createSettings({ api, server, me: signedInAs, features = [], onP
     function panelBody() {
         switch (current) {
             case 'profile': return profilePanel({ me, prefs, features });
-            case 'voice': return voicePanel({ prefs, devices, features });
+            case 'voice': return voicePanel({ prefs, devices, cameras, features });
             case 'appearance': return appearancePanel({ prefs });
             case 'invites': return invitesPanel({
                 invite, busy: inviteBusy, error: inviteError,
@@ -130,10 +131,49 @@ export function createSettings({ api, server, me: signedInAs, features = [], onP
             input.addEventListener('change', async () => {
                 const value = input.type === 'checkbox' ? input.checked : input.value;
                 await set(input.dataset.setting, value);
-                // Turning push-to-talk on reveals its key control, so this panel redraws.
-                if (input.dataset.setting === 'pushToTalk') renderPanel();
+                // Controls that reveal or grey other controls redraw the panel.
+                if (['pushToTalk', 'noiseGate'].includes(input.dataset.setting)) renderPanel();
             });
+            // Sliders apply LIVE while dragging: a gain you cannot hear moving and a
+            // threshold you cannot see against the meter would both be guesses.
+            if (input.type === 'range') {
+                input.addEventListener('input', () => {
+                    const readout = $(`[data-value-for="${input.id}"]`, modal.element);
+                    if (readout) readout.textContent = input.value + (input.id === 'micGain' ? '%' : '');
+                    if (input.id === 'gateSensitivity') {
+                        const mark = $('#micThreshMark', modal.element);
+                        if (mark) mark.style.left = `${input.value}%`;
+                    }
+                    set(input.dataset.setting, input.value);
+                });
+            }
         });
+
+        // The mic meter: the chain posts levels while a voice room is live; the panel
+        // draws them only while someone is looking.
+        const fill = $('#micMeterFill', modal.element);
+        if (fill) {
+            const onLevel = (event) => {
+                const { db } = event.detail ?? {};
+                // The meter axis matches the sensitivity slider: -100dB at 0, -30dB at 100.
+                const pct = Math.max(0, Math.min(100, ((db ?? -100) + 100) / 0.7));
+                fill.style.width = `${pct}%`;
+                // Open/closed is computed HERE, against the same slider the user drags —
+                // the bar crossing the line and the state flipping are one fact twice.
+                const threshold = Number($('#gateSensitivity', modal.element)?.value ?? 64);
+                const gateOn = Boolean($('#noiseGate', modal.element)?.checked);
+                const open = !gateOn || pct >= threshold;
+                fill.classList.toggle('open', open);
+                const stateLine = $('#gateState', modal.element);
+                if (stateLine) {
+                    stateLine.textContent = gateOn
+                        ? (open ? 'Gate open — transmitting.' : 'Gate closed.')
+                        : 'Gate off — always transmitting.';
+                }
+            };
+            window.addEventListener('weave:mic-level', onLevel);
+            modal.element.addEventListener('close', () => window.removeEventListener('weave:mic-level', onLevel), { once: true });
+        }
 
         $('[data-capture-key]', modal.element)?.addEventListener('click', (event) => {
             captureKey(event.currentTarget);
@@ -239,6 +279,7 @@ export function createSettings({ api, server, me: signedInAs, features = [], onP
         try {
             const all = await navigator.mediaDevices.enumerateDevices();
             devices = all.filter((d) => d.kind === 'audioinput' && d.label);
+            cameras = all.filter((d) => d.kind === 'videoinput' && d.label);
         } catch {
             devices = [];
         }

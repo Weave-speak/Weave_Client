@@ -124,8 +124,9 @@ test('the shell constrains itself rather than the page', () => {
     assert.match(shell, /\.app-body\s*>\s*\*\s*\{[^}]*min-height:\s*0/);
     assert.match(shell, /\.app-body\s*\{[^}]*grid-template-columns:\s*var\(--rail-w\)\s*var\(--sidebar-w\)\s*minmax\(0,\s*1fr\)/);
 
-    // The rows that make the composer stay put while the timeline scrolls.
-    assert.match(shell, /\.room\s*\{[^}]*grid-template-rows:\s*auto minmax\(0,\s*1fr\) auto/);
+    // The rows that make the composer stay put while the timeline scrolls — and since
+    // the media phase, the stage row between the header and the messages.
+    assert.match(shell, /\.room\s*\{[^}]*grid-template-rows:\s*auto auto minmax\(0,\s*1fr\) auto/);
 });
 
 test('narrow windows drop whole columns instead of squeezing them', () => {

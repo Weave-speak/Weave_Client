@@ -25,6 +25,7 @@ import { platform } from '../platform/index.js';
 import { userHue } from '../ui/hue.js';
 import { mentionQuery, matchMentions, insertMention } from './mentions.js';
 import { freshHistory, advanceHistory, nextPageQuery, shouldLoadOlder } from './history.js';
+import { stageView, tileKey, sharePickerView } from './views/stage.js';
 import { avatar } from './views/parts.js';
 import { esc } from '../ui/dom.js';
 import { $, $$, html } from '../ui/dom.js';
@@ -74,8 +75,24 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
     const canBrowse = features.includes('chat.browse');
     const canDm = features.includes('module.dm');
 
+    // key `${cid}:${slot}` -> MediaStream. 'self' is our own preview.
+    const videoStreams = new Map();
+    let stageFocus = null;
+
     const voice = createVoice({
         link,
+        onVideo({ cid, slot, stream }) {
+            const key = tileKey(cid, slot);
+            if (!stream) {
+                videoStreams.delete(key);
+                if (stageFocus === key) stageFocus = null;
+            } else {
+                videoStreams.set(key, stream);
+                // A screen is THE thing: focus the first one to arrive unprompted.
+                if (slot === 'screen' && cid !== 'self' && !stageFocus) stageFocus = key;
+            }
+            paintStage();
+        },
         getAudioConstraints: () => ({
             echoCancellation: prefs.echoCancellation !== false,
             noiseSuppression: prefs.noiseSuppression !== false,
@@ -230,6 +247,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         setHtml('#voiceNotice', voiceNoticeMarkup(voiceState));
         paintConnection(view.connection);
         paintRoomHead(view.room);
+        paintMediaButtons();
         paintMessages(view.items);
 
         // A repaint replaced those rows, so anything currently talking needs its ring back
@@ -291,6 +309,70 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         if (addBtn) addBtn.hidden = !(room.private && room.member && room.kind !== 'dm');
         const composer = $('#composerInput', mount);
         if (composer) composer.placeholder = `Message ${room.name ?? 'the room'}…`;
+    }
+
+    /**
+     * Paint the stage — and ONLY when video actually changed.
+     *
+     * Deliberately not part of repaint(): rebuilding <video> elements on every chat
+     * message or presence blink would visibly restart the pictures. The stage answers to
+     * onVideo, focus clicks and room moves, nothing else.
+     */
+    function paintStage() {
+        const slot = $('#stageSlot', mount);
+        if (!slot) return;
+
+        const me = state.raw.me;
+        const tiles = [];
+        for (const [key, stream] of videoStreams) {
+            const [cid, slotName] = key.split(':');
+            if (cid === 'self') {
+                tiles.push({ key, cid, slot: slotName, label: 'You', self: true, stream });
+                continue;
+            }
+            const peer = state.raw.peers.get(cid);
+            // Only what is in the room with us: a consumer should not exist otherwise,
+            // but a stale one must not paint a ghost.
+            if (!peer || peer.channelId !== state.raw.currentChannelId) continue;
+            tiles.push({
+                key, cid, slot: slotName,
+                label: peer.displayName || peer.username || 'Someone',
+                self: peer.userId === me?.id,
+                stream,
+            });
+        }
+
+        slot.innerHTML = stageView({ tiles, focus: stageFocus });
+
+        // Streams attach after paint; a view that touched srcObject would not be a view.
+        for (const el of slot.querySelectorAll('[data-tile]')) {
+            const stream = videoStreams.get(el.dataset.tile);
+            const video = el.querySelector('video');
+            if (video && stream && video.srcObject !== stream) {
+                video.srcObject = stream;
+                video.play().catch(() => { /* autoplay policies; the click that follows fixes it */ });
+            }
+        }
+
+        paintMediaButtons();
+    }
+
+    /** The header's camera and screen buttons: shown where sending is possible, lit while on. */
+    function paintMediaButtons() {
+        const standing = state.raw.channels.find((c) => c.id === state.raw.currentChannelId);
+        const canSend = Boolean(standing) && standing.allowVideo !== false;
+        const cam = $('#camBtn', mount);
+        const screen = $('#screenBtn', mount);
+        if (cam) {
+            cam.hidden = !canSend;
+            cam.setAttribute('aria-pressed', String(voice.webcamOn));
+            cam.title = voice.webcamOn ? 'Turn your camera off' : 'Turn your camera on';
+        }
+        if (screen) {
+            screen.hidden = !canSend;
+            screen.setAttribute('aria-pressed', String(voice.screenOn));
+            screen.title = voice.screenOn ? 'Stop sharing your screen' : 'Share your screen';
+        }
     }
 
     /**
@@ -408,6 +490,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
         if (msg.type === 'moved' || msg.type === 'joined') {
             msgNoise.reset();
+            stageFocus = null;
             state.apply(msg);
             // Both fetches land AFTER the joined frame has painted, so they must paint
             // again themselves — without it the rail and the badges sat empty until the
@@ -577,6 +660,40 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                 return;
             }
 
+            const tile = event.target.closest('[data-tile]');
+            if (tile) {
+                stageFocus = stageFocus === tile.dataset.tile ? null : tile.dataset.tile;
+                paintStage();
+                return;
+            }
+
+            if (event.target.closest('[data-toggle-cam]')) {
+                (voice.webcamOn ? Promise.resolve(voice.disableWebcam()) : voice.enableWebcam())
+                    .catch((err) => {
+                        voiceState = {
+                            state: 'no-mic',
+                            message: err?.name === 'NotAllowedError'
+                                ? 'Camera blocked. Voice still works.'
+                                : `Camera unavailable: ${err.message}`,
+                        };
+                        paint();
+                    })
+                    .finally(() => paintMediaButtons());
+                return;
+            }
+
+            if (event.target.closest('[data-toggle-screen]')) {
+                (voice.screenOn ? Promise.resolve(voice.disableScreen()) : voice.enableScreen())
+                    .catch((err) => {
+                        // Cancelling the picker is a decision, not a failure.
+                        if (err?.name === 'NotAllowedError') return;
+                        voiceState = { state: 'no-mic', message: `Screen share failed: ${err.message}` };
+                        paint();
+                    })
+                    .finally(() => paintMediaButtons());
+                return;
+            }
+
             const chat = event.target.closest('[data-open-chat]');
             if (chat) {
                 openTextChannel(chat.dataset.openChat);
@@ -695,7 +812,9 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         });
 
         window.addEventListener('keydown', (event) => {
-            if (event.key === 'Escape') setDrawer(false);
+            if (event.key !== 'Escape') return;
+            if (stageFocus) { stageFocus = null; paintStage(); return; }
+            setDrawer(false);
         });
 
         // Nearing the top of the timeline asks for the page before it. The policy —
@@ -957,6 +1076,36 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         paintList();
         input.focus();
     }
+
+    /* ── the desktop share picker ────────────────────────────────────────── */
+
+    // The main process holds a pending capture request while this modal is open; every
+    // exit path MUST answer it, or the request only dies by its own timeout.
+    platform.share.onPick(({ nonce, sources }) => {
+        let answered = false;
+        const modal = createModal({
+            className: 'share-modal',
+            label: 'Share your screen',
+            onClose: () => {
+                if (!answered) { answered = true; platform.share.answer(nonce, {}); }
+            },
+        });
+        modal.open({ content: sharePickerView({ sources }) });
+
+        modal.element.addEventListener('click', (event) => {
+            const source = event.target.closest('[data-share-source]');
+            if (source) {
+                answered = true;
+                platform.share.answer(nonce, {
+                    id: source.dataset.shareSource,
+                    audio: modal.element.querySelector('#shareAudio')?.checked ?? true,
+                });
+                modal.close();
+                return;
+            }
+            if (event.target.closest('[data-share-cancel]')) modal.close();
+        });
+    });
 
     /** The narrow-window drawer: the sidebar, floating over the room. */
     function setDrawer(open) {

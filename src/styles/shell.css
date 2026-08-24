@@ -476,7 +476,7 @@
 .room {
     position: relative;
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
     background:
         var(--noise),
         radial-gradient(900px 480px at 50% -10%, rgb(var(--accent-rgb) / 0.05) 0%, transparent 70%),
@@ -531,6 +531,115 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+
+/* ── The stage ────────────────────────────────────────────────────────────── */
+
+/* Video above, chat below, always both: a stream does not replace the room. */
+#stageSlot:empty { display: none; }
+.stage {
+    padding: var(--s-3) var(--s-4) 0;
+    max-height: 58vh;
+    display: grid;
+    gap: var(--s-2);
+    min-height: 0;
+}
+.stage.has-focus { grid-template-rows: minmax(0, 1fr) auto; }
+
+.stage-grid {
+    display: grid;
+    gap: var(--s-2);
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    align-items: center;
+    min-height: 0;
+}
+.stage-grid[data-count="1"] { grid-template-columns: minmax(0, 1fr); }
+
+.stage-main { min-height: 0; display: grid; }
+.stage-strip {
+    display: flex;
+    gap: var(--s-2);
+    overflow-x: auto;
+    padding-bottom: var(--s-1);
+}
+.stage-strip .tile { width: 172px; flex: none; }
+
+.tile {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    min-height: 0;
+    border-radius: var(--r-3);
+    overflow: hidden;
+    background: var(--surface-0);
+    border: 1px solid var(--line-soft);
+    cursor: pointer;
+    transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+.tile:hover { border-color: var(--line-strong); }
+.tile.focused { border-color: rgb(var(--accent-rgb) / 0.6); box-shadow: var(--shadow-2); }
+.stage-main .tile { aspect-ratio: auto; height: 100%; cursor: zoom-out; }
+.tile video { width: 100%; height: 100%; object-fit: contain; background: var(--video-backdrop); display: block; }
+/* A mirror for your own face only — everyone else must read your screen's text. */
+.tile.self video { transform: scaleX(-1); }
+.tile.self[data-tile$=":screen"] video { transform: none; }
+
+.tile-label {
+    position: absolute;
+    left: var(--s-2); bottom: var(--s-2);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-1);
+    padding: 3px var(--s-2);
+    border-radius: var(--r-1);
+    background: var(--scrim);
+    color: var(--on-accent);
+    font-size: var(--t-xs);
+    font-weight: 600;
+    max-width: calc(100% - var(--s-4));
+}
+.tile-label svg { width: 12px; height: 12px; flex: none; }
+.tile-label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The header buttons while sending: lit, and honest about what a second press does. */
+.media-btn[aria-pressed="true"] {
+    color: var(--accent-hi);
+    border-color: rgb(var(--accent-rgb) / 0.55);
+    background: var(--accent-tint);
+}
+
+/* ── The share picker ─────────────────────────────────────────────────────── */
+
+.share-picker { width: min(680px, 92vw); max-height: 82vh; overflow-y: auto; padding: var(--s-6); }
+.share-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: var(--s-3);
+}
+.share-source {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+    padding: var(--s-2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    background: var(--surface-2);
+    text-align: left;
+    transition: border-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.share-source:hover { border-color: var(--accent); transform: translateY(-1px); }
+.share-source img {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    border-radius: var(--r-2);
+    background: var(--video-backdrop);
+}
+.share-name {
+    font-size: var(--t-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.share-audio { margin-top: var(--s-5); }
 
 /* ── Timeline ─────────────────────────────────────────────────────────────── */
 

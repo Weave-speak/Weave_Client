@@ -228,10 +228,16 @@ export function timeline({ room = {}, items = [], typing = [], voice = {} } = {}
         <h1>${esc(room.name ?? 'Room')}</h1>
         <span class="room-topic" id="roomTopic" ${room.topic ? '' : 'hidden'}>${esc(room.topic ?? '')}</span>
         <span class="room-head-spacer"></span>
+        <button type="button" class="icon-btn media-btn" id="camBtn" data-toggle-cam hidden
+                title="Turn your camera on" aria-label="Turn your camera on" aria-pressed="false">${icons.camera}</button>
+        <button type="button" class="icon-btn media-btn" id="screenBtn" data-toggle-screen hidden
+                title="Share your screen" aria-label="Share your screen" aria-pressed="false">${icons.screen}</button>
         <button type="button" class="icon-btn" id="addMemberBtn" data-add-member
                 ${room.private && room.member ? '' : 'hidden'}
                 title="Add people to this room" aria-label="Add people to this private room">${icons.plus}</button>
       </header>
+
+      <div id="stageSlot"></div>
 
       <div class="timeline" id="timeline" tabindex="0" aria-label="Messages">
         <div class="timeline-inner">

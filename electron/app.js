@@ -17,7 +17,8 @@
 // what that server sends back. Treating the window as a general-purpose browser would mean
 // a hostile server could navigate it somewhere and inherit whatever the page can do.
 
-import { app, BrowserWindow, ipcMain, shell, safeStorage, nativeTheme, protocol, net } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, safeStorage, nativeTheme, protocol, net, desktopCapturer } from 'electron';
+import crypto from 'node:crypto';
 // Both of these are CommonJS. A named import from CJS depends on Node's module lexer
 // spotting the export in compiled output, which is not something to rely on in a process
 // whose only failure mode is a dialog that says "Error". Default-import and destructure.
@@ -161,6 +162,43 @@ function createWindow() {
         if (/^https?:$/.test(new URL(url).protocol)) shell.openExternal(url);
         return { action: 'deny' };
     });
+
+    // Screen sharing: Chromium asks the embedder which surface to capture, and with no
+    // handler the request simply fails. The renderer shows OUR picker (thumbnails from
+    // desktopCapturer), answers with a source id, and 'loopback' brings the system audio
+    // Windows can capture. No answer within a minute reads as a cancel — a hung picker
+    // must not leave a pending capture request forever.
+    win.webContents.session.setDisplayMediaRequestHandler(async (_request, callback) => {
+        let done = false;
+        const finish = (result) => { if (!done) { done = true; callback(result); } };
+        try {
+            const sources = await desktopCapturer.getSources({
+                types: ['screen', 'window'],
+                thumbnailSize: { width: 320, height: 180 },
+                fetchWindowIcons: false,
+            });
+            const nonce = crypto.randomUUID();
+            const timer = setTimeout(() => { ipcMain.removeAllListeners(`weave:share-answer:${nonce}`); finish({}); }, 60_000);
+            ipcMain.once(`weave:share-answer:${nonce}`, (_event, answer) => {
+                clearTimeout(timer);
+                const source = sources.find((entry) => entry.id === answer?.id);
+                if (!source) return finish({});
+                finish({ video: source, ...(answer.audio ? { audio: 'loopback' } : {}) });
+            });
+            win.webContents.send('weave:share-pick', {
+                nonce,
+                sources: sources.map((entry) => ({
+                    id: entry.id,
+                    name: entry.name,
+                    kind: entry.id.startsWith('screen') ? 'screen' : 'window',
+                    thumb: entry.thumbnail.toDataURL(),
+                })),
+            });
+        } catch (err) {
+            log.warn({ evt: 'share.sources_failed', err: String(err) }, 'Could not enumerate capture sources');
+            finish({});
+        }
+    }, { useSystemPicker: false });
 
     // Media is requested explicitly by the app itself and allowed. Writing to the
     // clipboard is what the invite "Copy" button does — denying it made that button

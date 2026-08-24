@@ -62,6 +62,18 @@ contextBridge.exposeInMainWorld('weaveNative', {
         },
     },
 
+    share: {
+        available: true,
+        onPick: (cb) => {
+            ipcRenderer.on('weave:share-pick', (_event, payload) => cb(payload));
+        },
+        answer: (nonce, choice) => {
+            // The nonce scopes the reply to one request; a stale picker cannot answer a
+            // newer one.
+            ipcRenderer.send(`weave:share-answer:${String(nonce)}`, choice ?? {});
+        },
+    },
+
     links: {
         available: true,
         onDeepLink: (cb) => {

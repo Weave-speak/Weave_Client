@@ -64,6 +64,14 @@ export function createVoice({
      * when the room was first entered.
      */
     getAudioConstraints = () => ({ echoCancellation: true, noiseSuppression: true, autoGainControl: true }),
+    /** Camera constraints, read fresh per open, same reasoning as the microphone's. */
+    getVideoConstraints = () => ({ width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }),
+    /** Screen constraints: resolution/fps caps and whether to bring system audio. */
+    getScreenConstraints = () => ({ video: { frameRate: { ideal: 30, max: 60 } }, audio: true }),
+    /** 'detail' keeps text readable under motion; 'motion' keeps games smooth. */
+    getScreenContentHint = () => 'detail',
+    /** The stage's feed: called with { cid, slot, stream } and stream null on teardown. */
+    onVideo = () => {},
 } = {}) {
     let device = null;
     let sendTransport = null;
@@ -71,6 +79,13 @@ export function createVoice({
 
     let micStream = null;
     let micProducer = null;
+    let camStream = null;
+    let camProducer = null;
+    let camWanted = false;
+    let screenStream = null;
+    let screenProducer = null;
+    let screenAudioProducer = null;
+    let screenWanted = false;
     let muted = false;
     let recoverAttempts = 0;
     let running = false;
@@ -262,7 +277,127 @@ export function createVoice({
         // instead is what produced 51 rebuilds in 18 minutes.
         recoverAttempts = 0;
         onChange({ state: 'live', talking: true });
+
+        // The proven path is the moment to restore anything video the user still wants:
+        // after a cross-worker move or a recovery the producers are gone but the TRACKS
+        // survive, so this re-produces without a single new permission prompt.
+        await restoreVideo().catch(() => { /* voice is up; video can be retried by hand */ });
         return micProducer;
+    }
+
+    /* ── producing video ─────────────────────────────────────────────────── */
+
+    /** Simulcast for faces: three quality rungs the server picks between per viewer. */
+    const CAM_ENCODINGS = [
+        { scaleResolutionDownBy: 4, maxBitrate: 150_000 },
+        { scaleResolutionDownBy: 2, maxBitrate: 500_000 },
+        { scaleResolutionDownBy: 1, maxBitrate: 1_800_000 },
+    ];
+
+    async function enableWebcam() {
+        camWanted = true;
+        if (!device?.loaded) throw new Error('Voice is not ready yet.');
+        await ensureSend();
+        if (camProducer) return camProducer;
+
+        const existing = camStream?.getVideoTracks?.().find((t) => t.readyState === 'live');
+        const track = existing ?? await (async () => {
+            camStream = await navigator.mediaDevices.getUserMedia({ video: getVideoConstraints() });
+            const [t] = camStream.getVideoTracks();
+            // The device disappearing (unplugged, taken by another app) ends the share
+            // honestly instead of freezing the last frame for everyone.
+            t.addEventListener('ended', () => disableWebcamInner());
+            return t;
+        })();
+
+        camProducer = await sendTransport.produce({
+            track,
+            appData: { slot: SLOTS.WEBCAM },
+            encodings: CAM_ENCODINGS,
+            codecOptions: { videoGoogleStartBitrate: 800 },
+        });
+        onVideo({ cid: 'self', slot: SLOTS.WEBCAM, stream: camStream });
+        onChange({ state: 'live', webcam: true });
+        return camProducer;
+    }
+
+    function disableWebcamInner() {
+        camWanted = false;
+        if (camProducer) {
+            link.send('closeProducer', { slot: SLOTS.WEBCAM });
+            try { camProducer.close(); } catch { /* already closed */ }
+            camProducer = null;
+        }
+        for (const track of camStream?.getTracks() ?? []) track.stop();
+        camStream = null;
+        onVideo({ cid: 'self', slot: SLOTS.WEBCAM, stream: null });
+        onChange({ state: 'live', webcam: false });
+    }
+
+    async function enableScreen() {
+        screenWanted = true;
+        if (!device?.loaded) throw new Error('Voice is not ready yet.');
+        await ensureSend();
+        if (screenProducer) return screenProducer;
+
+        const live = screenStream?.getVideoTracks?.().find((t) => t.readyState === 'live');
+        if (!live) {
+            // On desktop the app's own picker answers this; in a browser, the browser's.
+            screenStream = await navigator.mediaDevices.getDisplayMedia(getScreenConstraints());
+        }
+        const [video] = screenStream.getVideoTracks();
+        // 'detail' keeps text legible when the encoder has to choose; 'motion' keeps
+        // frame rate. The preference is the user's, read fresh each share.
+        try { video.contentHint = getScreenContentHint(); } catch { /* advisory only */ }
+        video.addEventListener('ended', () => disableScreenInner());
+
+        screenProducer = await sendTransport.produce({
+            track: video,
+            appData: { slot: SLOTS.SCREEN },
+            // One high-rate layer: a screen is one truth, not a face to be downscaled.
+            encodings: [{ maxBitrate: 4_000_000 }],
+            codecOptions: { videoGoogleStartBitrate: 1200 },
+        });
+
+        const [sysAudio] = screenStream.getAudioTracks();
+        if (sysAudio) {
+            screenAudioProducer = await sendTransport.produce({
+                track: sysAudio,
+                appData: { slot: SLOTS.SCREEN_AUDIO },
+                // Music and game audio: stereo, and no DTX — silence suppression makes
+                // music gap and pump.
+                codecOptions: { opusStereo: true, opusDtx: false },
+            });
+        }
+
+        onVideo({ cid: 'self', slot: SLOTS.SCREEN, stream: screenStream });
+        onChange({ state: 'live', screen: true, screenAudio: Boolean(sysAudio) });
+        return screenProducer;
+    }
+
+    function disableScreenInner() {
+        screenWanted = false;
+        for (const [slot, ref] of [[SLOTS.SCREEN, screenProducer], [SLOTS.SCREEN_AUDIO, screenAudioProducer]]) {
+            if (!ref) continue;
+            link.send('closeProducer', { slot });
+            try { ref.close(); } catch { /* already closed */ }
+        }
+        screenProducer = null;
+        screenAudioProducer = null;
+        for (const track of screenStream?.getTracks() ?? []) track.stop();
+        screenStream = null;
+        onVideo({ cid: 'self', slot: SLOTS.SCREEN, stream: null });
+        onChange({ state: 'live', screen: false });
+    }
+
+    /** Re-produce whatever video the user still wants, on a freshly proven path. */
+    async function restoreVideo() {
+        if (camWanted && !camProducer && camStream?.getVideoTracks?.().some((t) => t.readyState === 'live')) {
+            await enableWebcam();
+        }
+        if (screenWanted && !screenProducer && screenStream?.getVideoTracks?.().some((t) => t.readyState === 'live')) {
+            await enableScreen();
+        }
     }
 
     /* ── consuming ───────────────────────────────────────────────────────── */
@@ -283,6 +418,17 @@ export function createVoice({
         });
 
         const stream = new MediaStream([consumer.track]);
+
+        if (info.kind === 'video') {
+            // Video has no hidden sink: the stage owns the elements, this layer owns the
+            // packets. Announce the stream, then let them flow — the first keyframe is
+            // requested on resume, so a tile mounted a paint later still starts clean.
+            consumers.set(consumer.id, { consumer, cid, slot, kind: 'video' });
+            onVideo({ cid, slot, stream });
+            link.send('resumeConsumer', { consumerId: consumer.id });
+            return consumer;
+        }
+
         const audio = document.createElement('audio');
         audio.autoplay = true;
         audio.srcObject = stream;
@@ -292,8 +438,10 @@ export function createVoice({
         // paused precisely so this ordering is possible.
         link.send('resumeConsumer', { consumerId: consumer.id });
 
-        const meter = meterFor(stream, cid);
-        consumers.set(consumer.id, { consumer, cid, slot, audio, meter });
+        // A speaking meter belongs to a VOICE. Shared system audio is sound, not speech,
+        // and metering it would put a talking ring on someone whose game made a noise.
+        const meter = slot === SLOTS.AUDIO ? meterFor(stream, cid) : null;
+        consumers.set(consumer.id, { consumer, cid, slot, kind: 'audio', audio, meter });
 
         // Playback can be refused when nothing on the page has been interacted with yet.
         // It is worth knowing about rather than silently having no sound.
@@ -305,10 +453,14 @@ export function createVoice({
         const entry = consumers.get(consumerId);
         if (!entry) return;
         try { entry.consumer.close(); } catch { /* already gone */ }
-        entry.audio.srcObject = null;
-        entry.audio.remove();
-        entry.meter?.stop();
-        levels.delete(entry.cid);
+        if (entry.kind === 'video') {
+            onVideo({ cid: entry.cid, slot: entry.slot, stream: null });
+        } else {
+            entry.audio.srcObject = null;
+            entry.audio.remove();
+            entry.meter?.stop();
+            if (entry.slot === SLOTS.AUDIO) levels.delete(entry.cid);
+        }
         consumers.delete(consumerId);
     }
 
@@ -376,6 +528,18 @@ export function createVoice({
 
         try { micProducer?.close(); } catch { /* already closed */ }
         micProducer = null;
+        try { camProducer?.close(); } catch { /* already closed */ }
+        camProducer = null;
+        try { screenProducer?.close(); } catch { /* already closed */ }
+        screenProducer = null;
+        try { screenAudioProducer?.close(); } catch { /* already closed */ }
+        screenAudioProducer = null;
+        for (const track of camStream?.getTracks() ?? []) track.stop();
+        camStream = null;
+        for (const track of screenStream?.getTracks() ?? []) track.stop();
+        screenStream = null;
+        onVideo({ cid: 'self', slot: SLOTS.WEBCAM, stream: null });
+        onVideo({ cid: 'self', slot: SLOTS.SCREEN, stream: null });
 
         for (const track of micStream?.getTracks() ?? []) track.stop();
         micStream = null;
@@ -410,6 +574,12 @@ export function createVoice({
         },
 
         enableMic,
+        enableWebcam,
+        disableWebcam: () => disableWebcamInner(),
+        enableScreen,
+        disableScreen: () => disableScreenInner(),
+        get webcamOn() { return Boolean(camProducer); },
+        get screenOn() { return Boolean(screenProducer); },
 
         /** Stop sending entirely, as distinct from muting. */
         async disableMic() {
@@ -458,12 +628,10 @@ export function createVoice({
             onChange({ state: 'live', muted });
         },
 
-        /** Consume everything a peer is currently sending that we can play. */
+        /** Consume everything a peer is currently sending that we can play or show. */
         async consumePeer(peer) {
             for (const producer of peer?.producers ?? []) {
-                if (producer.slot === SLOTS.AUDIO) {
-                    await consume(peer.cid, producer.slot).catch(() => {});
-                }
+                await consume(peer.cid, producer.slot).catch(() => {});
             }
         },
 
@@ -473,7 +641,7 @@ export function createVoice({
 
             switch (msg.type) {
                 case 'producer_new':
-                    if (msg.slot === SLOTS.AUDIO) consume(msg.cid, msg.slot).catch(() => {});
+                    consume(msg.cid, msg.slot).catch(() => {});
                     return true;
 
                 case 'producer_closed':
@@ -519,6 +687,12 @@ export function createVoice({
             if (mediaReset) {
                 try { micProducer?.close(); } catch { /* already closed */ }
                 micProducer = null;
+                try { camProducer?.close(); } catch { /* already closed */ }
+                camProducer = null;
+                try { screenProducer?.close(); } catch { /* already closed */ }
+                screenProducer = null;
+                try { screenAudioProducer?.close(); } catch { /* already closed */ }
+                screenAudioProducer = null;
                 try { sendTransport?.close(); } catch { /* already closed */ }
                 try { recvTransport?.close(); } catch { /* already closed */ }
                 sendTransport = null;

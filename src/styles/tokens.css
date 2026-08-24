@@ -35,6 +35,11 @@
     --surface-3: #221e3a;    /* raised: buttons, chips */
     --surface-4: #2a2545;    /* overlay: menus, popovers, tooltips */
 
+    /* Video letterboxing. True black, deliberately outside the surface ladder: pillar
+       bars around a picture read as "nothing here", and a tinted dark grey reads as a
+       broken element. */
+    --video-backdrop: #000;
+
     /* ── Lines ─────────────────────────────────────────────────────────────── */
     --line-soft: #1e1b31;    /* barely there: internal dividers */
     --line: #2a2740;         /* the default border */

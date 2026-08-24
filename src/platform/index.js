@@ -127,6 +127,9 @@ const browserPlatform = {
     updates: noUpdates,
     diagnostics: { available: false, async read() { return null; }, async openFolder() {} },
     links: { available: false, onDeepLink() {} },
+    // In a browser the browser's own picker appears inside getDisplayMedia; onPick
+    // simply never fires.
+    share: { available: false, onPick() {}, answer() {} },
 
     // The server that served this page. Not configurable and not presented as if it were —
     // but only once it has actually answered as a Weave server.
@@ -168,6 +171,9 @@ const desktopPlatform = {
         ? { available: true, ...window.weaveNative.updates }
         : noUpdates,
 
+    share: (typeof window !== 'undefined' && window.weaveNative?.share)
+        ? { available: true, ...window.weaveNative.share }
+        : { available: false, onPick() {}, answer() {} },
     links: (typeof window !== 'undefined' && window.weaveNative?.links)
         ? { available: true, ...window.weaveNative.links }
         : { available: false, onDeepLink() {} },

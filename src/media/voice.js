@@ -31,6 +31,10 @@
 //     but never plays.
 
 import { Device } from 'mediasoup-client';
+import { createMicChain, sensitivityToDb, gainToLinear } from './chain.js';
+
+// Bundled beside the app; under weave:// and vite alike this resolves to a real URL.
+const GATE_WORKLET_URL = new URL('./gate-worklet.js', import.meta.url);
 
 /** Producer slots, matching the server's own names. */
 export const SLOTS = Object.freeze({
@@ -64,6 +68,10 @@ export function createVoice({
      * when the room was first entered.
      */
     getAudioConstraints = () => ({ echoCancellation: true, noiseSuppression: true, autoGainControl: true }),
+    /** The chain settings — gain 0–200, gate on/off, sensitivity 0–100 — read fresh. */
+    getChainSettings = () => ({ micGain: 100, noiseGate: false, gateSensitivity: 64 }),
+    /** Gate telemetry for the settings meter: { level, db, open } ~15×/s while live. */
+    onMicTelemetry = () => {},
     /** Camera constraints, read fresh per open, same reasoning as the microphone's. */
     getVideoConstraints = () => ({ width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }),
     /** Screen constraints: resolution/fps caps and whether to bring system audio. */
@@ -78,6 +86,7 @@ export function createVoice({
     let recvTransport = null;
 
     let micStream = null;
+    let micChain = null;
     let micProducer = null;
     let camStream = null;
     let camProducer = null;
@@ -215,7 +224,19 @@ export function createVoice({
         });
 
         track.enabled = !muted;
-        return track;
+
+        // The chain sits between the device and the producer. If it cannot build — no
+        // worklet, refused context — the raw track is used and nothing else changes.
+        audioContext ??= new (window.AudioContext ?? window.webkitAudioContext)();
+        const settings = getChainSettings();
+        micChain = await createMicChain(audioContext, micStream, {
+            workletUrl: GATE_WORKLET_URL,
+            gain: gainToLinear(settings.micGain),
+            gateEnabled: Boolean(settings.noiseGate),
+            gateThresholdDb: sensitivityToDb(settings.gateSensitivity),
+            onTelemetry: onMicTelemetry,
+        });
+        return micChain.track;
     }
 
     /* ── recovery ────────────────────────────────────────────────────────── */
@@ -552,6 +573,8 @@ export function createVoice({
 
         for (const track of micStream?.getTracks() ?? []) track.stop();
         micStream = null;
+        micChain?.stop();
+        micChain = null;
         micMeter?.stop();
         micMeter = null;
 
@@ -619,6 +642,8 @@ export function createVoice({
             micProducer = null;
             for (const track of micStream?.getTracks() ?? []) track.stop();
             micStream = null;
+            micChain?.stop();
+            micChain = null;
             micMeter?.stop();
             micMeter = null;
             onChange({ state: 'live', talking: false });
@@ -631,6 +656,16 @@ export function createVoice({
          * open, which for someone already in a call means "never" — they toggle noise
          * suppression, hear no difference, and reasonably conclude it does nothing.
          */
+        /** Nudge the live chain: gain and gate follow the sliders without re-producing. */
+        applyChainSettings() {
+            if (!micChain?.processed) return false;
+            const settings = getChainSettings();
+            micChain.setGain(gainToLinear(settings.micGain));
+            micChain.setGate(Boolean(settings.noiseGate));
+            micChain.setThresholdDb(sensitivityToDb(settings.gateSensitivity));
+            return true;
+        },
+
         async applyAudioConstraints() {
             const [track] = micStream?.getAudioTracks() ?? [];
             if (!track) return false;
@@ -661,6 +696,37 @@ export function createVoice({
         async consumePeer(peer) {
             for (const producer of peer?.producers ?? []) {
                 await consume(peer.cid, producer.slot).catch(() => {});
+            }
+        },
+
+        /**
+         * Reconcile against the room's truth: consume what is missing, drop what is
+         * orphaned. Events are how the client keeps up; THIS is how it recovers from the
+         * event it never saw — a producer_new that raced a reconnect, a frame lost to a
+         * blip. The production client ran exactly this heal on its heartbeat, and the
+         * lesson survived for a reason: one missed frame otherwise becomes one person
+         * silently unable to hear one other person until someone rejoins.
+         */
+        async sync(peersInRoom = []) {
+            if (!device?.loaded || !running) return;
+
+            const want = new Set();
+            for (const peer of peersInRoom) {
+                for (const producer of peer.producers ?? []) {
+                    want.add(`${peer.cid}:${producer.slot}`);
+                }
+            }
+
+            const have = new Set();
+            for (const entry of consumers.values()) have.add(`${entry.cid}:${entry.slot}`);
+
+            for (const [id, entry] of [...consumers]) {
+                if (!want.has(`${entry.cid}:${entry.slot}`)) dropConsumer(id);
+            }
+            for (const key of want) {
+                if (have.has(key)) continue;
+                const [cid, slot] = key.split(':');
+                await consume(cid, slot).catch(() => {});
             }
         },
 

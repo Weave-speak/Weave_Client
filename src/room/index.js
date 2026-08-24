@@ -68,6 +68,16 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
     const msgNoise = createMessageNoise();
     const history = new Map();   // channelId -> paging bookkeeping (see history.js)
 
+    /** The people standing in MY room right now, producers and all — the sync's truth. */
+    const roomPeers = () => [...state.raw.peers.values()]
+        .filter((p) => p.channelId === state.raw.currentChannelId && p.cid !== state.raw.selfCid);
+
+    // The self-heal beat: cheap when nothing is wrong (two set-diffs), decisive when a
+    // frame was lost. Fifteen seconds keeps "X can't hear Y" from ever lasting a minute.
+    const syncTimer = setInterval(() => {
+        if (state.raw.currentChannelId) voice.sync(roomPeers()).catch(() => {});
+    }, 15_000);
+
     let prefs = readPrefs(server.id);
     let pttHeld = false;
     // Text channels are openable-from-anywhere only when the server broadcasts chat
@@ -202,6 +212,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
      * to be forgotten. Servers and per-server preferences stay too.
      */
     async function signOut() {
+        clearInterval(syncTimer);
         await api.logout().catch(() => {
             // A network failure must not trap somebody in a signed-in interface. The
             // session lapses on its own; the important part is that this client forgets it.
@@ -559,7 +570,18 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
         // Consume everyone already talking before opening our own microphone, so the room
         // is audible immediately rather than after a permission prompt is answered.
-        for (const peer of frame.peers ?? []) await voice.consumePeer(peer);
+        //
+        // FILTERED to this channel: the joined frame carries the whole server's roster
+        // (for the sidebar), and consuming someone in another room stalls twelve seconds
+        // per producer waiting for a reply the server rightly refuses — enough stalls and
+        // the people actually beside you are never consumed. That was a real, reported
+        // one-way-audio bug.
+        for (const peer of (frame.peers ?? []).filter((p) => p.channelId === channel?.id)) {
+            await voice.consumePeer(peer);
+        }
+        // And one reconciliation straight after: anything that changed WHILE the loop
+        // above was awaiting is caught now rather than at the next beat.
+        voice.sync(roomPeers()).catch(() => {});
 
         if (channel?.allowVoice === false) {
             voiceState = { state: 'unavailable', message: `Voice is off in ${channel.name}.` };
@@ -1265,6 +1287,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         start,
         get state() { return state; },
         destroy() {
+            clearInterval(syncTimer);
             voice.stop();
             background?.destroy();
             link.onEvent = () => {};

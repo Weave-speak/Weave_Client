@@ -54,7 +54,7 @@ const streamPill = (t) => `
     <span class="pill-sep" aria-hidden="true"></span>
     <button type="button" class="pill-btn pill-stop" data-stop-watching
             aria-label="Stop watching — show all streams as thumbnails">
-      <span aria-hidden="true">✕</span>&nbsp;Stop watching
+      <span aria-hidden="true">✕</span>Stop watching
     </button>
   </span>`;
 

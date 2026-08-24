@@ -563,6 +563,14 @@
     display: grid;
     gap: var(--s-2);
     min-height: 0;
+    /* Declared, not assumed: auth.css also has a `.stage` (the sign-in page's centre
+       field) whose place-items:center leaks in here and centres the video layers on
+       top of each other. The design bundle patched this inline; the stylesheet is
+       where it belongs. */
+    place-items: stretch;
+    /* The design's opening split: 55% of the window to video, floor of 280px. The
+       divider's inline height wins the moment the hand moves it. */
+    height: max(280px, calc((100dvh - 190px) * 0.55));
 }
 .stage.has-focus { grid-template-rows: minmax(0, 1fr) auto; }
 
@@ -686,6 +694,7 @@
 }
 .pill-btn:hover { background: rgb(var(--accent-rgb) / 0.35); }
 .pill-btn svg { width: 16px; height: 16px; }
+.pill-stop { gap: 7px; padding: 0 12px; }
 .pill-stop:hover { background: rgb(var(--bad-rgb) / 0.28); }
 .pill-volume { width: 88px; accent-color: var(--accent); margin: 0 var(--s-2) 0 2px; }
 .pill-sep { width: 1px; height: 18px; background: rgb(var(--sep-rgb) / 0.14); margin: 0 3px; flex: none; }

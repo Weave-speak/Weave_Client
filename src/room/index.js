@@ -1121,7 +1121,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             const startH = stage.offsetHeight;
             const max = room.clientHeight * 0.62;
             const move = (ev) => {
-                stageHeightPx = Math.min(max, Math.max(220, startH + ev.clientY - startY));
+                stageHeightPx = Math.min(max, Math.max(280, startH + ev.clientY - startY));
                 stage.style.height = `${Math.round(stageHeightPx)}px`;
             };
             const up = () => {

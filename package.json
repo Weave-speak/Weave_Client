@@ -1,7 +1,7 @@
 {
   "name": "weave-client",
   "version": "0.1.22",
-  "description": "The Weave client — self-hosted voice, video and text chat for small groups",
+  "description": "The Weave client \u2014 self-hosted voice, video and text chat for small groups",
   "license": "MIT",
   "type": "module",
   "private": true,
@@ -18,10 +18,11 @@
     "art": "node scripts/make-installer-art.mjs",
     "electron:dev": "electron .",
     "pack": "npm run art && npm run build:desktop && electron-builder --win --publish never",
-    "release": "node scripts/ensure-release.mjs && npm run art && npm run build:desktop && electron-builder --win --publish always",
+    "release": "node scripts/ensure-release.mjs && npm run art && npm run build:desktop && electron-builder --win --publish always && node scripts/finish-release.mjs",
     "lint": "eslint .",
     "predict-delta": "node scripts/predict-delta.mjs",
-    "ensure-release": "node scripts/ensure-release.mjs"
+    "ensure-release": "node scripts/ensure-release.mjs",
+    "finish-release": "node scripts/finish-release.mjs"
   },
   "dependencies": {
     "electron-log": "5.4.4",

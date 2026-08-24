@@ -49,11 +49,21 @@ async function main() {
     const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'));
     const tag = tagArg === -1 ? `v${pkg.version}` : process.argv[tagArg + 1];
 
+    // By-tag lookup misses drafts, so search the list too — a rerun after a failed
+    // publish must find its own draft rather than trying to create a second release.
     const existing = await gh(`/releases/tags/${tag}`);
     if (existing.ok) {
         const release = await existing.json();
         console.log(`${tag} already exists (id ${release.id}) with ${release.assets.length} asset(s).`);
         return;
+    }
+    const listed = await gh('/releases?per_page=10');
+    if (listed.ok) {
+        const draft = (await listed.json()).find((r) => r.tag_name === tag);
+        if (draft) {
+            console.log(`${tag} already exists as a draft (id ${draft.id}).`);
+            return;
+        }
     }
     if (existing.status !== 404) {
         console.error(`Unexpected response looking up ${tag}: ${existing.status} ${await existing.text()}`);
@@ -75,6 +85,10 @@ async function main() {
             tag_name: tag,
             name: `Weave ${tag.replace(/^v/, '')}`,
             prerelease: true,
+            // DRAFT until every asset is verified uploaded (finish-release.mjs flips it).
+            // A visible half-uploaded release once handed a real user's updater a 404
+            // for latest.yml mid-publish, which reads as "Update failed" on their side.
+            draft: true,
             body: 'Assets are uploaded by electron-builder immediately after this release is created.',
         }),
     });

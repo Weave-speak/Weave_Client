@@ -32,12 +32,22 @@ against a 113 MB host — because their app code sits outside the compressed arc
 separately-versioned modules. Ours is one recompressed `app.asar` per release, and roughly a
 megabyte is the floor for that. It transfers in under a second, so the floor is fine.
 
+## Why a release is born as a draft
+
+A real user's updater once checked for updates in the middle of a publish: the release
+existed, `latest.yml` did not yet, and their launch showed "Update failed" for a 404 that
+fixed itself a minute later. So `ensure-release.mjs` now creates the release as a DRAFT —
+invisible to every updater — electron-builder attaches its assets to the draft, and
+`finish-release.mjs` flips it public only after verifying the exe, the blockmap and
+`latest.yml` are all present and uploaded. A missing asset refuses the flip and the
+release stays invisible: a failed build to fix, never a half-release to serve.
+
 ## Cutting a release
 
 ```bash
 npm version patch          # or minor
 git push --follow-tags
-npm run release
+npm run release            # drafts the release, uploads, then publishes it WHOLE
 ```
 
 `npm run release` regenerates the installer artwork, builds the desktop renderer, packages,

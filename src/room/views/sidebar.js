@@ -6,9 +6,10 @@
 // next to a voice room misleading, which is why each kind carries only the count that means
 // something for it.
 //
-// The occupants of the CURRENT voice room are listed under it. That is the one piece of the
-// roster you need without looking away from what you are doing, and it is why the member
-// list on the right can be dropped on a narrow window without losing anything essential.
+// The occupants of EVERY voice room are listed under it, the way Discord does it: where
+// everyone is standing is exactly what this column is for, and it must not change when you
+// merely open a text channel to read. It is also why the member list on the right can be
+// dropped on a narrow window without losing anything essential.
 
 import { esc } from '../../ui/dom.js';
 import { icons } from '../icons.js';
@@ -78,7 +79,7 @@ function roomItem(room, me) {
       ${isVoice && !occupants.length && !room.current
         ? '<span class="room-empty">(empty)</span>'
         : ''}
-      ${isVoice && room.current && occupants.length
+      ${isVoice && occupants.length
         ? `<ul class="room-people">${occupants.map((p) => occupant(p, me)).join('')}</ul>`
         : ''}
     </li>`;

@@ -120,7 +120,7 @@ test('an empty room reads as available, not as broken', () => {
     assert.ok(html.includes('>0<'), 'the count is still shown');
 });
 
-test('the current room lists its occupants and marks you', () => {
+test('every occupied voice room lists its people, current or not', () => {
     const html = sidebar({
         rooms: [{
             id: 'r', name: 'Hall', current: true,
@@ -132,8 +132,11 @@ test('the current room lists its occupants and marks you', () => {
     assert.ok(html.includes('(you)'));
     assert.ok(html.includes('Priority speaker'));
     assert.ok(html.includes('title="Muted"'));
-    // A room that is not current does not expand, or the sidebar becomes the roster.
-    assert.ok(!sidebar({ rooms: [{ id: 'r', name: 'Hall', occupants: [{ username: 'x' }] }] })
+
+    // The regression this pins: opening a text channel moved `current` off the room
+    // someone was standing in, and the people they were WITH vanished from the sidebar.
+    // Where everyone stands must not depend on what anyone is reading.
+    assert.ok(sidebar({ rooms: [{ id: 'r', name: 'Hall', occupants: [{ username: 'x' }] }] })
         .includes('room-people'));
 });
 

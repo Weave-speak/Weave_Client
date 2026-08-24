@@ -1,7 +1,7 @@
 {
   "name": "weave-client",
-  "version": "0.1.22",
-  "description": "The Weave client \u2014 self-hosted voice, video and text chat for small groups",
+  "version": "0.1.23",
+  "description": "The Weave client — self-hosted voice, video and text chat for small groups",
   "license": "MIT",
   "type": "module",
   "private": true,

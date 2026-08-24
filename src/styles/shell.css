@@ -1044,6 +1044,19 @@
 .room-person.speaking .person-name,
 .member-row.speaking .member-name { color: var(--ink); }
 
+/* ── History paging ───────────────────────────────────────────────────────── */
+
+/* One line above the oldest message: either a fetch in flight or the channel's origin.
+   Small on purpose — paging is plumbing, not an event. */
+.history-note {
+    padding: var(--s-2) var(--s-3) var(--s-3);
+    color: var(--ink-faint);
+    font-size: var(--t-sm);
+    text-align: center;
+    animation: fade-in var(--dur) var(--ease);
+}
+.history-note.cap { color: var(--ink-ghost); }
+
 /* ── The empty room ───────────────────────────────────────────────────────── */
 
 .timeline-empty {

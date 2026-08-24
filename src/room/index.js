@@ -24,6 +24,7 @@ import { createModal } from '../ui/modal.js';
 import { platform } from '../platform/index.js';
 import { userHue } from '../ui/hue.js';
 import { mentionQuery, matchMentions, insertMention } from './mentions.js';
+import { freshHistory, advanceHistory, nextPageQuery, shouldLoadOlder } from './history.js';
 import { avatar } from './views/parts.js';
 import { esc } from '../ui/dom.js';
 import { $, $$, html } from '../ui/dom.js';
@@ -64,6 +65,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
     // Text rooms breathe too: the strands pulse with message rate, exactly as the previous
     // client did. Without this a text channel is a room full of people and a dead canvas.
     const msgNoise = createMessageNoise();
+    const history = new Map();   // channelId -> paging bookkeeping (see history.js)
 
     let prefs = readPrefs(server.id);
     let pttHeld = false;
@@ -274,6 +276,11 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         if (!list || !scroller) return;
 
         const wasAtBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < STICK_PX;
+        // Distance from the BOTTOM is the reader's true position: when an older page lands
+        // on top, restoring this distance keeps the same message under the cursor instead
+        // of teleporting the view to wherever the old scrollTop now points.
+        const fromBottom = scroller.scrollHeight - scroller.scrollTop;
+
         list.innerHTML = messageList(items);
 
         // The "this is the start" note lives outside the list. Rebuilt every paint rather
@@ -281,8 +288,10 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         // forever because it rendered before the roster arrived.
         $('.timeline-empty', mount)?.remove();
         if (!items.length) list.insertAdjacentHTML('afterend', emptyState(state.toShell().room));
+        paintHistoryNote(state.raw.currentChannelId);
 
         if (wasAtBottom) scroller.scrollTop = scroller.scrollHeight;
+        else scroller.scrollTop = scroller.scrollHeight - fromBottom;
     }
 
     /* ── the living background ───────────────────────────────────────────── */
@@ -399,14 +408,60 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
     async function loadHistory(channelId) {
         if (!channelId) return;
+        const entry = freshHistory();
+        history.set(channelId, entry);
         try {
-            const { messages = [] } = await api.request('GET', `/api/chat/${encodeURIComponent(channelId)}/messages`);
-            // The endpoint returns newest-first; the timeline reads oldest-first.
-            state.setMessages(channelId, [...messages].reverse());
+            const reply = await api.request('GET',
+                `/api/chat/${encodeURIComponent(channelId)}/messages?${nextPageQuery(entry)}`);
+            history.set(channelId, advanceHistory(entry, reply));
+            // The page arrives oldest-first already; it IS the timeline.
+            state.setMessages(channelId, reply.messages ?? []);
         } catch {
             // A server with the chat module disabled answers 404, and that is a legitimate
             // configuration rather than an error. The room still works; it just has no text.
+            history.set(channelId, { ...entry, done: true });
             state.setMessages(channelId, []);
+        }
+    }
+
+    /**
+     * The page before the oldest one held, fetched as the reader nears the top.
+     *
+     * One request at a time, and never again once the server reports the beginning —
+     * shouldLoadOlder() is the whole policy, tested on its own.
+     */
+    async function loadOlder(channelId) {
+        const entry = history.get(channelId);
+        if (!entry || entry.busy) return;
+        history.set(channelId, { ...entry, busy: true });
+        paintHistoryNote(channelId);
+        try {
+            const reply = await api.request('GET',
+                `/api/chat/${encodeURIComponent(channelId)}/messages?${nextPageQuery(entry)}`);
+            history.set(channelId, advanceHistory(entry, reply));
+            if (!state.prependMessages(channelId, reply.messages ?? [])) paint();
+        } catch {
+            // A failed page is retried by the next scroll; the timeline already held is
+            // untouched. busy is released either way.
+            history.set(channelId, { ...entry, busy: false });
+            paint();
+        }
+    }
+
+    /** The one line above the oldest message: fetching, or the start of the room. */
+    function paintHistoryNote(channelId) {
+        const list = $('#msgList', mount);
+        if (!list) return;
+        $('.history-note', mount)?.remove();
+        const entry = history.get(channelId);
+        if (!entry) return;
+        if (entry.busy) {
+            list.insertAdjacentHTML('beforebegin',
+                '<div class="history-note">Fetching earlier messages…</div>');
+        } else if (entry.done && (state.raw.currentChannelId === channelId)
+            && (state.raw.messages.get(channelId)?.length ?? 0) > 0) {
+            list.insertAdjacentHTML('beforebegin',
+                '<div class="history-note cap">Where it all began.</div>');
         }
     }
 
@@ -525,6 +580,15 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         window.addEventListener('keydown', (event) => {
             if (event.key === 'Escape') setDrawer(false);
         });
+
+        // Nearing the top of the timeline asks for the page before it. The policy —
+        // once at a time, never past the beginning — lives in history.js.
+        $('#timeline', mount)?.addEventListener('scroll', (event) => {
+            const channelId = state.raw.currentChannelId;
+            if (shouldLoadOlder(history.get(channelId), event.target.scrollTop)) {
+                loadOlder(channelId);
+            }
+        }, { passive: true });
 
         wirePushToTalk();
 

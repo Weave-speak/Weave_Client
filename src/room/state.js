@@ -238,6 +238,17 @@ export function createRoomState({ me = null, server = {} } = {}) {
             emit();
         },
 
+        /** An older page joining the front of the timeline. Duplicates lose to first sighting. */
+        prependMessages(channelId, older = []) {
+            const list = state.messages.get(channelId) ?? [];
+            const seen = new Set(list.map((m) => m.id));
+            const fresh = older.filter((m) => !m.id || !seen.has(m.id));
+            if (!fresh.length) return false;
+            state.messages.set(channelId, [...fresh, ...list]);
+            emit();
+            return true;
+        },
+
         noteTyping(channelId, username, forMs = 5000) {
             const forChannel = state.typing.get(channelId) ?? new Map();
             forChannel.set(username, Date.now() + forMs);

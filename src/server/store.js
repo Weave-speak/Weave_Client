@@ -18,7 +18,13 @@ const newId = () => (crypto.randomUUID?.() ?? `s${Date.now()}${Math.random().toS
 
 export function listServers() {
     const list = store.get(KEY, []);
-    return Array.isArray(list) ? list : [];
+    if (!Array.isArray(list)) return [];
+    // Self-heal: a bug once saved records with no origin (rememberServer was handed a
+    // string where it expects {origin}), leaving ghost entries nobody added and nothing
+    // could connect to. Drop them on every read, and persist the cleanup once.
+    const sound = list.filter((s) => typeof s.origin === 'string' && s.origin);
+    if (sound.length !== list.length) store.set(KEY, sound);
+    return sound;
 }
 
 export function getServer(id) {
@@ -34,7 +40,10 @@ export function activeServer() {
         return { id: 'origin', origin, label: displayAddress(origin), implicit: true };
     }
     const id = store.get(ACTIVE, null);
-    return getServer(id) ?? listServers()[0] ?? null;
+    // The fallback is the server most recently USED, not the first ever added — signing
+    // in should default to wherever you actually were last.
+    const byRecency = [...listServers()].sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0));
+    return getServer(id) ?? byRecency[0] ?? null;
 }
 
 function announce() {

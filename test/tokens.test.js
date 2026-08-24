@@ -122,7 +122,7 @@ test('the shell constrains itself rather than the page', () => {
     // Grid and flex children default to min-height: auto, which lets a long list push its
     // parent taller instead of scrolling. Every column has to opt out explicitly.
     assert.match(shell, /\.app-body\s*>\s*\*\s*\{[^}]*min-height:\s*0/);
-    assert.match(shell, /\.app-body\s*\{[^}]*grid-template-columns:\s*var\(--rail-w\)\s*var\(--sidebar-w\)\s*minmax\(0,\s*1fr\)\s*var\(--members-w\)/);
+    assert.match(shell, /\.app-body\s*\{[^}]*grid-template-columns:\s*var\(--rail-w\)\s*var\(--sidebar-w\)\s*minmax\(0,\s*1fr\)/);
 
     // The rows that make the composer stay put while the timeline scrolls.
     assert.match(shell, /\.room\s*\{[^}]*grid-template-rows:\s*auto minmax\(0,\s*1fr\) auto/);

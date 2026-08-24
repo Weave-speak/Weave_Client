@@ -314,7 +314,6 @@
 .server-name { font-weight: 550; }
 .server-origin { font: var(--t-xs) / 1 var(--font-mono); color: var(--ink-faint); }
 
-.server-result[hidden] { display: none; }
 .server-result {
     border-radius: var(--r-3);
     padding: var(--s-3) var(--s-4);

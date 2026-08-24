@@ -6,6 +6,13 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 
+/* The hidden attribute always wins. Twice now an author display rule has silently
+   defeated the UA's [hidden] { display: none } — a phantom box on the connect card, an
+   add-people button inside a DM header — because any `display: grid/flex` on the same
+   element outranks a UA rule. This is the one !important in the codebase, and it is
+   spent making `hidden` mean hidden. */
+[hidden] { display: none !important; }
+
 html, body {
     height: 100%;
     margin: 0;

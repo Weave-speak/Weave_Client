@@ -94,7 +94,7 @@
 
 .app-body {
     display: grid;
-    grid-template-columns: var(--rail-w) var(--sidebar-w) minmax(0, 1fr) var(--members-w);
+    grid-template-columns: var(--rail-w) var(--sidebar-w) minmax(0, 1fr);
     gap: var(--s-2);
     padding: 0 var(--s-2) var(--s-2);
     min-height: 0;
@@ -142,14 +142,18 @@
     color: var(--on-accent);
     box-shadow: 0 8px 22px -10px var(--accent);
 }
-.rail-item.current { border-radius: var(--r-2); }
-
-/* The active marker: a short bar on the very edge, the way every app of this shape
-   does it, because the shape itself has become the affordance. */
+/* The active tile is unmistakable: the squircle relaxes, an accent ring holds it, and
+   the edge pip sits INSIDE the rail. The old pip was positioned off the rail's left
+   edge, where overflow clipped it — an active DM looked identical to an idle one. */
+.rail-item.current {
+    border-radius: var(--r-2);
+    color: var(--ink);
+    box-shadow: 0 0 0 2px var(--accent), 0 6px 18px -8px var(--accent-glow);
+}
 .rail-item.current::before {
     content: "";
     position: absolute;
-    left: calc(var(--s-3) * -1 - 2px);
+    left: -10px;
     width: 4px; height: 26px;
     border-radius: 0 var(--r-1) var(--r-1) 0;
     background: var(--ink);
@@ -795,63 +799,6 @@
 }
 .composer-btn.send:hover { filter: brightness(1.08); background: linear-gradient(180deg, var(--accent-hi), var(--accent)); }
 
-/* ── Members ──────────────────────────────────────────────────────────────── */
-
-.members {
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
-    background: var(--surface-1);
-    border: 1px solid var(--line-soft);
-    border-radius: var(--r-4);
-    overflow: hidden;
-}
-/* Hidden on request at any width — the header button toggles it. */
-.app-shell.members-hidden .members { display: none; }
-.members-head {
-    display: flex;
-    align-items: center;
-    gap: var(--s-2);
-    padding: var(--s-5) var(--s-4) var(--s-1);
-    font-size: var(--t-xs);
-    font-weight: 700;
-    letter-spacing: 0.09em;
-    color: var(--ink-dim);
-    text-transform: uppercase;
-}
-.members-head .members-title { flex: 1; }
-.members-scroll { overflow-y: auto; padding: 0 var(--s-2) var(--s-5); }
-
-.member-group {
-    padding: var(--s-4) var(--s-3) var(--s-2);
-    font-size: var(--t-xs);
-    font-weight: 700;
-    letter-spacing: 0.09em;
-    color: var(--ink-faint);
-    text-transform: uppercase;
-}
-.member-list { list-style: none; margin: 0; padding: 0; }
-.member-row {
-    display: flex;
-    align-items: center;
-    gap: var(--s-3);
-    width: 100%;
-    padding: var(--s-1) var(--s-3);
-    border-radius: var(--r-2);
-    text-align: left;
-}
-.member-row:hover { background: var(--surface-2); }
-.member-name {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-weight: 500;
-    color: var(--ink-dim);
-}
-.member-row.online .member-name { color: var(--ink); }
-.member-row.offline { opacity: 0.55; }
-
 /* ── Avatars ──────────────────────────────────────────────────────────────── */
 
 .avatar {
@@ -903,24 +850,6 @@
 .drawer-toggle { display: none; }
 .drawer-scrim { display: none; }
 
-@media (max-width: 1180px) {
-    .app-body { grid-template-columns: var(--rail-w) var(--sidebar-w) minmax(0, 1fr); }
-    .members { display: none; }
-    .member-picker { right: var(--s-5); }
-    /* Summoned by the header button: the same panel, floating over the room. */
-    .app-shell.members-open .members {
-        display: grid;
-        position: fixed;
-        top: var(--titlebar-h);
-        right: var(--s-2);
-        bottom: var(--s-2);
-        width: var(--members-w);
-        z-index: var(--z-menu);
-        box-shadow: var(--shadow-3);
-        animation: slide-in-right var(--dur) var(--ease);
-    }
-}
-
 @media (max-width: 860px) {
     .app-body { grid-template-columns: var(--rail-w) minmax(0, 1fr); }
     .sidebar { display: none; }
@@ -964,10 +893,6 @@
 
 @keyframes slide-in-left {
     from { transform: translateX(-24px); opacity: 0; }
-    to { transform: none; opacity: 1; }
-}
-@keyframes slide-in-right {
-    from { transform: translateX(24px); opacity: 0; }
     to { transform: none; opacity: 1; }
 }
 @keyframes fade-in {
@@ -1082,17 +1007,14 @@
 /* A ring around the avatar of whoever is talking. On the avatar rather than the row so it
    reads at a glance in a list of a dozen people, and as a ring rather than a colour change
    so it does not fight the presence dot already sitting on the same element. */
-.room-person .avatar,
-.member-row .avatar {
+.room-person .avatar {
     box-shadow: 0 0 0 0 transparent;
     transition: box-shadow var(--dur-fast) var(--ease);
 }
-.room-person.speaking .avatar,
-.member-row.speaking .avatar {
+.room-person.speaking .avatar {
     box-shadow: 0 0 0 2px var(--ok), 0 0 10px -2px var(--ok);
 }
-.room-person.speaking .person-name,
-.member-row.speaking .member-name { color: var(--ink); }
+.room-person.speaking .person-name { color: var(--ink); }
 
 /* ── History paging ───────────────────────────────────────────────────────── */
 
@@ -1128,7 +1050,7 @@
 /* The same picker, anchored under the room header's add button instead. */
 .member-picker {
     left: auto;
-    right: calc(var(--members-w) + var(--s-5));
+    right: var(--s-5);
     top: calc(var(--titlebar-h) + 56px);
 }
 .dm-search-list { list-style: none; margin: var(--s-2) 0 0; padding: 0; max-height: 300px; overflow-y: auto; }

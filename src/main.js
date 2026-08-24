@@ -132,7 +132,7 @@ async function enterRoom({ api, user, token, server, autoJoin = true }) {
         const info = await api.request('GET', '/api/server-info');
         if (Array.isArray(info?.features)) {
             features = info.features;
-            rememberServer({ address: server.origin, info });
+            rememberServer({ address: { origin: server.origin }, info });
         }
     } catch { /* offline start: the stored snapshot is the best truth available */ }
 

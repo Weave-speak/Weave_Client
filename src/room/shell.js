@@ -9,7 +9,6 @@ import { icons } from './icons.js';
 import { rail } from './views/rail.js';
 import { sidebar } from './views/sidebar.js';
 import { timeline } from './views/timeline.js';
-import { members } from './views/members.js';
 
 /**
  * The connection readout.
@@ -57,7 +56,6 @@ export function shell(state = {}) {
         ${rail({ dms: state.dms, inRoom: !state.dmOpen })}
         ${sidebar({ server: state.server, rooms: state.rooms, me: state.me })}
         ${timeline({ room, items: state.items, typing: state.typing, voice: state.voice })}
-        ${members({ people: state.people, roomId: room.id })}
       </div>
     </div>`;
 }

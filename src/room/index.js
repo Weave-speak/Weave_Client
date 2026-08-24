@@ -13,7 +13,6 @@
 import { shell, connection as connectionPill } from './shell.js';
 import { roomGroups, selfBar } from './views/sidebar.js';
 import { rail, dmSearchView, dmSearchResults } from './views/rail.js';
-import { memberGroups } from './views/members.js';
 import { messageList, typingLine, voiceNoticeMarkup, emptyState, roomGlyph } from './views/timeline.js';
 import { createRoomState } from './state.js';
 import { WeaveBackground, createMessageNoise } from '../ui/weave-background.js';
@@ -227,8 +226,6 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         setHtml('#selfBarSlot', selfBar({ ...view.me, pttOn: Boolean(prefs.pushToTalk) }));
         const railEl = $('.rail', mount);
         if (railEl) railEl.outerHTML = rail({ dms: view.dms, inRoom: !view.dmOpen });
-        setHtml('#membersScroll', memberGroups(view.people, view.room.id));
-        setText('#membersCount', `Members — ${view.people.length}`);
         setHtml('.typing', typingLine(view.typing));
         setHtml('#voiceNotice', voiceNoticeMarkup(voiceState));
         paintConnection(view.connection);
@@ -272,10 +269,6 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         const el = $(selector, mount);
         if (el) el.innerHTML = markup;
     };
-    const setText = (selector, text) => {
-        const el = $(selector, mount);
-        if (el) el.textContent = text;
-    };
 
     function paintConnection(conn) {
         const pill = $('.conn-pill', mount);
@@ -293,7 +286,9 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             topic.hidden = !room.topic;
         }
         const addBtn = $('#addMemberBtn', mount);
-        if (addBtn) addBtn.hidden = !(room.private && room.member);
+        // Private huddles only. A DM is a strict pair — the server has no operation that
+        // could grow one — so the button never shows there, whatever else is true.
+        if (addBtn) addBtn.hidden = !(room.private && room.member && room.kind !== 'dm');
         const composer = $('#composerInput', mount);
         if (composer) composer.placeholder = `Message ${room.name ?? 'the room'}…`;
     }
@@ -414,14 +409,17 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         if (msg.type === 'moved' || msg.type === 'joined') {
             msgNoise.reset();
             state.apply(msg);
+            // Both fetches land AFTER the joined frame has painted, so they must paint
+            // again themselves — without it the rail and the badges sat empty until the
+            // next unrelated event happened to repaint (caught by an E2E on a restart).
             if (msg.type === 'joined' && canBrowse) {
                 api.request('GET', '/api/chat/reads')
-                    .then(({ channels = [] }) => state.setReads(channels))
+                    .then(({ channels = [] }) => { state.setReads(channels); paint(); })
                     .catch(() => { /* badges start at zero; the frames keep them honest */ });
             }
             if (msg.type === 'joined' && canDm) {
                 api.request('GET', '/api/dm/threads')
-                    .then(({ threads = [] }) => state.setDmThreads(threads))
+                    .then(({ threads = [] }) => { state.setDmThreads(threads); paint(); })
                     .catch(() => { /* the rail stays empty; a reconnect retries */ });
             }
             // Entering a room is seeing its latest page, so the backlog is acked too —
@@ -655,16 +653,6 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                 return;
             }
 
-            if (event.target.closest('[data-toggle-members]')) {
-                // One button, two situations. Wide: the list is there, hide it. Narrow:
-                // the layout dropped it, summon it as an overlay.
-                const shellEl = $('.app-shell', mount);
-                if (window.matchMedia('(max-width: 1180px)').matches) {
-                    shellEl?.classList.toggle('members-open');
-                } else {
-                    shellEl?.classList.toggle('members-hidden');
-                }
-            }
         });
 
         const composer = $('#composer', mount);

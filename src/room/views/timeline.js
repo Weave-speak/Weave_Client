@@ -231,8 +231,6 @@ export function timeline({ room = {}, items = [], typing = [], voice = {} } = {}
         <button type="button" class="icon-btn" id="addMemberBtn" data-add-member
                 ${room.private && room.member ? '' : 'hidden'}
                 title="Add people to this room" aria-label="Add people to this private room">${icons.plus}</button>
-        <button type="button" class="icon-btn" data-toggle-members
-                title="Members" aria-label="Show or hide the member list">${icons.dots}</button>
       </header>
 
       <div class="timeline" id="timeline" tabindex="0" aria-label="Messages">

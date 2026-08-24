@@ -13,7 +13,6 @@ import { shell, connection } from '../src/room/shell.js';
 import { rail } from '../src/room/views/rail.js';
 import { sidebar } from '../src/room/views/sidebar.js';
 import { timeline, messageText, fileSize, typingLine } from '../src/room/views/timeline.js';
-import { members, groupMembers } from '../src/room/views/members.js';
 import { initials } from '../src/room/views/parts.js';
 
 const HOSTILE = '<img src=x onerror="steal()">';
@@ -39,7 +38,8 @@ test('a shell renders from nothing at all', () => {
     assert.ok(html.includes('class="rail"'));
     assert.ok(html.includes('class="sidebar"'));
     assert.ok(html.includes('class="room"'));
-    assert.ok(html.includes('class="members"'));
+    assert.ok(!html.includes('class="members"'),
+        'the members panel was removed — the sidebar already says who stands where');
     assert.ok(html.includes('roomBg'), 'the background canvas belongs to the shell, not to data');
 });
 
@@ -59,7 +59,6 @@ test('a hostile display name cannot become markup anywhere it appears', () => {
     const person = { username: 'evil', displayName: HOSTILE, presence: 'online' };
     noInjection(rail({ dms: [{ id: 'd1', ...person, unread: 3 }] }));
     noInjection(sidebar({ server: { name: HOSTILE }, rooms: [], me: person }));
-    noInjection(members({ people: [person] }));
     noInjection(timeline({
         room: { name: HOSTILE },
         items: [{ kind: 'message', id: 'm', at: '10:00', author: person, text: HOSTILE }],
@@ -91,28 +90,6 @@ test('the mention pass runs over already-escaped text', () => {
     assert.ok(out.includes('<span class="mention">@dan</span>'));
 });
 
-test('nobody falls out of the member list', () => {
-    const people = [
-        { username: 'a', roomId: 'here', presence: 'live' },
-        { username: 'b', roomId: 'other', presence: 'live' },
-        { username: 'c', presence: 'online' },
-        { username: 'd', presence: 'offline' },
-        { username: 'e' },                                  // no presence at all
-    ];
-    const groups = groupMembers(people, { roomId: 'here' });
-    const placed = groups.flatMap((g) => g.people.map((p) => p.username));
-
-    assert.equal(placed.length, people.length, 'every person lands in exactly one group');
-    assert.deepEqual([...placed].sort(), ['a', 'b', 'c', 'd', 'e']);
-    assert.deepEqual(groups.map((g) => g.key), ['here', 'elsewhere', 'online', 'offline']);
-    assert.deepEqual(groups.find((g) => g.key === 'here').people.map((p) => p.username), ['a']);
-});
-
-test('empty groups are dropped rather than shown with a zero', () => {
-    const groups = groupMembers([{ username: 'a', presence: 'offline' }], { roomId: 'here' });
-    assert.deepEqual(groups.map((g) => g.key), ['offline']);
-    assert.ok(!members({ people: [] }).includes('member-group'));
-});
 
 test('an empty room reads as available, not as broken', () => {
     const html = sidebar({ rooms: [{ id: 'r', name: 'The Dungeon', occupants: [] }] });

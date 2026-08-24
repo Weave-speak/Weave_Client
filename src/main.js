@@ -148,9 +148,9 @@ async function enterRoom({ api, user, token, server, autoJoin = true }) {
         server,
         // What this server actually has switched on, learned moments ago.
         features,
-        onSignedOut() {
+        onSignedOut(detail) {
             room.destroy();
-            boot();
+            boot(detail?.notice ?? null);
         },
     });
 
@@ -191,7 +191,7 @@ async function handleDeepLink(raw) {
     } catch { /* an unreachable server ends the gesture; the page said what to do */ }
 }
 
-async function boot() {
+async function boot(notice = null) {
     platform.links.onDeepLink(handleDeepLink);
     app.innerHTML = '';
     app.append(html(shell()));
@@ -216,6 +216,13 @@ async function boot() {
     const show = async () => { await auth.show(route()); refreshServerPill(); };
 
     await show();
+    // Why the person is looking at a login screen they did not ask for — an admin
+    // kicked them, banned them, or wiped the server. Shown once, on the sign-in card.
+    if (notice) {
+        const form = $('#signInForm');
+        const box = form?.querySelector('.form-message');
+        if (box) { box.textContent = notice; box.classList.add('show'); }
+    }
     window.addEventListener('hashchange', show);
     // Adding or switching a server does not change the hash, so navigation alone is not a
     // sufficient signal — the store says when it happened.

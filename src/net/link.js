@@ -65,6 +65,17 @@ const FATAL = new Set(['protocol_mismatch', 'unauthenticated', 'no_channels', 'f
 const LEAVE_CODE = 4000;
 
 /**
+ * Closes the server sends when an ADMINISTRATOR acted on this account. Reconnecting is
+ * pointless — the session is already revoked — and retrying would turn a deliberate
+ * kick into a mystery spinner. Each carries the sentence the person deserves to read.
+ */
+const ADMIN_CLOSES = new Map([
+    [4003, ['password_reset', 'An administrator reset your password. Sign in with your old password to choose a new one.']],
+    [4004, ['access_revoked', 'Your access to this server was revoked by an administrator.']],
+    [4005, ['server_wiped', 'This server was wiped by its administrator. Nothing remains to reconnect to.']],
+]);
+
+/**
  * How much may pile up while the link is down.
  *
  * Bounded on purpose. An unbounded queue turns a long outage into a memory leak and then
@@ -222,6 +233,11 @@ export function createLink({
 
             if (!wantOpen) {
                 setState(LINK.CLOSED, { force: true });
+                return;
+            }
+            const adminClose = ADMIN_CLOSES.get(event?.code);
+            if (adminClose) {
+                giveUp(adminClose[0], adminClose[1]);
                 return;
             }
             // 1008 is the server's policy close, which here means the rate limiter. Coming

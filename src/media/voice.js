@@ -101,6 +101,11 @@ export function createVoice({
     let recoverAttempts = 0;
     let running = false;
 
+    // Streams the user said "stop watching" to, as 'cid:slot'. Watching is the default;
+    // an entry here survives resyncs (so the heal cannot resurrect the picture) and is
+    // erased when that producer closes, so a NEW stream from the same person shows again.
+    const unwatched = new Set();
+
     const consumers = new Map();   // consumerId -> { consumer, cid, slot, audio, meter }
     // Local listening preferences per `${cid}:${slot}` — YOUR ears, nobody else's
     // stream. Survives a re-consume, so a recovery does not un-mute someone you muted.
@@ -478,6 +483,7 @@ export function createVoice({
     async function consume(cid, slot) {
         if (!device?.loaded) return null;
         if ([...consumers.values()].some((c) => c.cid === cid && c.slot === slot)) return null;
+        if (unwatched.has(`${cid}:${slot}`)) return null;
 
         await ensureRecv();
         link.send('consume', { cid, slot, rtpCapabilities: device.rtpCapabilities });
@@ -823,8 +829,33 @@ export function createVoice({
             }
             for (const key of want) {
                 if (have.has(key)) continue;
+                if (unwatched.has(key)) continue;
                 const [cid, slot] = key.split(':');
                 await consume(cid, slot).catch(() => {});
+            }
+        },
+
+        /**
+         * Watch or stop watching one stream. Stopping actually stops — the consumer
+         * closes and the server is told, not merely hidden — and a stopped screen takes
+         * its system audio with it, because "stop watching" means the whole broadcast.
+         */
+        setWatching(cid, slot, on) {
+            const keys = slot === SLOTS.SCREEN ? [slot, SLOTS.SCREEN_AUDIO] : [slot];
+            for (const k of keys) {
+                const key = `${cid}:${k}`;
+                if (on) {
+                    unwatched.delete(key);
+                    consume(cid, k).catch(() => {});
+                } else {
+                    unwatched.add(key);
+                    for (const [id, entry] of [...consumers]) {
+                        if (entry.cid === cid && entry.slot === k) {
+                            link.send('closeConsumer', { consumerId: id });
+                            dropConsumer(id);
+                        }
+                    }
+                }
             }
         },
 
@@ -839,6 +870,7 @@ export function createVoice({
 
                 case 'producer_closed':
                     dropConsumersOf(msg.cid, msg.slot);
+                    unwatched.delete(`${msg.cid}:${msg.slot}`);
                     return true;
 
                 case 'consumerClosed':
@@ -847,6 +879,7 @@ export function createVoice({
 
                 case 'peer_left':
                     dropConsumersOf(msg.cid);
+                    for (const key of [...unwatched]) if (key.startsWith(`${msg.cid}:`)) unwatched.delete(key);
                     return true;
 
                 case 'transportFailed':

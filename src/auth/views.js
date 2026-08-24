@@ -159,6 +159,49 @@ export function register({ questions = [], instanceName = null } = {}) {
 }
 
 /** Step one: who are you. */
+/**
+ * Shown when a sign-in comes back `resetRequired`: an administrator reset this account's
+ * password. The old password already proved the account — this card asks only for the
+ * new one, and says WHY it is being asked, because being bounced here unexplained reads
+ * as a hack.
+ */
+export function chooseNewPassword({ username = '', instanceName = null } = {}) {
+    return `
+    <form class="card auth-card" id="resetRequiredForm" novalidate>
+      <div class="card-lead">
+        ${mark}
+        <span class="wordmark">Weave</span>
+      </div>
+      <h1>Choose a new password</h1>
+      <p class="lead-sub">An administrator${instanceName ? ` of ${esc(instanceName)}` : ''} reset the password
+        for <strong>${esc(username)}</strong>. Pick a new one to finish signing in — your old password
+        no longer opens anything.</p>
+
+      <div class="form-message"></div>
+
+      <div class="field">
+        <label for="newPassword">New password</label>
+        <input id="newPassword" name="password" type="password" autocomplete="new-password"
+               required minlength="10" autofocus>
+        <div class="field-error"></div>
+      </div>
+
+      <div class="field">
+        <label for="newPassword2">Repeat it</label>
+        <input id="newPassword2" name="confirm" type="password" autocomplete="new-password" required>
+        <div class="field-error"></div>
+      </div>
+
+      <button class="btn primary wide" type="submit">
+        Set password &amp; sign in <span aria-hidden="true">→</span>
+      </button>
+
+      <p class="card-links">
+        <a href="#/signin" data-nav>← Back to sign in</a>
+      </p>
+    </form>`;
+}
+
 export function forgotUsername() {
     return `
     <form class="card auth-card" id="forgotForm" novalidate data-step="username">

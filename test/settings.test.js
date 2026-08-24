@@ -13,8 +13,11 @@ globalThis.__WEAVE_TARGET__ = 'desktop';
 
 import {
     SECTIONS, sectionById, joinedOn, profilePanel, voicePanel,
-    appearancePanel, invitesPanel, placeholderPanel, PLACEHOLDER_REASONS, settingsFrame,
+    appearancePanel, invitesPanel, inviteMessage, placeholderPanel, PLACEHOLDER_REASONS, settingsFrame,
 } from '../src/settings/panels.js';
+import {
+    adminUsersPanel, adminChannelsPanel, adminDangerPanel, reversedName,
+} from '../src/settings/admin.js';
 
 const ME = { id: 'u1', username: 'ghostbyte', displayName: 'Ghostbyte', createdAt: '2026-02-04T10:00:00Z' };
 
@@ -161,4 +164,101 @@ test('the frame marks the current section for sighted and assistive users alike'
     assert.match(markup, /class="nav-item current"/);
     assert.match(markup, /Esc to close/);
     assert.match(markup, /data-sign-out/);
+});
+
+test('the copied invite is a self-sufficient message: link, server address, code, and what to do with each', () => {
+    const msg = inviteMessage({ origin: 'https://weave.example', code: 'JD2K-CNDA-EQ6G-36TA' });
+    assert.match(msg, /Visit https:\/\/weave\.example\/invite\/JD2K-CNDA-EQ6G-36TA/);
+    assert.match(msg, /download/i, 'says the link downloads the installer');
+    assert.match(msg, /copy https:\/\/weave\.example and paste it into the server connection/i);
+    assert.match(msg, /copy JD2K-CNDA-EQ6G-36TA and paste it in during account creation/i);
+});
+
+
+/* ── the admin console ────────────────────────────────────────────────────── */
+
+test('the Admin group exists only for administrators', () => {
+    const admin = settingsFrame({ me: { ...ME, isAdmin: true }, current: 'profile', body: '' });
+    assert.match(admin, /Admin/);
+    assert.match(admin, /data-panel="admin-users"/);
+    assert.match(admin, /DO NOT PRESS/);
+
+    const mortal = settingsFrame({ me: { ...ME, isAdmin: false }, current: 'profile', body: '' });
+    assert.ok(!mortal.includes('data-panel="admin-users"'), 'no admin nav for non-admins');
+    assert.ok(!mortal.includes('DO NOT PRESS'));
+});
+
+test('the users panel tells the whole story of each account', () => {
+    const markup = adminUsersPanel({
+        members: [
+            { id: 'u1', username: 'kestrel', displayName: 'Kestrel', invitedBy: 'admin',
+                banned: true, mustReset: true, isAdmin: false, offline: true },
+            { id: 'u2', username: 'admin', displayName: 'Admin', invitedBy: null,
+                banned: false, mustReset: false, isAdmin: true, offline: false },
+        ],
+    });
+    assert.match(markup, /invited by admin/);
+    assert.match(markup, /founder/, 'no inviter reads as founder, not as blank');
+    assert.match(markup, /class="badge banned"/);
+    assert.match(markup, /class="badge reset"/);
+    assert.match(markup, /class="badge admin"/);
+    assert.match(markup, /data-admin-unban="u1"/, 'a banned account offers Unban');
+    assert.match(markup, /data-admin-ban="u2"/, 'an active account offers Ban');
+    assert.match(markup, /data-admin-reset="u1"/);
+    assert.match(markup, /data-admin-remove="u1"/);
+});
+
+test('a destructive button armed shows its question; others stay resting', () => {
+    const markup = adminUsersPanel({
+        members: [{ id: 'u1', username: 'kestrel', displayName: 'Kestrel' }],
+        armedKey: 'remove:u1',
+    });
+    assert.match(markup, /Erase account\?/);
+    assert.match(markup, /Reset password/, 'the unarmed neighbours keep their labels');
+});
+
+test('the channels panel: clear only where text exists, and the create form', () => {
+    const markup = adminChannelsPanel({
+        channels: [
+            { id: 'c1', name: 'lounge', allowVoice: true, allowText: true, isDefault: true },
+            { id: 'c2', name: 'stage', allowVoice: true, allowText: false },
+            { id: 'c3', name: 'secret', private: true },
+        ],
+    });
+    assert.match(markup, /data-chan-clear="c1"/);
+    assert.ok(!markup.includes('data-chan-clear="c2"'), 'no text, nothing to clear');
+    assert.ok(!markup.includes('secret'), 'private huddles are not the console\'s furniture');
+    assert.match(markup, /landing room/);
+    assert.match(markup, /data-admin-create-channel/);
+});
+
+test('the danger panel walks its stages, and the puzzle is the name reversed', () => {
+    assert.equal(reversedName('Weave'), 'evaeW');
+
+    const idle = adminDangerPanel({ stage: 'idle', serverName: 'Weave' });
+    assert.match(idle, /DO NOT PRESS/);
+    assert.ok(!idle.includes('data-doom-fire'), 'no live trigger while idle');
+
+    const confirm = adminDangerPanel({ stage: 'confirm', serverName: 'Weave' });
+    assert.match(confirm, /This destroys everything/);
+    assert.match(confirm, /data-doom-continue/);
+
+    const puzzle = adminDangerPanel({ stage: 'puzzle', serverName: 'Weave', typed: 'nope' });
+    assert.match(puzzle, /evaeW/, 'the riddle is shown backwards');
+    assert.match(puzzle, /data-doom-fire disabled/, 'wrong answer keeps the button dead');
+
+    const solved = adminDangerPanel({ stage: 'puzzle', serverName: 'Weave', typed: 'Weave' });
+    assert.match(solved, /data-doom-fire >/, 'the exact name unlocks it');
+});
+
+test('hostile names cannot become markup in the admin console', () => {
+    const hostile = '<img src=x onerror="steal()">';
+    for (const markup of [
+        adminUsersPanel({ members: [{ id: 'u1', username: 'x', displayName: hostile, invitedBy: hostile }] }),
+        adminChannelsPanel({ channels: [{ id: 'c1', name: hostile, allowText: true }] }),
+        adminDangerPanel({ stage: 'puzzle', serverName: hostile, typed: hostile }),
+    ]) {
+        assert.ok(!markup.includes('<img src=x'));
+        assert.match(markup, /&lt;img/);
+    }
 });

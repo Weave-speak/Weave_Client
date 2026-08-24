@@ -505,7 +505,17 @@
 .room > .timeline,
 .room > .composer-wrap { position: relative; z-index: var(--z-base); }
 .room > .room-head { grid-row: 1; }
-.room > #stageSlot { grid-row: 2; min-height: 0; }
+/* The slot is itself a grid: the stage takes the leftover and the divider keeps its
+   own row. Without this the stage's 100% height pushed the divider OUT of the row,
+   where the timeline painted over it and ate every drag. */
+.room > #stageSlot {
+    grid-row: 2;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    position: relative;
+    z-index: var(--z-base);
+}
 .room > .timeline { grid-row: 3; }
 .room > .voice-notice-slot { grid-row: 4; }
 .room > .composer-wrap { grid-row: 5; }
@@ -547,9 +557,8 @@
 /* Video above, chat below, always both: a stream does not replace the room. */
 #stageSlot:empty { display: none; }
 .stage {
-    padding: var(--s-3) var(--s-4) 0;
-    height: 100%;
-    max-height: 100%;
+    /* Breathing room on every side; the divider row below completes the frame. */
+    padding: var(--s-3) var(--s-4) var(--s-2);
     overflow: hidden;
     display: grid;
     gap: var(--s-2);
@@ -591,7 +600,8 @@
 }
 .tile:hover { border-color: var(--line-strong); }
 .tile.focused { border-color: rgb(var(--accent-rgb) / 0.6); box-shadow: var(--shadow-2); }
-.stage-main .tile { aspect-ratio: auto; height: 100%; cursor: zoom-out; }
+/* The big window reads, it does not click: no zoom cursor, no toggle. */
+.stage-main .tile { aspect-ratio: auto; height: 100%; cursor: default; }
 .tile video { width: 100%; height: 100%; object-fit: contain; background: var(--video-backdrop); display: block; }
 /* A mirror for your own face only — everyone else must read your screen's text. */
 .tile.self video { transform: scaleX(-1); }
@@ -1866,4 +1876,207 @@
     font-size: var(--t-base);
     text-align: center;
     padding: var(--s-6) 0 0;
+}
+
+/* ── The admin console ─────────────────────────────────────────────────────
+   Settings panels for administrators: dense rows, quiet until hovered, and one
+   deliberately theatrical corner. Destructive buttons arm on the first click —
+   the .armed state is the question being asked. */
+
+.btn.small {
+    padding: 4px 10px;
+    font-size: var(--t-xs);
+    border-radius: 6px;
+}
+
+.link-btn {
+    background: none;
+    border: 0;
+    padding: 0;
+    color: var(--accent-hi);
+    font: inherit;
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.admin-table {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--line-soft);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: var(--s-5);
+}
+
+.adm-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-2) var(--s-3);
+    border-bottom: 1px solid var(--line-soft);
+    min-height: 52px;
+}
+.adm-row:last-child { border-bottom: 0; }
+.adm-row:hover { background: rgb(var(--accent-rgb) / 0.05); }
+
+.adm-who {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    min-width: 0;
+    flex: 1;
+}
+.adm-names { display: flex; flex-direction: column; min-width: 0; }
+.adm-display {
+    color: var(--ink);
+    font-weight: 600;
+    font-size: var(--t-sm);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.adm-username {
+    color: var(--ink-faint);
+    font-size: var(--t-xs);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.adm-flags { display: flex; align-items: center; gap: var(--s-2); flex: none; }
+.badge.banned { background: rgb(var(--bad-rgb) / 0.18); color: var(--bad); }
+.badge.reset { background: rgb(var(--warn-rgb) / 0.18); color: var(--warn); }
+
+.adm-actions { display: flex; align-items: center; gap: var(--s-2); flex: none; flex-wrap: wrap; }
+/* Row actions stay out of the way until the row is under the pointer or holds focus. */
+.adm-row .adm-actions { opacity: 0; transition: opacity 120ms ease; }
+.adm-row:hover .adm-actions,
+.adm-row:focus-within .adm-actions { opacity: 1; }
+
+.danger-btn.armed {
+    background: rgb(var(--bad-rgb) / 0.16);
+    color: var(--bad);
+    border-color: var(--bad);
+}
+
+.adm-edit { display: flex; align-items: center; gap: var(--s-2); }
+.adm-edit input {
+    background: var(--bg-void);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    color: var(--ink);
+    padding: 4px 8px;
+    font-size: var(--t-sm);
+    min-width: 0;
+    width: 180px;
+}
+
+.adm-create { display: flex; gap: var(--s-2); align-items: center; }
+.adm-create input,
+.adm-create select {
+    background: var(--bg-void);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--ink);
+    padding: var(--s-2) var(--s-3);
+    font-size: var(--t-sm);
+}
+.adm-create input { flex: 1; min-width: 0; }
+
+.adm-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: var(--s-2);
+    margin-bottom: var(--s-5);
+}
+.adm-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border: 1px solid var(--line-soft);
+    border-radius: 10px;
+    padding: var(--s-2) var(--s-3);
+    min-width: 0;
+}
+.adm-stat-label {
+    color: var(--ink-ghost);
+    font-size: var(--t-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+.adm-stat-value {
+    color: var(--ink);
+    font-size: var(--t-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.adm-log-head { display: flex; align-items: center; justify-content: space-between; }
+.adm-log {
+    background: var(--bg-void);
+    border: 1px solid var(--line-soft);
+    border-radius: 10px;
+    padding: var(--s-3);
+    font-family: var(--font-mono);
+    font-size: var(--t-xs);
+    line-height: 1.5;
+    color: var(--ink-dim);
+    max-height: 320px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* The one button nobody should press. Loud on purpose: everything else in the app
+   whispers, so the thing that destroys the server must not look routine. */
+.doom-zone {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+    align-items: flex-start;
+    border: 1px dashed rgb(var(--bad-rgb) / 0.5);
+    border-radius: 12px;
+    padding: var(--s-5);
+    margin-top: var(--s-5);
+}
+.doom-zone.armed { border-style: solid; background: rgb(var(--bad-rgb) / 0.06); }
+
+.doom-btn {
+    background: var(--bad);
+    color: var(--on-accent);
+    border: 0;
+    border-radius: 10px;
+    padding: var(--s-4) var(--s-6);
+    font-weight: 800;
+    font-size: var(--t-lg);
+    letter-spacing: 0.12em;
+    cursor: pointer;
+    box-shadow: 0 6px 24px rgb(var(--bad-rgb) / 0.35);
+}
+.doom-btn:hover { filter: brightness(1.1); }
+
+.doom-hint { color: var(--ink-faint); font-size: var(--t-xs); max-width: 46ch; }
+.doom-title { color: var(--bad); font-size: var(--t-md); margin: 0; }
+.doom-copy { color: var(--ink-dim); font-size: var(--t-sm); margin: 0; max-width: 52ch; }
+
+.doom-riddle {
+    font-family: var(--font-mono);
+    font-size: var(--t-lg);
+    letter-spacing: 0.3em;
+    color: var(--warn);
+    background: var(--bg-void);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: var(--s-2) var(--s-4);
+    user-select: none;
+}
+
+.doom-zone input[data-doom-answer] {
+    background: var(--bg-void);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--ink);
+    padding: var(--s-2) var(--s-3);
+    font-size: var(--t-sm);
+    width: min(320px, 100%);
 }

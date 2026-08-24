@@ -204,7 +204,7 @@ function createWindow() {
     // clipboard is what the invite "Copy" button does — denying it made that button
     // silently dead on desktop while working in a browser. Reading the clipboard stays
     // refused, along with geolocation, MIDI and everything else nothing here uses.
-    const GRANTED = new Set(['media', 'display-capture', 'clipboard-sanitized-write']);
+    const GRANTED = new Set(['media', 'display-capture', 'clipboard-sanitized-write', 'fullscreen']);
     win.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
         callback(GRANTED.has(permission));
     });

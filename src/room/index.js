@@ -104,6 +104,8 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         link,
         onVideo({ cid, slot, stream }) {
             const key = tileKey(cid, slot);
+            // Our own tile appearing or vanishing is also the sidebar icon's truth.
+            if (cid === 'self' && link.cid) state.markOwnProducer(link.cid, slot, Boolean(stream));
             if (!stream) {
                 videoStreams.delete(key);
                 if (stageFocus === key) stageFocus = null;
@@ -252,6 +254,24 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
      * different requests, and someone signing out on a shared machine unticks Remember me
      * to be forgotten. Servers and per-server preferences stay too.
      */
+    /** The server ended us — do the local half of signing out and surface why. */
+    let walkingOut = false;
+    async function signedOutBy(failure) {
+        if (walkingOut) return;
+        walkingOut = true;
+        clearInterval(syncTimer);
+        api.setToken(null);
+        await platform.tokens.clear(server.id).catch(() => {});
+        // A wiped or revoked account's saved password is dead weight that would re-fill
+        // a login that can never succeed again.
+        if (failure?.code !== 'password_reset') {
+            await platform.credentials.clear(server.id).catch(() => {});
+        }
+        voice.stop();
+        link.close();
+        onSignedOut?.({ notice: failure?.message ?? 'You were signed out by the server.' });
+    }
+
     async function signOut() {
         clearInterval(syncTimer);
         await api.logout().catch(() => {
@@ -532,6 +552,13 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                     });
                 }
             }
+            return;
+        }
+
+        if (msg.type === 'text-chat:cleared' && msg.channelId) {
+            // An admin emptied the channel. What we are showing of it is now fiction.
+            state.setMessages(msg.channelId, []);
+            state.clearUnread(msg.channelId);
             return;
         }
 
@@ -848,9 +875,16 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                 const peer = state.raw.peers.get(cid);
                 if (!peer) return;
                 if (peer.channelId === state.raw.currentChannelId) {
-                    // Already in the room: the stream is (or is about to be) on the stage.
-                    stageFocus = videoStreams.has(key) ? key : stageFocus;
-                    pendingFocus = videoStreams.has(key) ? null : key;
+                    if (videoStreams.has(key)) {
+                        // Already on the stage: bring it to focus.
+                        stageFocus = key;
+                        pendingFocus = null;
+                    } else {
+                        // Not on the stage — most likely stopped earlier. Watch again.
+                        pendingFocus = key;
+                        const [, slotName] = key.split(':');
+                        voice.setWatching(cid, slotName, true);
+                    }
                     paintStage();
                 } else if (peer.channelId) {
                     // Elsewhere: participate — join their room, and focus their stream
@@ -875,7 +909,14 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
             if (event.target.closest('[data-stop-watching]')) {
                 if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+                const key = stageFocus;
                 stageFocus = null;
+                // Stopping means stopping: the consumer closes and the tile leaves.
+                // Your own preview stays — stopping your OWN stream is the Stop share button.
+                if (key && !key.startsWith('self:')) {
+                    const [cid, slot] = key.split(':');
+                    voice.setWatching(cid, slot, false);
+                }
                 paintStage();
                 return;
             }
@@ -892,7 +933,10 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
             const tile = event.target.closest('[data-tile]');
             if (tile) {
-                stageFocus = stageFocus === tile.dataset.tile ? null : tile.dataset.tile;
+                // The focused window itself is inert — misclicks on a stream you are
+                // reading must not tear the layout down. Thumbnails and grid tiles focus.
+                if (tile.closest('.stage-main')) return;
+                stageFocus = tile.dataset.tile;
                 paintStage();
                 return;
             }
@@ -1488,7 +1532,16 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         state.subscribe(paint);
 
         link.onEvent = applyFrame;
-        link.onState = (conn) => state.setConnection(conn);
+        link.onState = (conn) => {
+            state.setConnection(conn);
+            // An administrator ended this session — kicked, banned, or wiped the server.
+            // Staying in a dead room with a spinner would be dishonest; walk back to the
+            // sign-in screen carrying the reason.
+            const adminEnd = ['password_reset', 'access_revoked', 'server_wiped', 'unauthenticated'];
+            if (conn?.state === 'failed' && adminEnd.includes(conn?.failure?.code)) {
+                signedOutBy(conn.failure);
+            }
+        };
         state.setConnection({ state: link.state, rttMs: link.rttMs, cid: link.cid });
 
         // The roster and the room list come over HTTP; who is in them comes over the socket.

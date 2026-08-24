@@ -399,3 +399,26 @@ test('closing while retrying cancels the pending attempt', () => {
     assert.equal(h.FakeSocket.opened, opened);
     assert.equal(h.clock.pending, 0, 'and leaves no timer running');
 });
+
+test('an administrator close ends the link with the reason, and never reconnects', () => {
+    // 4003 = password reset, 4004 = banned/removed, 4005 = server wiped. Each is a
+    // deliberate act by a person; retrying would turn it into a mystery spinner.
+    for (const [code, expect] of [
+        [4003, 'password_reset'],
+        [4004, 'access_revoked'],
+        [4005, 'server_wiped'],
+    ]) {
+        const h = harness();
+        h.goLive();
+        h.sock.dropByServer(code);
+
+        assert.equal(h.link.state, LINK.FAILED, `code ${code} is fatal`);
+        const last = h.states.at(-1);
+        assert.equal(last.failure?.code, expect);
+        assert.ok(last.failure?.message, 'carries a sentence the person can read');
+
+        const opened = h.FakeSocket.opened;
+        h.clock.advance(600_000);
+        assert.equal(h.FakeSocket.opened, opened, `code ${code} must not reconnect`);
+    }
+});

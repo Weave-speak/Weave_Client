@@ -95,3 +95,20 @@ test('the browser credential store is inert rather than absent', async () => {
     assert.equal(await platform.credentials.set('any-server', 'u', 'p'), false);
     assert.equal(await platform.credentials.clear('any-server'), false);
 });
+
+test('the forced-reset card says who, why, and what to do', async () => {
+    const views = await import('../src/auth/views.js');
+    const markup = views.chooseNewPassword({ username: 'kestrel', instanceName: 'Weave' });
+    assert.match(markup, /id="resetRequiredForm"/);
+    assert.match(markup, /administrator of Weave reset the password/);
+    assert.match(markup, /kestrel/);
+    assert.match(markup, /autocomplete="new-password"/);
+    assert.match(markup, /old password\s+no longer opens anything/, 'states the consequence plainly');
+});
+
+test('a hostile username cannot become markup on the forced-reset card', async () => {
+    const views = await import('../src/auth/views.js');
+    const markup = views.chooseNewPassword({ username: '<img src=x onerror=steal()>' });
+    assert.ok(!markup.includes('<img src=x'));
+    assert.match(markup, /&lt;img/);
+});

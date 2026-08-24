@@ -21,7 +21,7 @@ import { toTimelineItems } from './messages.js';
 
 /** Producer slots, matching the server's own names. */
 const SLOT_SCREEN = 'screen';
-const SLOT_CAMERA = 'camera';
+const SLOT_CAMERA = 'webcam';   // the wire name — 'camera' here meant the icon never lit
 
 export function createRoomState({ me = null, server = {} } = {}) {
     const listeners = new Set();
@@ -312,6 +312,19 @@ export function createRoomState({ me = null, server = {} } = {}) {
             entry.unread += 1;
             if (mention) entry.mentions += 1;
             state.unreads.set(channelId, entry);
+            emit();
+        },
+
+        /**
+         * The server announces producers to everyone EXCEPT their owner, so your own
+         * screen/camera icon would never light in the sidebar. The client knows the
+         * truth firsthand and records it here.
+         */
+        markOwnProducer(cid, slot, on) {
+            const peer = state.peers.get(cid);
+            if (!peer) return;
+            const rest = (peer.producers ?? []).filter((p) => p.slot !== slot);
+            peer.producers = on ? [...rest, { slot }] : rest;
             emit();
         },
 

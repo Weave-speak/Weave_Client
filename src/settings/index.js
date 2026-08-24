@@ -13,7 +13,10 @@ import { createModal } from '../ui/modal.js';
 import { settingsFor } from '../server/store.js';
 import { $, $$ } from '../ui/dom.js';
 import {
-    settingsFrame, profilePanel, voicePanel, appearancePanel, invitesPanel, sessionsPanel,
+    adminUsersPanel, adminChannelsPanel, adminServerPanel, adminDangerPanel,
+} from './admin.js';
+import {
+    settingsFrame, profilePanel, voicePanel, appearancePanel, invitesPanel, inviteMessage, sessionsPanel,
     placeholderPanel, sectionById, PLACEHOLDER_REASONS,
 } from './panels.js';
 
@@ -53,6 +56,17 @@ export function createSettings({
     let inviteBusy = false;
     let inviteError = null;
 
+    // The admin console's working state. Data is fetched when its panel is opened and
+    // refetched after every action, so the table always shows what the server just did.
+    const adm = {
+        members: null, channels: null, overview: null, logs: null,
+        error: null, notice: null,
+        editingId: null,       // user or channel row in rename mode
+        armedKey: null,        // 'action:id' of the one destructive button awaiting its second click
+        createBusy: false,
+        doom: { stage: 'idle', typed: '', error: null, busy: false },
+    };
+
     const modal = createModal({ className: 'settings-modal', label: 'Settings' });
 
     /* ── panels ──────────────────────────────────────────────────────────── */
@@ -67,6 +81,23 @@ export function createSettings({
                 invite, busy: inviteBusy, error: inviteError,
                 origin: server?.origin ?? null,
             });
+            case 'admin-users':
+                return adminUsersPanel({
+                    members: adm.members, error: adm.error, notice: adm.notice,
+                    editingId: adm.editingId, armedKey: adm.armedKey,
+                });
+            case 'admin-channels':
+                return adminChannelsPanel({
+                    channels: adm.channels, error: adm.error, notice: adm.notice,
+                    editingId: adm.editingId, armedKey: adm.armedKey, busy: adm.createBusy,
+                });
+            case 'admin-server':
+                return adminServerPanel({ overview: adm.overview, logs: adm.logs, error: adm.error });
+            case 'admin-danger':
+                return adminDangerPanel({
+                    ...adm.doom,
+                    serverName: server?.lastSeen?.name ?? '',
+                });
             default:
                 return placeholderPanel({
                     label: sectionById(current).label,
@@ -117,8 +148,13 @@ export function createSettings({
         $$('[data-panel]', modal.element).forEach((button) => {
             button.addEventListener('click', () => {
                 current = button.dataset.panel;
+                // Panel-scoped state must not leak between panels: an armed Remove
+                // button or a half-typed rename belongs to the screen it was on.
+                adm.error = null; adm.notice = null; adm.editingId = null; adm.armedKey = null;
+                if (current !== 'admin-danger') adm.doom = { stage: 'idle', typed: '', error: null, busy: false };
                 render();
                 $('#settingsPanel', modal.element)?.focus();
+                loadAdminData();
             });
         });
 
@@ -144,8 +180,180 @@ export function createSettings({
         if (mismatch) line.textContent += ' — NOT the device selected above';
     }
 
+    /** Fetch whatever the open admin panel shows. Stale data is replaced, not merged. */
+    async function loadAdminData() {
+        try {
+            if (current === 'admin-users') {
+                const { members } = await api.request('GET', '/api/admin/members');
+                adm.members = members;
+            } else if (current === 'admin-channels') {
+                const { channels } = await api.request('GET', '/api/channels');
+                adm.channels = channels;
+            } else if (current === 'admin-server') {
+                // Fetched together: the numbers without the log answer half the question.
+                const [overview, logs] = await Promise.all([
+                    api.request('GET', '/api/admin/overview'),
+                    api.request('GET', '/api/admin/logs?lines=200'),
+                ]);
+                adm.overview = overview;
+                adm.logs = logs;
+            } else return;
+        } catch (err) {
+            adm.error = err?.message ?? 'The server did not answer.';
+        }
+        renderPanel();
+    }
+
+    /**
+     * Run one admin action, then refetch and repaint. Every action funnels through here
+     * so errors land in the banner instead of vanishing into the console.
+     */
+    async function adminAct(fn, okNotice = null) {
+        adm.error = null; adm.notice = null;
+        try {
+            await fn();
+            adm.notice = okNotice;
+            adm.editingId = null; adm.armedKey = null;
+        } catch (err) {
+            adm.error = err?.message ?? 'That did not work.';
+        }
+        await loadAdminData();
+    }
+
+    /** First click arms, second fires — the repaint between them shows the question. */
+    function armThen(key, fire) {
+        if (adm.armedKey === key) { adm.armedKey = null; fire(); return; }
+        adm.armedKey = key;
+        renderPanel();
+    }
+
+    function wireAdminPanel() {
+        const el = modal.element;
+        $('[data-goto-invites]', el)?.addEventListener('click', () => {
+            current = 'invites'; render();
+        });
+
+        // -- users --
+        $$('[data-admin-edit]', el).forEach((b) => b.addEventListener('click', () => {
+            adm.editingId = b.dataset.adminEdit; adm.armedKey = null; renderPanel();
+            $('[data-rename-input]', el)?.focus();
+        }));
+        $$('[data-admin-rename-cancel], [data-chan-rename-cancel]', el).forEach((b) =>
+            b.addEventListener('click', () => { adm.editingId = null; renderPanel(); }));
+        $$('[data-admin-rename-save]', el).forEach((b) => b.addEventListener('click', () => {
+            const displayName = $('[data-rename-input]', el)?.value?.trim();
+            if (!displayName) return;
+            adminAct(() => api.request('PUT', `/api/admin/members/${b.dataset.adminRenameSave}`, {
+                body: { displayName },
+            }));
+        }));
+        $$('[data-admin-reset]', el).forEach((b) => b.addEventListener('click', () => {
+            const id = b.dataset.adminReset;
+            armThen(`reset:${id}`, () => adminAct(
+                () => api.request('POST', `/api/admin/members/${id}/reset-password`, { body: {} }),
+                'Done — they are signed out now and will choose a new password at their next sign-in.',
+            ));
+        }));
+        $$('[data-admin-ban]', el).forEach((b) => b.addEventListener('click', () => {
+            const id = b.dataset.adminBan;
+            armThen(`ban:${id}`, () => adminAct(
+                () => api.request('POST', `/api/admin/members/${id}/ban`, { body: { banned: true } }),
+            ));
+        }));
+        $$('[data-admin-unban]', el).forEach((b) => b.addEventListener('click', () => {
+            adminAct(() => api.request('POST', `/api/admin/members/${b.dataset.adminUnban}/ban`, {
+                body: { banned: false },
+            }));
+        }));
+        $$('[data-admin-remove]', el).forEach((b) => b.addEventListener('click', () => {
+            const id = b.dataset.adminRemove;
+            armThen(`remove:${id}`, () => adminAct(
+                () => api.request('DELETE', `/api/admin/members/${id}`),
+            ));
+        }));
+
+        // -- channels --
+        $$('[data-chan-edit]', el).forEach((b) => b.addEventListener('click', () => {
+            adm.editingId = b.dataset.chanEdit; adm.armedKey = null; renderPanel();
+            $('[data-chan-rename-input]', el)?.focus();
+        }));
+        $$('[data-chan-rename-save]', el).forEach((b) => b.addEventListener('click', () => {
+            const name = $('[data-chan-rename-input]', el)?.value?.trim();
+            if (!name) return;
+            adminAct(() => api.request('PUT', `/api/channels/${b.dataset.chanRenameSave}`, { body: { name } }));
+        }));
+        $$('[data-chan-clear]', el).forEach((b) => b.addEventListener('click', () => {
+            const id = b.dataset.chanClear;
+            armThen(`clear:${id}`, () => adminAct(
+                () => api.request('DELETE', `/api/chat/${id}/messages`),
+                'History cleared for everyone.',
+            ));
+        }));
+        $$('[data-chan-delete]', el).forEach((b) => b.addEventListener('click', () => {
+            const id = b.dataset.chanDelete;
+            armThen(`delete:${id}`, () => adminAct(
+                () => api.request('DELETE', `/api/channels/${id}`),
+            ));
+        }));
+        $('[data-admin-create-channel]', el)?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const form = e.currentTarget;
+            const name = form.name.value.trim();
+            const kind = form.kind.value;
+            if (!name) return;
+            adm.createBusy = true; renderPanel();
+            adminAct(async () => {
+                await api.request('POST', '/api/channels', {
+                    body: {
+                        name,
+                        kind,
+                        allowVoice: kind !== 'text',
+                        allowText: kind !== 'voice',
+                    },
+                });
+            }).finally(() => { adm.createBusy = false; renderPanel(); });
+        });
+
+        // -- server --
+        $('[data-admin-refresh-logs]', el)?.addEventListener('click', () => loadAdminData());
+
+        // -- the button --
+        $('[data-doom-arm]', el)?.addEventListener('click', () => {
+            adm.doom.stage = 'confirm'; renderPanel();
+        });
+        $$('[data-doom-cancel]', el).forEach((b) => b.addEventListener('click', () => {
+            adm.doom = { stage: 'idle', typed: '', error: null, busy: false }; renderPanel();
+        }));
+        $('[data-doom-continue]', el)?.addEventListener('click', () => {
+            adm.doom.stage = 'puzzle'; adm.doom.typed = ''; renderPanel();
+            $('[data-doom-answer]', el)?.focus();
+        });
+        $('[data-doom-answer]', el)?.addEventListener('input', (e) => {
+            adm.doom.typed = e.currentTarget.value;
+            // Only the fire button's disabled state changes — repainting the panel would
+            // steal the caret mid-word.
+            const fire = $('[data-doom-fire]', el);
+            const name = server?.lastSeen?.name ?? '';
+            if (fire) fire.disabled = !(name && adm.doom.typed === name) || adm.doom.busy;
+        });
+        $('[data-doom-fire]', el)?.addEventListener('click', async () => {
+            adm.doom.busy = true; adm.doom.error = null; renderPanel();
+            try {
+                await api.request('POST', '/api/admin/wipe', { body: { confirm: adm.doom.typed } });
+                adm.doom = { stage: 'done', typed: '', error: null, busy: false };
+                // The server is now cutting every socket, ours included; the link's
+                // failure path walks the whole app back to the connect screen.
+            } catch (err) {
+                adm.doom.busy = false;
+                adm.doom.error = err?.message ?? 'The server refused.';
+            }
+            renderPanel();
+        });
+    }
+
     function wirePanel() {
         paintActiveMic();
+        wireAdminPanel();
         $$('[data-setting]', modal.element).forEach((input) => {
             input.addEventListener('change', async () => {
                 const value = input.type === 'checkbox' ? input.checked : input.value;
@@ -231,7 +439,7 @@ export function createSettings({
             const button = event.currentTarget;
             if (!invite?.code || !server?.origin) return;
             try {
-                await navigator.clipboard.writeText(`${server.origin}/invite/${invite.code}`);
+                await navigator.clipboard.writeText(inviteMessage({ origin: server.origin, code: invite.code }));
                 flash(button, 'Copied ✓');
             } catch {
                 const link = $('.invite-link', modal.element);
@@ -355,6 +563,8 @@ export function createSettings({
             modal.open({ from, content: '' });
             render();
             loadDevices().then(() => { if (current === 'voice') renderPanel(); });
+            // Reopening onto an admin panel must show fresh truth, not last week's table.
+            loadAdminData();
         },
 
         close: () => modal.close(),

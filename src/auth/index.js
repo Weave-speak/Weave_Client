@@ -214,6 +214,23 @@ export function createAuth({ mount, onSignedIn }) {
                 const target = server();
                 const api = apiFor(target.origin);
                 const result = await api.login(username, password);
+
+                // An administrator reset this password. The credentials were CORRECT —
+                // that is what earned the ticket — but there is no session until the
+                // user chooses a new password, so this flow forks here.
+                if (result.resetRequired) {
+                    setBusy(button, false);
+                    showResetRequired({
+                        api,
+                        target,
+                        ticket: result.ticket,
+                        username: result.username ?? username,
+                        remember: Boolean(form.remember?.checked),
+                        autoJoin,
+                    });
+                    return;
+                }
+
                 api.setToken(result.token);
                 // Scoped to this server: a client that can reach several must never carry one
                 // server's credentials to another.
@@ -237,6 +254,56 @@ export function createAuth({ mount, onSignedIn }) {
                 } else {
                     setFormMessage(form, err.message);
                 }
+            }
+        });
+    }
+
+    /**
+     * The forced-reset card. Renders over the sign-in form; on success it continues
+     * exactly like a normal sign-in, including saving the NEW password when Remember
+     * me was ticked — remembering the dead one would lock them out at next launch.
+     */
+    function showResetRequired({ api, target, ticket, username, remember, autoJoin }) {
+        render(views.chooseNewPassword({
+            username,
+            instanceName: target?.lastSeen?.name ?? null,
+        }));
+        const form = $('#resetRequiredForm', mount);
+        if (!form) return;
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            clearErrors(form);
+            const button = $('button[type="submit"]', form);
+            const password = form.password.value;
+            if (password !== form.confirm.value) {
+                setFieldError(form, 'confirm', 'These do not match.');
+                return;
+            }
+
+            setBusy(button, true, 'Saving…');
+            try {
+                const result = await api.request('POST', '/api/auth/complete-reset', {
+                    body: { ticket, password },
+                });
+                api.setToken(result.token);
+                await platform.tokens.set(target.id, result.token).catch(() => {});
+                if (remember) {
+                    await platform.credentials.set(target.id, username, password).catch(() => {});
+                }
+                onSignedIn({ api, user: result.user, token: result.token, server: target, autoJoin });
+            } catch (err) {
+                setBusy(button, false);
+                if (err instanceof ApiError && err.status === 401) {
+                    // The ticket is single-use and short-lived; the honest fix is one
+                    // more sign-in, which mints a fresh one.
+                    await show('signin');
+                    const signInForm = $('#signInForm', mount);
+                    setFormMessage(signInForm, err.message ?? 'That took too long — sign in again.');
+                    return;
+                }
+                if (err instanceof ApiError && err.field) setFieldError(form, err.field, err.message);
+                else setFormMessage(form, err.message);
             }
         });
     }

@@ -41,6 +41,19 @@ export const SECTIONS = [
             { id: 'bug', label: 'Report a Bug', icon: 'doc', placeholder: true },
         ],
     },
+    {
+        // Rendered only for administrators. The gate is cosmetic — every admin API
+        // call checks the session server-side — but a non-admin should never even see
+        // the shape of these controls.
+        group: 'Admin',
+        adminOnly: true,
+        items: [
+            { id: 'admin-users', label: 'Users', icon: 'weave' },
+            { id: 'admin-channels', label: 'Channels', icon: 'speaker' },
+            { id: 'admin-server', label: 'Server', icon: 'doc' },
+            { id: 'admin-danger', label: 'DO NOT PRESS', icon: 'power', danger: true },
+        ],
+    },
 ];
 
 const allItems = () => SECTIONS.flatMap((s) => s.items);
@@ -330,6 +343,22 @@ export function appearancePanel({ prefs = {} } = {}) {
     ${notYet('Themes', 'Weave has one palette at the moment. A light theme is a later piece of work.')}`;
 }
 
+/**
+ * The text "Copy link" actually copies: the link plus spelled-out instructions, so the
+ * invite still works if the auto-fill doesn't. Pure so the wording is testable.
+ */
+export function inviteMessage({ origin, code }) {
+    return [
+        `You're invited to Weave!`,
+        ``,
+        `Visit ${origin}/invite/${code} to download the latest installer — the link fills everything in for you.`,
+        ``,
+        `If anything doesn't fill in by itself:`,
+        `  1. Server — copy ${origin} and paste it into the server connection screen after installing.`,
+        `  2. Invite — copy ${code} and paste it in during account creation.`,
+    ].join('\n');
+}
+
 export function invitesPanel({ invite = null, busy = false, error = null, origin = null } = {}) {
     const link = invite && origin ? `${origin}/invite/${invite.code}` : null;
     return `
@@ -344,7 +373,7 @@ export function invitesPanel({ invite = null, busy = false, error = null, origin
       <div class="invite-result">
         ${link ? `
         <span class="invite-label">Send them this link — it offers the download and fills
-          everything in</span>
+          everything in. Copying includes step-by-step instructions in case it doesn't.</span>
         <code class="invite-link">${esc(link)}</code>
         <button type="button" class="btn primary" data-copy-link>Copy link</button>
         <span class="invite-label">Or, for someone who already has Weave, just the code</span>` : `
@@ -389,7 +418,7 @@ export const PLACEHOLDER_REASONS = {
 /* ── the frame ────────────────────────────────────────────────────────────── */
 
 const navItem = (item, current) => `
-  <button type="button" class="nav-item${item.id === current ? ' current' : ''}"
+  <button type="button" class="nav-item${item.id === current ? ' current' : ''}${item.danger ? ' danger' : ''}"
           data-panel="${esc(item.id)}" ${item.id === current ? 'aria-current="page"' : ''}>
     ${icons[item.icon] ?? icons.weave}
     <span>${esc(item.label)}</span>
@@ -412,7 +441,7 @@ export function settingsFrame({ me = {}, current = 'profile', body = '', serverN
 
       <div class="settings-body">
         <nav class="settings-nav" aria-label="Settings">
-          ${SECTIONS.map((section) => `
+          ${SECTIONS.filter((section) => !section.adminOnly || me.isAdmin).map((section) => `
             <h3 class="nav-group">${esc(section.group)}</h3>
             ${section.items.map((item) => navItem(item, current)).join('')}
           `).join('')}

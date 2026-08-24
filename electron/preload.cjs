@@ -62,6 +62,13 @@ contextBridge.exposeInMainWorld('weaveNative', {
         },
     },
 
+    links: {
+        available: true,
+        onDeepLink: (cb) => {
+            ipcRenderer.on('weave:deep-link', (_event, url) => cb(String(url ?? '')));
+        },
+    },
+
     diagnostics: {
         /** The updater log, already redacted in the main process. */
         read: () => ipcRenderer.invoke('weave:diagnostics.read'),

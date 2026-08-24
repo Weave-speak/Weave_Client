@@ -28,7 +28,7 @@ import log from 'electron-log/main';
 
 const { autoUpdater } = electronUpdater;
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { join, dirname, normalize } from 'node:path';
+import { join, dirname, normalize, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -461,13 +461,51 @@ if (!app.requestSingleInstanceLock()) {
 
     nativeTheme.themeSource = 'dark';
 
-    app.whenReady().then(() => {
+    // ── weave:// deep links ──────────────────────────────────────────────────
+    // The invite page's "Open in Weave" button. Registration is per-user (HKCU), so it
+    // needs no elevation and no signing. In dev the running binary is electron.exe with
+    // an argument, which needs the explicit form.
+    if (app.isPackaged) {
+        app.setAsDefaultProtocolClient('weave');
+    } else if (process.argv[1]) {
+        app.setAsDefaultProtocolClient('weave', process.execPath, [resolve(process.argv[1])]);
+    }
+
+    const deepLinkIn = (argv) => argv.find((a) => typeof a === 'string' && a.startsWith('weave://')) ?? null;
+    let pendingDeepLink = deepLinkIn(process.argv);
+
+    const forwardDeepLink = (url) => {
+        if (!url || !win) return;
+        // The renderer validates the URL itself; this just delivers the string.
+        win.webContents.send('weave:deep-link', url);
+        if (win.isMinimized()) win.restore();
+        win.focus();
+    };
+
+    // One instance owns the protocol: a second launch (the OS opening a link while the
+    // app runs) hands its argv to the first and exits.
+    const primaryInstance = app.requestSingleInstanceLock();
+    if (!primaryInstance) app.quit();
+    app.on('second-instance', (_event, argv) => {
+        forwardDeepLink(deepLinkIn(argv));
+        if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
+    });
+
+    if (primaryInstance) app.whenReady().then(() => {
         log.info({ evt: 'app.start', version: app.getVersion(), packaged: app.isPackaged },
             `Weave ${app.getVersion()} starting`);
         registerBridge();
         serveRenderer();
         createWindow();
         startUpdateCheck();
+
+        // A cold start FROM the link: the renderer is not listening yet, so the URL
+        // waits for the page to finish loading rather than being fired into the void.
+        if (pendingDeepLink) {
+            const url = pendingDeepLink;
+            pendingDeepLink = null;
+            win?.webContents.once('did-finish-load', () => forwardDeepLink(url));
+        }
 
         app.on('activate', () => {
             if (BrowserWindow.getAllWindows().length === 0) createWindow();

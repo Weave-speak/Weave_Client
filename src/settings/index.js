@@ -59,7 +59,10 @@ export function createSettings({ api, server, me: signedInAs, features = [], onP
             case 'profile': return profilePanel({ me, prefs, features });
             case 'voice': return voicePanel({ prefs, devices, features });
             case 'appearance': return appearancePanel({ prefs });
-            case 'invites': return invitesPanel({ invite, busy: inviteBusy, error: inviteError });
+            case 'invites': return invitesPanel({
+                invite, busy: inviteBusy, error: inviteError,
+                origin: server?.origin ?? null,
+            });
             default:
                 return placeholderPanel({
                     label: sectionById(current).label,
@@ -137,6 +140,18 @@ export function createSettings({ api, server, me: signedInAs, features = [], onP
         });
 
         $('[data-create-invite]', modal.element)?.addEventListener('click', createInvite);
+        $('[data-copy-link]', modal.element)?.addEventListener('click', async (event) => {
+            const button = event.currentTarget;
+            if (!invite?.code || !server?.origin) return;
+            try {
+                await navigator.clipboard.writeText(`${server.origin}/invite/${invite.code}`);
+                flash(button, 'Copied ✓');
+            } catch {
+                const link = $('.invite-link', modal.element);
+                if (link) getSelection()?.selectAllChildren(link);
+                flash(button, 'Press Ctrl+C');
+            }
+        });
         $('[data-copy-invite]', modal.element)?.addEventListener('click', async (event) => {
             const button = event.currentTarget;
             if (!invite?.code) return;

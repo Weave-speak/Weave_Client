@@ -126,6 +126,7 @@ const browserPlatform = {
 
     updates: noUpdates,
     diagnostics: { available: false, async read() { return null; }, async openFolder() {} },
+    links: { available: false, onDeepLink() {} },
 
     // The server that served this page. Not configurable and not presented as if it were —
     // but only once it has actually answered as a Weave server.
@@ -167,6 +168,9 @@ const desktopPlatform = {
         ? { available: true, ...window.weaveNative.updates }
         : noUpdates,
 
+    links: (typeof window !== 'undefined' && window.weaveNative?.links)
+        ? { available: true, ...window.weaveNative.links }
+        : { available: false, onDeepLink() {} },
     diagnostics: (typeof window !== 'undefined' && window.weaveNative?.diagnostics)
         ? { available: true, ...window.weaveNative.diagnostics }
         : { available: false, async read() { return null; }, async openFolder() {} },

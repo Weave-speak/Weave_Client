@@ -229,7 +229,8 @@ export function appearancePanel({ prefs = {} } = {}) {
     ${notYet('Themes', 'Weave has one palette at the moment. A light theme is a later piece of work.')}`;
 }
 
-export function invitesPanel({ invite = null, busy = false, error = null } = {}) {
+export function invitesPanel({ invite = null, busy = false, error = null, origin = null } = {}) {
+    const link = invite && origin ? `${origin}/invite/${invite.code}` : null;
     return `
     <h2 class="panel-title">Invites</h2>
     <p class="panel-lead">
@@ -240,13 +241,19 @@ export function invitesPanel({ invite = null, busy = false, error = null } = {})
 
     ${invite ? `
       <div class="invite-result">
-        <span class="invite-label">Give them this code</span>
+        ${link ? `
+        <span class="invite-label">Send them this link — it offers the download and fills
+          everything in</span>
+        <code class="invite-link">${esc(link)}</code>
+        <button type="button" class="btn primary" data-copy-link>Copy link</button>
+        <span class="invite-label">Or, for someone who already has Weave, just the code</span>` : `
+        <span class="invite-label">Give them this code</span>`}
         <code class="invite-code">${esc(invite.code)}</code>
         <span class="invite-meta">
           ${esc(invite.maxUses === 1 ? 'Single use' : `${invite.maxUses} uses`)}${
     invite.expiresAt ? ` · expires ${esc(joinedOn(invite.expiresAt) ?? 'soon')}` : ' · never expires'}
         </span>
-        <button type="button" class="btn" data-copy-invite>Copy</button>
+        <button type="button" class="btn" data-copy-invite>Copy code</button>
       </div>` : ''}
 
     <button type="button" class="btn primary" data-create-invite ${busy ? 'disabled' : ''}>

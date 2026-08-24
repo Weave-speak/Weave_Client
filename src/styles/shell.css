@@ -1326,6 +1326,12 @@
     border-radius: var(--r-3);
 }
 .invite-label { font-size: var(--t-sm); color: var(--ink-dim); }
+.invite-link {
+    font: var(--t-sm) var(--font-mono);
+    color: var(--accent-hi);
+    word-break: break-all;
+    user-select: all;
+}
 .invite-code {
     font: var(--t-xl) var(--font-mono);
     letter-spacing: 0.14em;

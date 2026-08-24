@@ -65,6 +65,16 @@ export function createAuth({ mount, onSignedIn }) {
                     questions: await questions(),
                     instanceName: info?.lastSeen?.name ?? null,
                 }));
+                // An invite link landed here: the code it carried goes straight into the
+                // field, once. Session-scoped so a stale code never resurfaces days later.
+                try {
+                    const pending = sessionStorage.getItem('weave:pending-invite');
+                    if (pending) {
+                        sessionStorage.removeItem('weave:pending-invite');
+                        const input = mount.querySelector('#inviteCode');
+                        if (input && !input.value) input.value = pending;
+                    }
+                } catch { /* storage can be unavailable; typing still works */ }
                 break;
             }
             case 'forgot':

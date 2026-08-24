@@ -12,7 +12,8 @@ import './styles.css';
 
 import { createAuth } from './auth/index.js';
 import { platform, VERSION, noteOriginIsWeave } from './platform/index.js';
-import { activeServer, rememberServer } from './server/store.js';
+import { activeServer, rememberServer, setActive } from './server/store.js';
+import { parseDeepLink } from './server/deeplink.js';
 import { discover, OUTCOME } from './server/discover.js';
 import { createUpdateBanner } from './updates/banner.js';
 import { createLink } from './net/link.js';
@@ -168,7 +169,30 @@ async function enterRoom({ api, user, token, server, autoJoin = true }) {
     link.connect();
 }
 
+/**
+ * An invite link, clicked in a browser, delivered by the OS.
+ *
+ * The link says which server and carries the code. The server is verified by the same
+ * discovery a typed address gets — nothing is stored on the say-so of a URL — and then
+ * the register screen opens with the code already in the field.
+ */
+async function handleDeepLink(raw) {
+    const link = parseDeepLink(raw);
+    if (!link) return;
+    try {
+        const found = await discover(link.server);
+        if (found.outcome !== OUTCOME.OK) return;
+        const record = rememberServer({ address: found.address, info: found.info });
+        setActive(record.id);
+        try { sessionStorage.setItem('weave:pending-invite', link.code); } catch { /* typing works */ }
+        location.hash = '#/register';
+        // Same-hash navigation still needs a repaint.
+        window.dispatchEvent(new HashChangeEvent('hashchange'));
+    } catch { /* an unreachable server ends the gesture; the page said what to do */ }
+}
+
 async function boot() {
+    platform.links.onDeepLink(handleDeepLink);
     app.innerHTML = '';
     app.append(html(shell()));
 

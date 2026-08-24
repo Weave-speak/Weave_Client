@@ -476,7 +476,12 @@
 .room {
     position: relative;
     display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    /* Every child is PINNED to its row. With auto-placement, a display:none stage slot
+       shifted the timeline into an auto row (it grew to content height and pushed the
+       composer off the bottom of the window) and a live stage pushed the composer into
+       an implicit overlapping row. fit-content caps the stage so the text keeps at
+       least its promised share of the page. */
+    grid-template-rows: auto fit-content(62%) minmax(0, 1fr) auto auto;
     background:
         var(--noise),
         radial-gradient(900px 480px at 50% -10%, rgb(var(--accent-rgb) / 0.05) 0%, transparent 70%),
@@ -499,6 +504,11 @@
 .room > .room-head,
 .room > .timeline,
 .room > .composer-wrap { position: relative; z-index: var(--z-base); }
+.room > .room-head { grid-row: 1; }
+.room > #stageSlot { grid-row: 2; min-height: 0; }
+.room > .timeline { grid-row: 3; }
+.room > .voice-notice-slot { grid-row: 4; }
+.room > .composer-wrap { grid-row: 5; }
 
 .room-head {
     display: flex;
@@ -538,7 +548,9 @@
 #stageSlot:empty { display: none; }
 .stage {
     padding: var(--s-3) var(--s-4) 0;
-    max-height: 58vh;
+    height: 100%;
+    max-height: 100%;
+    overflow: hidden;
     display: grid;
     gap: var(--s-2);
     min-height: 0;
@@ -549,9 +561,12 @@
     display: grid;
     gap: var(--s-2);
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    grid-auto-rows: minmax(0, 1fr);
     align-items: center;
     min-height: 0;
 }
+/* Inside a capped row the aspect ratio yields rather than overflowing the chat. */
+.stage-grid .tile { max-height: 100%; }
 .stage-grid[data-count="1"] { grid-template-columns: minmax(0, 1fr); }
 
 .stage-main { min-height: 0; display: grid; }
@@ -598,6 +613,40 @@
 }
 .tile-label svg { width: 12px; height: 12px; flex: none; }
 .tile-label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Listening tools: yours alone, shown when the pointer says you care. */
+.tile-tools {
+    position: absolute;
+    right: var(--s-2); bottom: var(--s-2);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-1);
+    padding: 3px var(--s-1);
+    border-radius: var(--r-2);
+    background: var(--scrim);
+    opacity: 0;
+    transition: opacity var(--dur-fast) var(--ease);
+}
+.tile:hover .tile-tools,
+.tile-tools:focus-within { opacity: 1; }
+.tile-tool {
+    display: grid;
+    place-items: center;
+    width: 26px; height: 26px;
+    border-radius: var(--r-1);
+    color: var(--on-accent);
+}
+.tile-tool:hover { background: rgb(var(--accent-rgb) / 0.35); }
+.tile-tool svg { width: 14px; height: 14px; }
+.tile-volume { width: 74px; accent-color: var(--accent); }
+
+/* A watchable mark is a small door, and it looks pressable. */
+.mark-watch { cursor: pointer; border-radius: var(--r-1); padding: 1px; }
+.mark-watch:hover { background: var(--accent-tint-hi); color: var(--accent-hi); }
+
+/* Fullscreen strips the chrome and keeps the picture. */
+.tile:fullscreen { border: 0; border-radius: 0; }
+.tile:fullscreen video { object-fit: contain; }
 
 /* The header buttons while sending: lit, and honest about what a second press does. */
 .media-btn[aria-pressed="true"] {

@@ -225,3 +225,15 @@ test('a private room you are not in reads as a locked door, not a button', () =>
     // No "(empty)" tease on a room whose inside is not your business.
     assert.equal((html.match(/\(empty\)/g) ?? []).length, 1, 'only the member row hints');
 });
+
+test('a live stream mark on a person is a door with an aim', async () => {
+    const { personMarks } = await import('../src/room/views/parts.js');
+    const marked = personMarks({ username: 'kes', displayName: 'Kestrel', cid: 'C1D2', sharing: true, camera: true });
+    assert.match(marked, /data-watch="C1D2:screen"/);
+    assert.match(marked, /data-watch="C1D2:webcam"/);
+    assert.match(marked, /Watch Kestrel/);
+
+    // Without a cid there is nothing to aim at; the mark stays a mark.
+    const plain = personMarks({ username: 'kes', sharing: true });
+    assert.ok(!plain.includes('data-watch'));
+});

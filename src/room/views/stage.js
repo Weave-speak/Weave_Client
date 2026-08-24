@@ -33,6 +33,21 @@ const tile = (t, focusKey) => `
       ${t.slot === 'screen' ? icons.screen : icons.camera}
       <span>${esc(t.label)}</span>
     </span>
+    ${t.self ? '' : `
+    <span class="tile-tools">
+      ${t.audio ? `
+      <button type="button" class="tile-tool" data-listen-mute
+              title="${t.audio.muted ? 'Unmute for you' : 'Mute for you'}"
+              aria-pressed="${t.audio.muted ? 'true' : 'false'}"
+              aria-label="${t.audio.muted ? 'Unmute this stream for you' : 'Mute this stream for you'}">
+        ${t.audio.muted ? icons.speakerOff : icons.speaker}
+      </button>
+      <input type="range" class="tile-volume" data-listen-volume min="0" max="100"
+             value="${Math.round((t.audio.volume ?? 1) * 100)}"
+             aria-label="Volume of this stream, for you only">` : ''}
+      <button type="button" class="tile-tool" data-tile-full
+              title="Fullscreen" aria-label="Watch fullscreen">${icons.expand}</button>
+    </span>`}
   </div>`;
 
 /**

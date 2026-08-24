@@ -70,3 +70,25 @@ test('the picker splits screens from windows and escapes window titles', () => {
     assert.match(view, /&lt;script&gt;/);
     assert.match(view, /id="shareAudio" checked/, 'computer audio rides along by default');
 });
+
+test('remote tiles carry listening tools; your own preview never does', () => {
+    const remote = stageView({ tiles: [t('kes', 'screen', { audio: { muted: false, volume: 0.8 } })] });
+    assert.match(remote, /data-listen-mute/);
+    assert.match(remote, /data-listen-volume[^>]*value="80"/);
+    assert.match(remote, /data-tile-full/);
+
+    const mine = stageView({ tiles: [t('self', 'webcam', { self: true, label: 'You' })] });
+    assert.ok(!mine.includes('data-listen-mute'));
+    assert.ok(!mine.includes('data-tile-full'));
+});
+
+test('a muted-for-you stream says so on its button', () => {
+    const view = stageView({ tiles: [t('kes', 'screen', { audio: { muted: true, volume: 1 } })] });
+    assert.match(view, /data-listen-mute[^>]*aria-pressed="true"/);
+});
+
+test('a videoless tile still offers fullscreen but no audio tools', () => {
+    const view = stageView({ tiles: [t('kes', 'webcam', { audio: null })] });
+    assert.ok(!view.includes('data-listen-mute'));
+    assert.match(view, /data-tile-full/);
+});

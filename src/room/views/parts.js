@@ -35,8 +35,20 @@ export function avatar(person, { size = '', presence = true } = {}) {
 export function personMarks(person = {}) {
     const marks = [];
     if (person.priority) marks.push(`<span class="mark-star" title="Priority speaker">${icons.star}</span>`);
-    if (person.sharing) marks.push(`<span class="mark-share" title="Sharing a screen">${icons.screen}</span>`);
-    if (person.camera) marks.push(`<span class="mark-share" title="On camera">${icons.camera}</span>`);
+    // A live stream's mark is a DOOR, not a dot: clicking it takes you to the stream —
+    // joining the room first if you are elsewhere. cid is required to aim the click.
+    if (person.sharing) {
+        marks.push(person.cid
+            ? `<button type="button" class="mark-share mark-watch" data-watch="${esc(person.cid)}:screen"
+                       title="Watch ${esc(person.displayName ?? person.username ?? '')}'s screen">${icons.screen}</button>`
+            : `<span class="mark-share" title="Sharing a screen">${icons.screen}</span>`);
+    }
+    if (person.camera) {
+        marks.push(person.cid
+            ? `<button type="button" class="mark-share mark-watch" data-watch="${esc(person.cid)}:webcam"
+                       title="See ${esc(person.displayName ?? person.username ?? '')}'s camera">${icons.camera}</button>`
+            : `<span class="mark-share" title="On camera">${icons.camera}</span>`);
+    }
     if (person.away) marks.push(`<span title="Away">${icons.afk}</span>`);
     if (person.muted) marks.push(`<span class="mark-muted" title="Muted">${icons.micOff}</span>`);
     if (person.dnd) marks.push(`<span class="mark-muted" title="Do not disturb">${icons.speakerOff}</span>`);

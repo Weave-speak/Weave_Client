@@ -78,6 +78,8 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
     // key `${cid}:${slot}` -> MediaStream. 'self' is our own preview.
     const videoStreams = new Map();
     let stageFocus = null;
+    // A watch clicked from another room: focus lands when the stream does.
+    let pendingFocus = null;
 
     const voice = createVoice({
         link,
@@ -88,8 +90,13 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                 if (stageFocus === key) stageFocus = null;
             } else {
                 videoStreams.set(key, stream);
-                // A screen is THE thing: focus the first one to arrive unprompted.
-                if (slot === 'screen' && cid !== 'self' && !stageFocus) stageFocus = key;
+                if (pendingFocus === key) {
+                    stageFocus = key;
+                    pendingFocus = null;
+                } else if (slot === 'screen' && cid !== 'self' && !stageFocus) {
+                    // A screen is THE thing: focus the first one to arrive unprompted.
+                    stageFocus = key;
+                }
             }
             paintStage();
         },
@@ -334,11 +341,14 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             // Only what is in the room with us: a consumer should not exist otherwise,
             // but a stale one must not paint a ghost.
             if (!peer || peer.channelId !== state.raw.currentChannelId) continue;
+            const audioSlot = slotName === 'screen' ? 'screen-audio' : 'audio';
+            const hasAudio = (peer.producers ?? []).some((pr) => pr.slot === audioSlot);
             tiles.push({
                 key, cid, slot: slotName,
                 label: peer.displayName || peer.username || 'Someone',
                 self: peer.userId === me?.id,
                 stream,
+                audio: hasAudio ? { ...voice.getListen(cid, audioSlot), slot: audioSlot } : null,
             });
         }
 
@@ -660,6 +670,45 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                 return;
             }
 
+            const watch = event.target.closest('[data-watch]');
+            if (watch) {
+                const key = watch.dataset.watch;
+                const [cid] = key.split(':');
+                const peer = state.raw.peers.get(cid);
+                if (!peer) return;
+                if (peer.channelId === state.raw.currentChannelId) {
+                    // Already in the room: the stream is (or is about to be) on the stage.
+                    stageFocus = videoStreams.has(key) ? key : stageFocus;
+                    pendingFocus = videoStreams.has(key) ? null : key;
+                    paintStage();
+                } else if (peer.channelId) {
+                    // Elsewhere: participate — join their room, and focus their stream
+                    // the moment it lands.
+                    pendingFocus = key;
+                    link.noteChannel(peer.channelId);
+                    link.send('move', { channelId: peer.channelId });
+                }
+                return;
+            }
+
+            const mute = event.target.closest('[data-listen-mute]');
+            if (mute) {
+                const holder = mute.closest('[data-tile]');
+                const [cid, slotName] = holder.dataset.tile.split(':');
+                const audioSlot = slotName === 'screen' ? 'screen-audio' : 'audio';
+                const now = voice.getListen(cid, audioSlot);
+                voice.setListen(cid, audioSlot, { muted: !now.muted });
+                paintStage();
+                return;
+            }
+
+            if (event.target.closest('[data-tile-full]')) {
+                const holder = event.target.closest('[data-tile]');
+                holder?.requestFullscreen?.().catch(() => { /* denied is fine */ });
+                return;
+            }
+            if (event.target.closest('[data-listen-volume]')) return;   // the slider is not a focus click
+
             const tile = event.target.closest('[data-tile]');
             if (tile) {
                 stageFocus = stageFocus === tile.dataset.tile ? null : tile.dataset.tile;
@@ -825,6 +874,21 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                 loadOlder(channelId);
             }
         }, { passive: true });
+
+        mount.addEventListener('input', (event) => {
+            const slider = event.target.closest?.('[data-listen-volume]');
+            if (!slider) return;
+            const holder = slider.closest('[data-tile]');
+            if (!holder) return;
+            const [cid, slotName] = holder.dataset.tile.split(':');
+            voice.setListen(cid, slotName === 'screen' ? 'screen-audio' : 'audio',
+                { volume: Number(slider.value) / 100 });
+        });
+
+        mount.addEventListener('dblclick', (event) => {
+            const holder = event.target.closest?.('[data-tile]');
+            holder?.requestFullscreen?.().catch(() => { /* denied is fine */ });
+        });
 
         wirePushToTalk();
 

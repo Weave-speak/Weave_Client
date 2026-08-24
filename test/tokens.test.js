@@ -126,7 +126,10 @@ test('the shell constrains itself rather than the page', () => {
 
     // The rows that make the composer stay put while the timeline scrolls — and since
     // the media phase, the stage row between the header and the messages.
-    assert.match(shell, /\.room\s*\{[^}]*grid-template-rows:\s*auto auto minmax\(0,\s*1fr\) auto/);
+    assert.match(shell, /\.room\s*\{[^}]*grid-template-rows:\s*auto fit-content\(62%\) minmax\(0,\s*1fr\) auto auto/);
+    // The regression this pins: children must be PINNED to rows, because hidden slots
+    // otherwise shift the timeline up a row and the composer off the screen.
+    assert.match(shell, /\.room\s*>\s*\.composer-wrap\s*\{\s*grid-row:\s*5/);
 });
 
 test('narrow windows drop whole columns instead of squeezing them', () => {

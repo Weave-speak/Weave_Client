@@ -91,6 +91,9 @@ export function createVoice({
     let running = false;
 
     const consumers = new Map();   // consumerId -> { consumer, cid, slot, audio, meter }
+    // Local listening preferences per `${cid}:${slot}` — YOUR ears, nobody else's
+    // stream. Survives a re-consume, so a recovery does not un-mute someone you muted.
+    const audioPrefs = new Map();
     const waiters = new Set();
     const levels = new Map();      // cid -> 0..1
 
@@ -443,6 +446,12 @@ export function createVoice({
         const meter = slot === SLOTS.AUDIO ? meterFor(stream, cid) : null;
         consumers.set(consumer.id, { consumer, cid, slot, kind: 'audio', audio, meter });
 
+        const pref = audioPrefs.get(`${cid}:${slot}`);
+        if (pref) {
+            audio.muted = Boolean(pref.muted);
+            audio.volume = Math.max(0, Math.min(1, pref.volume ?? 1));
+        }
+
         // Playback can be refused when nothing on the page has been interacted with yet.
         // It is worth knowing about rather than silently having no sound.
         audio.play().catch((err) => onChange({ state: 'blocked', message: err.message }));
@@ -580,6 +589,26 @@ export function createVoice({
         disableScreen: () => disableScreenInner(),
         get webcamOn() { return Boolean(camProducer); },
         get screenOn() { return Boolean(screenProducer); },
+
+        /** How loudly YOU hear one of a peer's audio slots. Local, never signalled. */
+        setListen(cid, slot, { muted, volume } = {}) {
+            const key = `${cid}:${slot}`;
+            const pref = { ...(audioPrefs.get(key) ?? { muted: false, volume: 1 }) };
+            if (muted !== undefined) pref.muted = Boolean(muted);
+            if (volume !== undefined) pref.volume = Math.max(0, Math.min(1, Number(volume)));
+            audioPrefs.set(key, pref);
+            for (const entry of consumers.values()) {
+                if (entry.cid === cid && entry.slot === slot && entry.audio) {
+                    entry.audio.muted = pref.muted;
+                    entry.audio.volume = pref.volume;
+                }
+            }
+            return pref;
+        },
+
+        getListen(cid, slot) {
+            return { muted: false, volume: 1, ...(audioPrefs.get(`${cid}:${slot}`) ?? {}) };
+        },
 
         /** Stop sending entirely, as distinct from muting. */
         async disableMic() {

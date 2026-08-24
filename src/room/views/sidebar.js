@@ -62,10 +62,12 @@ function roomItem(room, me) {
     const occupants = room.occupants ?? [];
     const isVoice = room.kind !== 'text';
 
+    const lockedOut = room.private && !room.member;
     return `
-    <li class="room-item${room.current ? ' current' : ''}${room.occupied && !room.current ? ' occupied' : ''}" data-room="${esc(room.id)}">
+    <li class="room-item${room.current ? ' current' : ''}${room.occupied && !room.current ? ' occupied' : ''}${lockedOut ? ' locked' : ''}" data-room="${esc(room.id)}">
       <div class="room-line">
         <button type="button" class="room-row" data-open="${esc(room.id)}"
+                ${lockedOut ? 'aria-disabled="true" title="Private — a member has to add you"' : ''}
                 ${room.current ? 'aria-current="true"' : ''}>
           ${roomIcon(room)}
           <span class="room-name">${esc(room.name)}</span>
@@ -76,7 +78,7 @@ function roomItem(room, me) {
                 title="Open the chat without joining"
                 aria-label="Open ${esc(room.name)}'s chat without joining">${icons.chat}</button>` : ''}
       </div>
-      ${isVoice && !occupants.length && !room.current
+      ${isVoice && !occupants.length && !room.current && !lockedOut
         ? '<span class="room-empty">(empty)</span>'
         : ''}
       ${isVoice && occupants.length

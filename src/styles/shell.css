@@ -305,6 +305,11 @@
 }
 .room-mention svg { width: 11px; height: 11px; }
 
+/* A private room you are not on the list for: visible, calm, not a button. */
+.room-item.locked .room-row { color: var(--ink-faint); cursor: default; }
+.room-item.locked .room-row:hover { background: transparent; color: var(--ink-faint); }
+.room-item.locked .room-row svg { color: var(--ink-ghost); }
+
 /* The voice room you are STANDING in while reading somewhere else. */
 .room-item.occupied .room-row svg { color: var(--ok); }
 .room-item.occupied .room-row .room-name { color: var(--ink); }
@@ -901,6 +906,7 @@
 @media (max-width: 1180px) {
     .app-body { grid-template-columns: var(--rail-w) var(--sidebar-w) minmax(0, 1fr); }
     .members { display: none; }
+    .member-picker { right: var(--s-5); }
     /* Summoned by the header button: the same panel, floating over the room. */
     .app-shell.members-open .members {
         display: grid;
@@ -1118,6 +1124,13 @@
     animation: pop-in var(--dur-fast) var(--ease);
 }
 .dm-search-title { margin: 0 0 var(--s-2); font-weight: 620; font-size: var(--t-base); }
+
+/* The same picker, anchored under the room header's add button instead. */
+.member-picker {
+    left: auto;
+    right: calc(var(--members-w) + var(--s-5));
+    top: calc(var(--titlebar-h) + 56px);
+}
 .dm-search-list { list-style: none; margin: var(--s-2) 0 0; padding: 0; max-height: 300px; overflow-y: auto; }
 .dm-search-row {
     display: flex;

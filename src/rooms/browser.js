@@ -157,7 +157,7 @@ export function browserView({ rooms = [], filter = 'all', canCreate = false } = 
 }
 
 /** The create form, shown inside the browser modal in place of the cards. */
-export function createRoomForm({ error = '', busy = false } = {}) {
+export function createRoomForm({ error = '', busy = false, isAdmin = false, canPrivate = false } = {}) {
     return `
     <div class="browser">
       <header class="browser-head">
@@ -178,6 +178,7 @@ export function createRoomForm({ error = '', busy = false } = {}) {
         </div>
 
         <div class="kind-pick" role="radiogroup" aria-label="What kind of room">
+          ${isAdmin ? `
           <label class="kind-card">
             <input type="radio" name="kind" value="both" checked>
             <span class="kind-name">${icons.speaker} Voice room</span>
@@ -187,7 +188,14 @@ export function createRoomForm({ error = '', busy = false } = {}) {
             <input type="radio" name="kind" value="text">
             <span class="kind-name"><span class="room-hash" aria-hidden="true">#</span> Text strand</span>
             <span class="kind-hint">Writing only. Open it from anywhere.</span>
-          </label>
+          </label>` : ''}
+          ${canPrivate ? `
+          <label class="kind-card">
+            <input type="radio" name="kind" value="private" ${isAdmin ? '' : 'checked'}>
+            <span class="kind-name">${icons.lock} Private huddle</span>
+            <span class="kind-hint">Only members see who is inside. No chat.
+              Gone after standing empty a while.</span>
+          </label>` : ''}
         </div>
 
         <div class="create-actions">
@@ -209,7 +217,7 @@ export function createRoomForm({ error = '', busy = false } = {}) {
  * browser that shows a snapshot from when you opened it is worse than the sidebar: you pick
  * the busy room and arrive to find it empty, having been told otherwise a second earlier.
  */
-export function createRoomBrowser({ state, onEnter, onCreate = null, canCreate = false, createModal, dom }) {
+export function createRoomBrowser({ state, onEnter, onCreate = null, canCreate = false, isAdmin = false, canPrivate = false, createModal, dom }) {
     const { $, $$ } = dom;
     let filter = 'all';
     let unsubscribe = null;
@@ -223,7 +231,7 @@ export function createRoomBrowser({ state, onEnter, onCreate = null, canCreate =
 
     function render(formState = {}) {
         modal.setContent(creating
-            ? createRoomForm(formState)
+            ? createRoomForm({ ...formState, isAdmin, canPrivate })
             : browserView({ rooms: state.toShell().rooms, filter, canCreate }));
         wire();
     }
@@ -262,7 +270,9 @@ export function createRoomBrowser({ state, onEnter, onCreate = null, canCreate =
             if (!name) return;
             render({ busy: true });
             try {
-                const channel = await onCreate?.({ name, kind });
+                const channel = await onCreate?.(kind === 'private'
+                    ? { name, kind: 'both', private: true }
+                    : { name, kind });
                 creating = false;
                 modal.close();
                 // The maker lands in what they made.

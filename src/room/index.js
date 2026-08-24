@@ -94,9 +94,12 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
     });
     let voiceState = { state: 'idle' };
 
+    const canPrivate = features.includes('channels.private');
     const browser = createRoomBrowser({
         state,
-        canCreate: Boolean(user?.isAdmin),
+        canCreate: Boolean(user?.isAdmin) || canPrivate,
+        isAdmin: Boolean(user?.isAdmin),
+        canPrivate,
         createModal,
         dom: { $, $$ },
         onEnter(channelId) {
@@ -109,8 +112,10 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             link.noteChannel(channelId);
             link.send('move', { channelId });
         },
-        async onCreate({ name, kind }) {
-            const { channel } = await api.request('POST', '/api/channels', { body: { name, kind } });
+        async onCreate({ name, kind, private: isPrivate = false }) {
+            const { channel } = await api.request('POST', '/api/channels', {
+                body: { name, kind, ...(isPrivate ? { private: true } : {}) },
+            });
             // The server broadcasts the fresh list to everyone, us included; nothing to
             // merge locally. Older servers do not broadcast, so fetch once to be sure.
             api.request('GET', '/api/channels')
@@ -287,6 +292,8 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             topic.textContent = room.topic ?? '';
             topic.hidden = !room.topic;
         }
+        const addBtn = $('#addMemberBtn', mount);
+        if (addBtn) addBtn.hidden = !(room.private && room.member);
         const composer = $('#composerInput', mount);
         if (composer) composer.placeholder = `Message ${room.name ?? 'the room'}…`;
     }
@@ -567,6 +574,10 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                 if (canDm) toggleDmSearch();
                 return;
             }
+            if (event.target.closest('[data-add-member]')) {
+                toggleMemberPicker();
+                return;
+            }
 
             const chat = event.target.closest('[data-open-chat]');
             if (chat) {
@@ -579,6 +590,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             if (room) {
                 const id = room.dataset.open;
                 const target = state.raw.channels.find((c) => c.id === id);
+                if (target?.private && !target.member) return;   // a locked door is not a button
                 state.closeDm();
                 if (canBrowse && target?.kind === 'text') {
                     // A text channel is opened, not entered: voice stays wherever the
@@ -899,6 +911,57 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             });
         };
 
+        input.addEventListener('input', paintList);
+        panel.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') panel.remove();
+        });
+        paintList();
+        input.focus();
+    }
+
+    /** Add someone to the private room being viewed. Members only; the server re-checks. */
+    async function toggleMemberPicker() {
+        const existing = $('#memberPicker', mount);
+        if (existing) { existing.remove(); return; }
+        const roomId = state.toShell().room.id;
+        if (!roomId) return;
+
+        let already = new Set();
+        try {
+            const { members = [] } = await api.request('GET', `/api/channels/${encodeURIComponent(roomId)}/members`);
+            already = new Set(members.map((m) => m.id));
+        } catch { return; /* not a member after all; the server said so */ }
+
+        const panel = document.createElement('div');
+        panel.id = 'memberPicker';
+        panel.className = 'dm-search member-picker';
+        panel.innerHTML = dmSearchView();
+        mount.append(panel);
+        panel.querySelector('.dm-search-title').textContent = 'Add people';
+
+        const input = panel.querySelector('#dmSearchInput');
+        const list = panel.querySelector('#dmSearchList');
+        const paintList = () => {
+            const q = input.value.trim().toLowerCase();
+            const options = state.toShell().people
+                .filter((p) => p.username && !already.has(p.id))
+                .filter((p) => !q
+                    || p.username.toLowerCase().includes(q)
+                    || (p.displayName ?? '').toLowerCase().includes(q))
+                .slice(0, 12);
+            list.innerHTML = dmSearchResults(options);
+            list.querySelectorAll('[data-dm-person]').forEach((row) => {
+                row.addEventListener('click', async () => {
+                    try {
+                        await api.request('POST', `/api/channels/${encodeURIComponent(roomId)}/members`, {
+                            body: { userId: row.dataset.dmPerson },
+                        });
+                        already.add(row.dataset.dmPerson);
+                        paintList();
+                    } catch { /* the server refused; the row simply stays */ }
+                });
+            });
+        };
         input.addEventListener('input', paintList);
         panel.addEventListener('keydown', (event) => {
             if (event.key === 'Escape') panel.remove();

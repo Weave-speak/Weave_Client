@@ -233,3 +233,18 @@ test('the DM picker list is inert against hostile names', async () => {
     assert.ok(!markup.includes('<b>bold</b>'));
     assert.match(dmSearchResults([]), /Nobody by that name/);
 });
+
+test('a private room you are not in reads as a locked door, not a button', () => {
+    const html = sidebar({
+        rooms: [
+            { id: 'p1', name: 'the-plot', private: true, member: false, occupants: [] },
+            { id: 'p2', name: 'my-plot', private: true, member: true, occupants: [] },
+        ],
+    });
+    assert.match(html, /locked[^>]*data-room="p1"/);
+    assert.match(html, /aria-disabled="true"/);
+    assert.match(html, /a member has to add you/);
+    assert.ok(!/locked[^>]*data-room="p2"/.test(html), 'your own huddle is a normal row');
+    // No "(empty)" tease on a room whose inside is not your business.
+    assert.equal((html.match(/\(empty\)/g) ?? []).length, 1, 'only the member row hints');
+});

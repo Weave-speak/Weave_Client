@@ -403,6 +403,8 @@ export function createRoomState({ me = null, server = {} } = {}) {
                     // channel belongs in the text group; everything else is somewhere you go.
                     kind: c.kind === 'text' ? 'text' : 'voice',
                     allowText: c.allowText !== false,
+                    private: Boolean(c.private),
+                    member: c.private ? Boolean(c.member) : undefined,
                     // What the reader is LOOKING at is the highlighted row; where they are
                     // STANDING keeps its occupant marker. Usually the same row; while
                     // browsing a text channel they diverge, exactly like Discord.
@@ -420,7 +422,13 @@ export function createRoomState({ me = null, server = {} } = {}) {
                         topic: 'Private thread · just the two of you',
                     }
                     : viewed
-                        ? { id: viewed.id, name: viewed.name, kind: viewed.kind }
+                        ? {
+                            id: viewed.id,
+                            name: viewed.name,
+                            kind: viewed.kind,
+                            private: Boolean(viewed.private),
+                            member: viewed.private ? Boolean(viewed.member) : undefined,
+                        }
                         : {},
                 me: {
                     ...state.me,

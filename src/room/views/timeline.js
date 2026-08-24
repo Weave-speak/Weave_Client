@@ -228,6 +228,9 @@ export function timeline({ room = {}, items = [], typing = [], voice = {} } = {}
         <h1>${esc(room.name ?? 'Room')}</h1>
         <span class="room-topic" id="roomTopic" ${room.topic ? '' : 'hidden'}>${esc(room.topic ?? '')}</span>
         <span class="room-head-spacer"></span>
+        <button type="button" class="icon-btn" id="addMemberBtn" data-add-member
+                ${room.private && room.member ? '' : 'hidden'}
+                title="Add people to this room" aria-label="Add people to this private room">${icons.plus}</button>
         <button type="button" class="icon-btn" data-toggle-members
                 title="Members" aria-label="Show or hide the member list">${icons.dots}</button>
       </header>

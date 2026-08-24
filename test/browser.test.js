@@ -133,8 +133,8 @@ test('a hostile room name cannot become markup', () => {
     assert.match(markup, /&lt;img/);
 });
 
-test('the create form offers both kinds and starts on voice', () => {
-    const markup = createRoomForm();
+test('the create form offers an admin both public kinds, starting on voice', () => {
+    const markup = createRoomForm({ isAdmin: true });
     assert.match(markup, /value="both"[^>]*checked/);
     assert.match(markup, /value="text"/);
     assert.match(markup, /Create it/);
@@ -149,4 +149,18 @@ test('a server refusal is shown in the form, escaped', () => {
 test('a busy form cannot be double-submitted', () => {
     assert.match(createRoomForm({ busy: true }), /Creating…/);
     assert.match(createRoomForm({ busy: true }), /<button type="submit"[^>]*disabled/);
+});
+
+test('the private card appears with the feature, and is the only card for non-admins', () => {
+    const everyone = createRoomForm({ isAdmin: false, canPrivate: true });
+    assert.match(everyone, /Private huddle/);
+    assert.match(everyone, /value="private"[^>]*checked/);
+    assert.ok(!everyone.includes('value="both"'), 'public kinds are the admin’s');
+
+    const adminAll = createRoomForm({ isAdmin: true, canPrivate: true });
+    assert.match(adminAll, /value="both"[^>]*checked/);
+    assert.match(adminAll, /Private huddle/);
+
+    const noFeature = createRoomForm({ isAdmin: true, canPrivate: false });
+    assert.ok(!noFeature.includes('Private huddle'));
 });

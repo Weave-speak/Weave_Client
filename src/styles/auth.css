@@ -30,9 +30,14 @@
     gap: var(--s-3);
     height: var(--titlebar-h);
     padding: 0 var(--s-5);
+    /* Same treatment as the room's titlebar: stay out from under the OS window
+       buttons, and be the thing you can drag the window by before signing in. */
+    padding-right: max(var(--s-5), calc(100% - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100%)));
     border-bottom: 1px solid var(--line-soft);
     flex: none;
+    -webkit-app-region: drag;
 }
+.topbar button { -webkit-app-region: no-drag; }
 
 .brand {
     display: flex;

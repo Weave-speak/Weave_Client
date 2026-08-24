@@ -32,6 +32,10 @@
     /* The desktop shell makes this the window drag region; interactive children opt out
        again below, or they become impossible to click. */
     -webkit-app-region: drag;
+    /* The desktop window draws minimise/maximise/close OVER the top-right corner.
+       titlebar-area-* exists exactly to say where they are not; in a browser the
+       fallbacks make the inset zero and the base padding stands. */
+    padding-right: max(var(--s-3), calc(100% - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100%)));
 }
 
 .titlebar-word {
@@ -556,7 +560,11 @@
 
 /* Video above, chat below, always both: a stream does not replace the room. */
 #stageSlot:empty { display: none; }
-.stage {
+/* Scoped under .room on purpose: auth.css also names a `.stage` (the sign-in page's
+   centre field). Each previous attempt to share the name cost one screen its layout —
+   the room's video stage stole the login card's centring, and the login field's
+   place-items:center stacked the video layers. Scoping ends the argument. */
+.room .stage {
     /* Breathing room on every side; the divider row below completes the frame. */
     padding: var(--s-3) var(--s-4) var(--s-2);
     overflow: hidden;
@@ -572,7 +580,7 @@
        divider's inline height wins the moment the hand moves it. */
     height: max(280px, calc((100dvh - 190px) * 0.55));
 }
-.stage.has-focus { grid-template-rows: minmax(0, 1fr) auto; }
+.room .stage.has-focus { grid-template-rows: minmax(0, 1fr) auto; }
 
 .stage-grid {
     display: grid;
@@ -580,6 +588,10 @@
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     grid-auto-rows: minmax(0, 1fr);
     align-items: center;
+    /* Centred, not stretched: when the row is shorter than the tile's 16:9 wants, the
+       aspect ratio caps the WIDTH too, and a stretch-aligned capped tile pins to the
+       left of its cell. Centre is what a lone share frame should do. */
+    justify-items: center;
     min-height: 0;
 }
 /* Inside a capped row the aspect ratio yields rather than overflowing the chat. */

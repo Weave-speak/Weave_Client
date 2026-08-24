@@ -98,9 +98,23 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         createModal,
         dom: { $, $$ },
         onEnter(channelId) {
+            const target = state.raw.channels.find((c) => c.id === channelId);
+            if (canBrowse && target?.kind === 'text') {
+                openTextChannel(channelId);
+                return;
+            }
             if (channelId === state.raw.currentChannelId) return;
             link.noteChannel(channelId);
             link.send('move', { channelId });
+        },
+        async onCreate({ name, kind }) {
+            const { channel } = await api.request('POST', '/api/channels', { body: { name, kind } });
+            // The server broadcasts the fresh list to everyone, us included; nothing to
+            // merge locally. Older servers do not broadcast, so fetch once to be sure.
+            api.request('GET', '/api/channels')
+                .then(({ channels }) => state.setChannels(channels))
+                .catch(() => {});
+            return channel;
         },
     });
 
@@ -496,6 +510,13 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
     function wire() {
         mount.addEventListener('click', (event) => {
+            const chat = event.target.closest('[data-open-chat]');
+            if (chat) {
+                openTextChannel(chat.dataset.openChat);
+                setDrawer(false);
+                return;
+            }
+
             const room = event.target.closest('[data-open]');
             if (room) {
                 const id = room.dataset.open;

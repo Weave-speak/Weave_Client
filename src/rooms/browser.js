@@ -156,6 +156,50 @@ export function browserView({ rooms = [], filter = 'all', canCreate = false } = 
     </div>`;
 }
 
+/** The create form, shown inside the browser modal in place of the cards. */
+export function createRoomForm({ error = '', busy = false } = {}) {
+    return `
+    <div class="browser">
+      <header class="browser-head">
+        <div>
+          <h2 class="panel-title">A new room</h2>
+          <p class="panel-lead">Everyone on the server will see it the moment it exists.</p>
+        </div>
+        <span class="browser-spacer"></span>
+        <button type="button" class="icon-btn" data-cancel-create aria-label="Back">✕</button>
+      </header>
+
+      <form class="create-room" data-create-room-form>
+        <div class="field">
+          <label for="newRoomName">Name</label>
+          <input id="newRoomName" name="name" required maxlength="40" autocomplete="off"
+                 spellcheck="false" placeholder="e.g. planning, den, patch-notes" data-initial-focus>
+          <div class="field-error">${esc(error)}</div>
+        </div>
+
+        <div class="kind-pick" role="radiogroup" aria-label="What kind of room">
+          <label class="kind-card">
+            <input type="radio" name="kind" value="both" checked>
+            <span class="kind-name">${icons.speaker} Voice room</span>
+            <span class="kind-hint">People talk. Chat runs alongside.</span>
+          </label>
+          <label class="kind-card">
+            <input type="radio" name="kind" value="text">
+            <span class="kind-name"><span class="room-hash" aria-hidden="true">#</span> Text strand</span>
+            <span class="kind-hint">Writing only. Open it from anywhere.</span>
+          </label>
+        </div>
+
+        <div class="create-actions">
+          <button type="button" class="btn" data-cancel-create>Back</button>
+          <button type="submit" class="btn primary" ${busy ? 'disabled' : ''}>
+            ${busy ? 'Creating…' : 'Create it'}
+          </button>
+        </div>
+      </form>
+    </div>`;
+}
+
 /* ── the controller ───────────────────────────────────────────────────────── */
 
 /**
@@ -165,10 +209,11 @@ export function browserView({ rooms = [], filter = 'all', canCreate = false } = 
  * browser that shows a snapshot from when you opened it is worse than the sidebar: you pick
  * the busy room and arrive to find it empty, having been told otherwise a second earlier.
  */
-export function createRoomBrowser({ state, onEnter, canCreate = false, createModal, dom }) {
+export function createRoomBrowser({ state, onEnter, onCreate = null, canCreate = false, createModal, dom }) {
     const { $, $$ } = dom;
     let filter = 'all';
     let unsubscribe = null;
+    let creating = false;   // showing the form instead of the cards
 
     const modal = createModal({
         className: 'browser-modal',
@@ -176,8 +221,10 @@ export function createRoomBrowser({ state, onEnter, canCreate = false, createMod
         onClose: () => { unsubscribe?.(); unsubscribe = null; },
     });
 
-    function render() {
-        modal.setContent(browserView({ rooms: state.toShell().rooms, filter, canCreate }));
+    function render(formState = {}) {
+        modal.setContent(creating
+            ? createRoomForm(formState)
+            : browserView({ rooms: state.toShell().rooms, filter, canCreate }));
         wire();
     }
 
@@ -197,6 +244,36 @@ export function createRoomBrowser({ state, onEnter, canCreate = false, createMod
         });
 
         $('[data-close-browser]', modal.element)?.addEventListener('click', () => modal.close());
+
+        $('[data-new-room-here]', modal.element)?.addEventListener('click', () => {
+            creating = true;
+            render();
+            $('#newRoomName', modal.element)?.focus();
+        });
+        $$('[data-cancel-create]', modal.element).forEach((b) => b.addEventListener('click', () => {
+            creating = false;
+            render();
+        }));
+        $('[data-create-room-form]', modal.element)?.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const form = event.currentTarget;
+            const name = form.name.value.trim();
+            const kind = form.kind.value;
+            if (!name) return;
+            render({ busy: true });
+            try {
+                const channel = await onCreate?.({ name, kind });
+                creating = false;
+                modal.close();
+                // The maker lands in what they made.
+                if (channel?.id) onEnter(channel.id);
+            } catch (err) {
+                creating = true;
+                render({ error: err?.message ?? 'The server refused that.' });
+                const input = $('#newRoomName', modal.element);
+                if (input) { input.value = name; input.focus(); }
+            }
+        });
     }
 
     return {

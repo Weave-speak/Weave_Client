@@ -306,8 +306,29 @@
 .room-mention svg { width: 11px; height: 11px; }
 
 /* The voice room you are STANDING in while reading somewhere else. */
-.room-item.occupied > .room-row svg { color: var(--ok); }
-.room-item.occupied > .room-row .room-name { color: var(--ink); }
+.room-item.occupied .room-row svg { color: var(--ok); }
+.room-item.occupied .room-row .room-name { color: var(--ink); }
+
+.room-line { display: flex; align-items: center; gap: 2px; }
+.room-line .room-row { flex: 1; min-width: 0; }
+
+/* The other half of the split: opens this room's chat WITHOUT joining its voice.
+   Quiet until the row is under the pointer, so the list stays calm. */
+.room-chat {
+    display: grid;
+    place-items: center;
+    width: 28px; height: 28px;
+    border-radius: var(--r-2);
+    color: var(--ink-faint);
+    opacity: 0;
+    flex: none;
+    transition: opacity var(--dur-fast) var(--ease), background var(--dur-fast), color var(--dur-fast);
+}
+.room-line:hover .room-chat,
+.room-chat:focus-visible,
+.room-item.current .room-chat { opacity: 1; }
+.room-chat:hover { background: var(--surface-3); color: var(--ink); }
+.room-chat svg { width: 15px; height: 15px; }
 
 .room-row {
     display: flex;
@@ -336,12 +357,12 @@
     font-variant-numeric: tabular-nums;
     flex: none;
 }
-.room-item.current > .room-row {
+.room-item.current .room-row {
     position: relative;
     background: var(--accent-tint-hi);
     color: var(--ink);
 }
-.room-item.current > .room-row::before {
+.room-item.current .room-row::before {
     content: "";
     position: absolute;
     left: 0; top: 50%;
@@ -350,8 +371,8 @@
     border-radius: 0 var(--r-1) var(--r-1) 0;
     background: var(--accent-hi);
 }
-.room-item.current > .room-row .room-hash { color: var(--accent-hi); }
-.room-item.current > .room-row .room-count { color: var(--accent-hi); }
+.room-item.current .room-row .room-hash { color: var(--accent-hi); }
+.room-item.current .room-row .room-count { color: var(--accent-hi); }
 
 /* A room nobody is in reads as available rather than as broken. */
 .room-empty {
@@ -1459,6 +1480,35 @@
     white-space: nowrap;
 }
 .card-action { flex: none; padding: var(--s-2) var(--s-4); font-size: var(--t-base); }
+
+/* ── Creating a room ──────────────────────────────────────────────────────── */
+
+.create-room { display: flex; flex-direction: column; gap: var(--s-5); max-width: 460px; }
+
+.kind-pick { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-3); }
+.kind-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+    padding: var(--s-4);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    background: var(--surface-2);
+    cursor: pointer;
+    transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.kind-card:hover { border-color: var(--line-strong); }
+/* The radio itself is visually folded into the card; checked state carries the meaning. */
+.kind-card input { position: absolute; opacity: 0; pointer-events: none; }
+.kind-card:has(input:checked) {
+    border-color: var(--accent);
+    background: var(--accent-tint);
+}
+.kind-name { display: flex; align-items: center; gap: var(--s-2); font-weight: 600; }
+.kind-name svg { width: 17px; height: 17px; }
+.kind-hint { font-size: var(--t-sm); color: var(--ink-faint); }
+
+.create-actions { display: flex; gap: var(--s-2); justify-content: flex-end; }
 
 .browser-empty, .browser-note {
     color: var(--ink-faint);

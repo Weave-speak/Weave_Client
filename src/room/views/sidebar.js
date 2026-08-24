@@ -63,12 +63,18 @@ function roomItem(room, me) {
 
     return `
     <li class="room-item${room.current ? ' current' : ''}${room.occupied && !room.current ? ' occupied' : ''}" data-room="${esc(room.id)}">
-      <button type="button" class="room-row" data-open="${esc(room.id)}"
-              ${room.current ? 'aria-current="true"' : ''}>
-        ${roomIcon(room)}
-        <span class="room-name">${esc(room.name)}</span>
-        ${roomCount(room)}
-      </button>
+      <div class="room-line">
+        <button type="button" class="room-row" data-open="${esc(room.id)}"
+                ${room.current ? 'aria-current="true"' : ''}>
+          ${roomIcon(room)}
+          <span class="room-name">${esc(room.name)}</span>
+          ${roomCount(room)}
+        </button>
+        ${isVoice && room.allowText ? `
+        <button type="button" class="room-chat" data-open-chat="${esc(room.id)}"
+                title="Open the chat without joining"
+                aria-label="Open ${esc(room.name)}'s chat without joining">${icons.chat}</button>` : ''}
+      </div>
       ${isVoice && !occupants.length && !room.current
         ? '<span class="room-empty">(empty)</span>'
         : ''}

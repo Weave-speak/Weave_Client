@@ -8,7 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-    roomState, actionFor, applyFilter, headline, hueFor, browserView, FILTERS,
+    roomState, actionFor, applyFilter, headline, hueFor, browserView, createRoomForm, FILTERS,
 } from '../src/rooms/browser.js';
 
 const person = (username) => ({ id: `u-${username}`, username, displayName: username });
@@ -131,4 +131,22 @@ test('a hostile room name cannot become markup', () => {
     assert.ok(!markup.includes('<script>'));
     assert.ok(!/\son\w+\s*=\s*["']/.test(markup));
     assert.match(markup, /&lt;img/);
+});
+
+test('the create form offers both kinds and starts on voice', () => {
+    const markup = createRoomForm();
+    assert.match(markup, /value="both"[^>]*checked/);
+    assert.match(markup, /value="text"/);
+    assert.match(markup, /Create it/);
+});
+
+test('a server refusal is shown in the form, escaped', () => {
+    const markup = createRoomForm({ error: '<img src=x onerror=steal()>' });
+    assert.ok(!markup.includes('<img src=x'));
+    assert.match(markup, /&lt;img/);
+});
+
+test('a busy form cannot be double-submitted', () => {
+    assert.match(createRoomForm({ busy: true }), /Creating…/);
+    assert.match(createRoomForm({ busy: true }), /<button type="submit"[^>]*disabled/);
 });

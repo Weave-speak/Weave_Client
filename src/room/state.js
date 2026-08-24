@@ -185,6 +185,12 @@ export function createRoomState({ me = null, server = {} } = {}) {
                     break;
                 }
 
+                case 'channels':
+                    // An admin created, renamed or deleted a room — everyone's sidebar
+                    // follows at once rather than on their next sign-in.
+                    state.channels = msg.channels ?? [];
+                    break;
+
                 case 'peer_joined':
                     if (msg.peer) state.peers.set(msg.peer.cid, msg.peer);
                     break;
@@ -320,6 +326,7 @@ export function createRoomState({ me = null, server = {} } = {}) {
                     // The server's kinds are voice | text | both | afk. Only a pure text
                     // channel belongs in the text group; everything else is somewhere you go.
                     kind: c.kind === 'text' ? 'text' : 'voice',
+                    allowText: c.allowText !== false,
                     // What the reader is LOOKING at is the highlighted row; where they are
                     // STANDING keeps its occupant marker. Usually the same row; while
                     // browsing a text channel they diverge, exactly like Discord.

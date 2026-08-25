@@ -840,6 +840,16 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                 rtpCapabilities: frame.rtpCapabilities,
                 mediaReset: frame.mediaReset === true,
             });
+        } else if (frame.type === 'joined') {
+            // A 'joined' frame is a BRAND-NEW server-side peer — which is exactly what a
+            // reconnect produces, and what every client gets after the server restarts.
+            // The server has no transports, producers or consumers for us at all, but the
+            // local objects survive the socket drop: ensureSend()/ensureRecv() see them,
+            // hand them straight back without asking for replacements, and every produce
+            // and consume against those zombies is refused with 'no_transport' for the
+            // rest of the session. The room looks joined, the roster is right, and no
+            // audio moves in either direction. Rebuild from nothing instead.
+            await voice.onMoved({ rtpCapabilities: frame.rtpCapabilities, mediaReset: true });
         }
         if (!frame.rtpCapabilities) return;
 

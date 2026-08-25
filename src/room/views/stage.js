@@ -63,7 +63,10 @@ const streamPill = (t) => `
  * the person's face-circle for a camera. Nothing is being received — the placeholder IS
  * the indication that something could be. Hovering offers the one verb that matters.
  */
-const placeholder = (t) => (t.slot === 'screen' ? `
+const placeholder = (t) => (t.frame ? `
+    <div class="ph ph-still" aria-hidden="true">
+      <img class="ph-blur" src="${esc(t.frame)}" alt="">
+    </div>` : t.slot === 'screen' ? `
     <div class="ph ph-screen" aria-hidden="true">${icons.screen}</div>` : `
     <div class="ph ph-cam" aria-hidden="true">
       <span class="ph-face" style="--av: hsl(${esc(userHue(t.chipName ?? t.label))}, 55%, 40%)">${esc(initialsOf(t.chipName ?? t.label))}</span>
@@ -120,8 +123,9 @@ export function stageView({ tiles = [], focus = null, heightPx = null } = {}) {
         ${ordered.map((t) => tile(t, focusKey)).join('')}
       </div>`}
     </section>
+    ${focusKey ? `
     <div class="stage-divider" data-stage-divider role="separator" aria-orientation="horizontal"
-         title="Drag to resize"><span></span></div>`;
+         title="Drag to resize"><span></span></div>` : ''}`;
 }
 
 /* ── choosing what to share ───────────────────────────────────────────────── */

@@ -592,6 +592,25 @@
 }
 .room .stage.has-focus { grid-template-rows: minmax(0, 1fr) auto; }
 
+/* Nothing watched = nothing claimed: the zone is a compact INDICATION row of
+   thumbnail-scale tiles, exactly the size the carousel uses. The 55% split, the
+   divider and the drag exist only while a stream actually holds the big frame. */
+.room .stage:not(.has-focus) {
+    height: auto;
+    grid-template-rows: auto;
+}
+.room .stage:not(.has-focus) .stage-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+    align-items: flex-start;
+}
+.room .stage:not(.has-focus) .stage-grid .tile { width: 172px; flex: none; }
+.room .stage:not(.has-focus) .ph-face { width: 38px; height: 38px; font-size: var(--t-sm); }
+.room .stage:not(.has-focus) .ph-screen svg { width: 20px; height: 20px; }
+.room .stage:not(.has-focus) .watch-btn { padding: var(--s-1) var(--s-3); font-size: var(--t-xs); }
+.room .stage:not(.has-focus) .watch-btn svg { width: 11px; height: 11px; }
+
 .stage-grid {
     display: grid;
     gap: var(--s-2);
@@ -2129,6 +2148,17 @@
 }
 .ph-screen svg { width: 28px; height: 28px; }
 .ph-cam { background: var(--video-backdrop); }
+/* A stopped stream wears its own last frame, blurred: unmistakably a picture, and just
+   as unmistakably not a live one. The oversize + crop hides the blur's soft edges; the
+   veil above it keeps the badge, chip and Watch button legible. */
+.ph-still { overflow: hidden; background: var(--video-backdrop); }
+.ph-blur {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: blur(14px) saturate(0.85) brightness(0.7);
+    transform: scale(1.12);
+}
 .ph-face {
     width: 56px; height: 56px;
     border-radius: 50%;

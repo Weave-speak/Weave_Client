@@ -12,6 +12,7 @@
 import { createModal } from '../ui/modal.js';
 import { settingsFor } from '../server/store.js';
 import { $, $$ } from '../ui/dom.js';
+import { VERSION } from '../platform/index.js';
 import {
     adminUsersPanel, adminChannelsPanel, adminServerPanel, adminDangerPanel,
 } from './admin.js';
@@ -75,7 +76,7 @@ export function createSettings({
         switch (current) {
             case 'profile': return profilePanel({ me, prefs, features });
             case 'voice': return voicePanel({ prefs, devices, cameras, features });
-            case 'sessions': return sessionsPanel();
+            case 'sessions': return sessionsPanel({ version: VERSION });
             case 'appearance': return appearancePanel({ prefs });
             case 'invites': return invitesPanel({
                 invite, busy: inviteBusy, error: inviteError,

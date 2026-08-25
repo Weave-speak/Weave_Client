@@ -452,6 +452,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                     self: false,
                     live: Boolean(stream),
                     stream,
+                    frame: stream ? null : lastFrames.get(key) ?? null,
                     audio: stream && hasAudio
                         ? { ...voice.getListen(peer.cid, audioSlot), slot: audioSlot } : null,
                 });
@@ -460,6 +461,8 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
         // Focus may only rest on a live tile; a placeholder in focus would be a black box.
         if (stageFocus && !tiles.some((t) => t.key === stageFocus && t.live)) stageFocus = null;
+        // A dragged height belongs to the SPLIT; the compact indication row sizes itself.
+        if (!stageFocus) stageHeightPx = null;
 
         slot.innerHTML = stageView({ tiles, focus: stageFocus, heightPx: stageHeightPx });
 
@@ -481,10 +484,29 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
      * focus before goes back to being a thumbnail; if it was a remote stream, watching
      * it ends too, so exactly one remote stream is consumed at a time.
      */
+    // The last thing a stream showed, kept as a small JPEG per tile key. When someone
+    // stops watching, the placeholder wears this frame BLURRED — "there is a picture
+    // here, you are just not receiving it" — instead of falling back to stripes.
+    const lastFrames = new Map();
+
+    function snapshotTile(key) {
+        const video = $(`[data-tile="${key}"] video`, mount);
+        if (!video || !video.videoWidth) return;
+        try {
+            const canvas = document.createElement('canvas');
+            const scale = Math.min(1, 320 / video.videoWidth);
+            canvas.width = Math.round(video.videoWidth * scale);
+            canvas.height = Math.round(video.videoHeight * scale);
+            canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+            lastFrames.set(key, canvas.toDataURL('image/jpeg', 0.6));
+        } catch { /* a tainted or dead frame just means the plain placeholder */ }
+    }
+
     function focusTileKey(key) {
         if (!key || key === stageFocus) return;
         const previous = stageFocus;
         if (previous && !previous.startsWith('self:') && previous !== key) {
+            snapshotTile(previous);
             const [prevCid, prevSlot] = previous.split(':');
             voice.setWatching(prevCid, prevSlot, false);
         }
@@ -787,6 +809,10 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             state.apply(msg);
             // Placeholder tiles are drawn from the roster's producer lists, so the frames
             // that change those lists repaint the stage even when no stream is consumed.
+            if (msg.type === 'producer_closed' && msg.cid) lastFrames.delete(`${msg.cid}:${msg.slot}`);
+            if (msg.type === 'peer_left' && msg.cid) {
+                for (const key of [...lastFrames.keys()]) if (key.startsWith(`${msg.cid}:`)) lastFrames.delete(key);
+            }
             if (['producer_new', 'producer_closed', 'peer_left'].includes(msg.type)) paintStage();
             return;
         }
@@ -1065,9 +1091,10 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                 if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
                 const key = stageFocus;
                 stageFocus = null;
-                // Stopping means stopping: the consumer closes and the tile leaves.
-                // Your own preview stays — stopping your OWN stream is the Stop share button.
+                // Stopping means stopping: the subscription ends server-side and the tile
+                // becomes a BLURRED still of the last frame received — no live feed.
                 if (key && !key.startsWith('self:')) {
+                    snapshotTile(key);
                     const [cid, slot] = key.split(':');
                     voice.setWatching(cid, slot, false);
                 }

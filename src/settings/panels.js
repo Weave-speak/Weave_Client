@@ -155,7 +155,7 @@ export function profilePanel({ me = {}, features = [] } = {}) {
     <p class="panel-lead">Microphone and voice behaviour has moved to Voice &amp; Audio.</p>`;
 }
 
-export function sessionsPanel() {
+export function sessionsPanel({ version = '' } = {}) {
     return `
     <h2 class="panel-title">Sessions &amp; Devices</h2>
     <p class="panel-lead">This installation, and the account's other ones.</p>
@@ -163,9 +163,10 @@ export function sessionsPanel() {
     <h3 class="panel-section">This app</h3>
     <div class="setting">
       <span class="setting-text">
-        <span class="setting-label">Updates</span>
-        <span class="setting-hint">Runs the same check the app performs at launch. The bar at the
-          bottom of the window reports what it finds and offers the restart.</span>
+        <span class="setting-label">Weave ${esc(version)}</span>
+        <span class="setting-hint">The version RUNNING right now. An update that has downloaded
+          installs when the app restarts — until then, this number is the truth of what
+          you are using.</span>
         <span class="setting-note" id="updateCheckNote"></span>
       </span>
       <button type="button" class="btn" data-check-updates>Check for updates</button>

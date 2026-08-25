@@ -13,7 +13,7 @@ globalThis.__WEAVE_TARGET__ = 'desktop';
 
 import {
     SECTIONS, sectionById, joinedOn, profilePanel, voicePanel,
-    appearancePanel, invitesPanel, inviteMessage, placeholderPanel, PLACEHOLDER_REASONS, settingsFrame,
+    appearancePanel, invitesPanel, inviteMessage, placeholderPanel, PLACEHOLDER_REASONS, settingsFrame, sessionsPanel,
 } from '../src/settings/panels.js';
 import {
     adminUsersPanel, adminChannelsPanel, adminDangerPanel, reversedName,
@@ -261,4 +261,10 @@ test('hostile names cannot become markup in the admin console', () => {
         assert.ok(!markup.includes('<img src=x'));
         assert.match(markup, /&lt;img/);
     }
+});
+
+test('the sessions panel states the RUNNING version, because updates install on restart', () => {
+    const markup = sessionsPanel({ version: '9.9.9' });
+    assert.match(markup, /Weave 9\.9\.9/);
+    assert.match(markup, /installs when the app restarts/);
 });

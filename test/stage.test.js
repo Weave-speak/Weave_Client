@@ -112,8 +112,12 @@ test('grid tiles offer the centred Watch, screens declare LIVE, the divider offe
     assert.match(grid, /watch-btn/);
     assert.match(grid, /data-watch-tile="kes:screen"/);
     assert.match(grid, /live-badge small/);
-    assert.match(grid, /data-stage-divider/);
+    assert.ok(!grid.includes('data-stage-divider'),
+        'no divider without a focus — the compact row sizes itself');
     assert.ok(!grid.includes('stream-pill'), 'no pill without a focus');
+
+    const focused = stageView({ tiles: [t('kes', 'screen'), t('moth', 'webcam')], focus: 'kes:screen' });
+    assert.match(focused, /data-stage-divider/, 'the split brings the drag with it');
 
     const sized = stageView({ tiles: [t('kes', 'screen')], heightPx: 400 });
     assert.match(sized, /style="height: 400px"/);
@@ -146,4 +150,18 @@ test('the strip is a carousel: quiet at four, scroll buttons past it', () => {
     assert.match(six, /data-strip-nav="-1"/);
     assert.match(six, /data-strip-nav="1"/);
     assert.match(six, /strip-shell scrollable/);
+});
+
+test('a stopped stream wears its last frame blurred — a picture, but not a live one', () => {
+    const still = stageView({ tiles: [t('kes', 'screen', {
+        live: false, frame: 'data:image/jpeg;base64,AAAA',
+    })] });
+    assert.ok(!still.includes('<video'), 'the feed is gone');
+    assert.match(still, /ph-still/);
+    assert.match(still, /ph-blur/);
+    assert.match(still, /data:image\/jpeg;base64,AAAA/);
+    assert.match(still, /data-watch-tile="kes:screen"/, 'and the way back in is right there');
+
+    const never = stageView({ tiles: [t('kes', 'screen', { live: false })] });
+    assert.match(never, /ph-screen/, 'never-watched streams keep the plain placeholder');
 });

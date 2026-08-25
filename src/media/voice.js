@@ -281,6 +281,22 @@ export function createVoice({
     const ensureSend = () => ensureTransport('send');
     const ensureRecv = () => ensureTransport('recv');
 
+    /**
+     * Bumps the epoch AND clears any creation currently in flight — not just one, both.
+     * Bumping the epoch alone stops a stale creation from being ADOPTED once it settles,
+     * but does nothing about a NEW caller in the meantime: without this, ensureTransport()
+     * would still hand that new caller the same doomed in-flight promise (the epoch check
+     * lives inside its .then(), which only runs once the round trip finishes — up to the
+     * full 12s reply timeout). Called from every place that closes a transport outside
+     * a fresh createTransport() call, so the next ensureSend()/ensureRecv() always starts
+     * a genuinely new attempt instead of queuing behind one already guaranteed to fail.
+     */
+    function invalidateTransports() {
+        mediaEpoch += 1;
+        sendTransportPromise = null;
+        recvTransportPromise = null;
+    }
+
     /* ── the microphone ──────────────────────────────────────────────────── */
 
     async function openMicrophone() {
@@ -317,9 +333,26 @@ export function createVoice({
 
     /* ── recovery ────────────────────────────────────────────────────────── */
 
+    // Whichever recovery cycle is currently rebuilding the media path, if any. A real
+    // network blip typically fails the send AND recv transport's ICE within milliseconds
+    // of each other — each has its OWN 'connectionstatechange' listener, so both call
+    // recover() independently for what is really one physical incident. Without this
+    // guard, one blip burned two attempts out of MAX_RECOVER's budget of four, and a
+    // user could see the counter jump straight to "2 of 4" (or hit the terminal "could
+    // not be re-established" after only two real hiccups). teardownMedia() +
+    // ensureRecv() + enableMic() already rebuild BOTH transports and the mic together
+    // regardless of which one's failure triggered the call, so a second trigger arriving
+    // while the first is still running has nothing left to do but wait for it.
+    let recoveryInFlight = null;
+
     async function recover(reason) {
         if (!running) return;
+        if (recoveryInFlight) return recoveryInFlight;
+        recoveryInFlight = runRecovery(reason).finally(() => { recoveryInFlight = null; });
+        return recoveryInFlight;
+    }
 
+    async function runRecovery(reason) {
         if (recoverAttempts >= MAX_RECOVER) {
             onChange({
                 state: 'failed',
@@ -715,9 +748,7 @@ export function createVoice({
         try { recvTransport?.close(); } catch { /* already closed */ }
         sendTransport = null;
         recvTransport = null;
-        // Invalidates any creation still in flight from before this teardown — see
-        // ensureTransport()'s comment for why that matters.
-        mediaEpoch += 1;
+        invalidateTransports();
     }
 
     /* ── public surface ──────────────────────────────────────────────────── */
@@ -1060,6 +1091,16 @@ export function createVoice({
                 try { recvTransport?.close(); } catch { /* already closed */ }
                 sendTransport = null;
                 recvTransport = null;
+                // A move onto a different router (a different mediasoup worker) makes any
+                // transport creation already in flight from BEFORE this move pointless —
+                // it would connect, if it connected at all, to the router this peer just
+                // left. Without this, that stale attempt could still be ADOPTED (the
+                // epoch check alone doesn't help here, since nothing had bumped it), or a
+                // caller right after the move could sit queued behind it for up to the
+                // full reply timeout. This was the second half of the transport-race bug
+                // fixed in 0.1.35 — teardownMedia() got the guard, this sibling teardown
+                // path did not, which is exactly why a recover() cycle could still repeat.
+                invalidateTransports();
 
                 // The microphone track itself is kept. It is still a perfectly good track,
                 // the permission is already granted, and reopening it risks coming back

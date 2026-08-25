@@ -425,14 +425,24 @@
 
 /* ── Self bar ─────────────────────────────────────────────────────────────── */
 
+/* Identity above, controls below, a quiet three-quarter rule between them: the bar is
+   the room's cockpit now that camera and screen live here too. */
 .self-bar {
     display: flex;
-    align-items: center;
-    gap: var(--s-2);
-    padding: var(--s-2) var(--s-2) var(--s-2) var(--s-3);
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--s-1);
+    padding: var(--s-2) var(--s-3) var(--s-3);
     background: var(--surface-0);
     border-top: 1px solid var(--line-soft);
 }
+.self-rule {
+    width: 75%;
+    height: 1px;
+    background: linear-gradient(90deg, var(--line-strong), rgb(var(--sep-rgb) / 0));
+    margin: 0 0 var(--s-1) var(--s-1);
+}
+.self-actions .media-btn.on { background: var(--accent-tint-hi); color: var(--accent-hi); }
 .self-id {
     display: flex;
     align-items: center;
@@ -459,7 +469,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.self-actions { display: flex; gap: var(--s-1); flex: none; }
+.self-actions { display: flex; gap: var(--s-2); flex: none; justify-content: flex-start; padding-left: var(--s-1); }
 .round-btn {
     display: grid;
     place-items: center;
@@ -2101,3 +2111,93 @@
     font-size: var(--t-sm);
     width: min(320px, 100%);
 }
+
+/* ── Opt-in streams: placeholders, the Watch verb, and the carousel ───────── */
+
+/* An unwatched stream: present, silent, costing nothing. The placeholder is the
+   indication; the hover is the invitation. */
+.tile.idle { cursor: pointer; }
+.ph {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+}
+.ph-screen {
+    background: repeating-linear-gradient(45deg, var(--bg-app) 0 12px, var(--surface-0) 12px 24px);
+    color: var(--ink-faint);
+}
+.ph-screen svg { width: 28px; height: 28px; }
+.ph-cam { background: var(--video-backdrop); }
+.ph-face {
+    width: 56px; height: 56px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: var(--av, var(--surface-3));
+    color: var(--on-accent);
+    font-weight: 700;
+    font-size: var(--t-lg);
+}
+.stage-strip .ph-face { width: 38px; height: 38px; font-size: var(--t-sm); }
+
+/* The one verb, centred, on approach. The veil dims the picture-to-be just enough
+   that the button reads against stripes and faces alike. */
+.watch-veil {
+    position: absolute;
+    inset: 0;
+    background: var(--scrim);
+    opacity: 0;
+    transition: opacity var(--dur-fast) var(--ease);
+    pointer-events: none;
+}
+.watch-btn {
+    position: absolute;
+    left: 50%; top: 50%;
+    transform: translate(-50%, -50%) scale(0.94);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+    padding: var(--s-2) var(--s-4);
+    border-radius: var(--r-pill);
+    background: var(--accent);
+    color: var(--on-accent);
+    font-size: var(--t-sm);
+    font-weight: 700;
+    box-shadow: var(--shadow-accent);
+    opacity: 0;
+    transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.watch-btn svg { width: 14px; height: 14px; }
+.tile:hover .watch-veil,
+.tile:focus-visible .watch-veil { opacity: 1; }
+.tile:hover .watch-btn,
+.tile:focus-visible .watch-btn,
+.watch-btn:focus-visible {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+}
+.stage-strip .watch-btn { padding: var(--s-1) var(--s-3); font-size: var(--t-xs); }
+.stage-strip .watch-btn svg { width: 11px; height: 11px; }
+
+/* The thumbnail carousel: four in view, the rest a press away. */
+.strip-shell {
+    display: flex;
+    align-items: center;
+    gap: var(--s-1);
+    min-width: 0;
+}
+.strip-shell .stage-strip { flex: 1; min-width: 0; scroll-behavior: smooth; }
+.strip-nav {
+    flex: none;
+    width: 26px;
+    height: 64px;
+    display: grid;
+    place-items: center;
+    border-radius: var(--r-2);
+    background: var(--surface-2);
+    color: var(--ink-dim);
+    font-size: var(--t-lg);
+    line-height: 1;
+}
+.strip-nav:hover { background: var(--surface-3); color: var(--ink); }

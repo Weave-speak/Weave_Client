@@ -92,6 +92,7 @@ export function toTimelineItems(records = [], { users = new Map(), me = null, no
                 displayName: record.authorName ?? 'Unknown',
             },
             text: record.body,
+            reactions: record.reactions ?? [],
             mentions,
             mentionsMe: Boolean(me?.username)
                 && mentions.some((m) => m.toLowerCase() === me.username.toLowerCase()),

@@ -50,11 +50,17 @@ const reaction = (r) => `
     <span aria-hidden="true">${esc(r.emoji)}</span>${esc(r.count)}
   </button>`;
 
-const reactions = (list = []) => (list.length ? `
+/**
+ * The row exists when there are reactions to show OR reacting is possible — the add
+ * button is how the FIRST reaction happens, so it cannot hide behind list.length. It
+ * stays visually quiet until the message is hovered (CSS), like every messenger.
+ */
+const reactions = (list = [], canReact = false) => ((list.length || canReact) ? `
   <div class="reactions">
     ${list.map(reaction).join('')}
+    ${canReact ? `
     <button type="button" class="reaction add" data-add-reaction
-            aria-label="Add a reaction">${icons.emoji}</button>
+            aria-label="Add a reaction">${icons.emoji}</button>` : ''}
   </div>` : '');
 
 /**
@@ -105,7 +111,7 @@ function message(m) {
         <div class="msg-body">${messageText(m.text, m.mentions)}</div>
         ${linkPreview(m.preview)}
         ${attachment(m.attachment)}
-        ${reactions(m.reactions)}
+        ${reactions(m.reactions, m.canReact)}
       </div>
     </li>`;
 }
@@ -175,6 +181,12 @@ export function voiceNotice(status = {}) {
                 tone: 'bad',
                 text: status.message ?? 'Voice could not be re-established.',
             };
+        case 'consume-failed':
+            return {
+                show: true,
+                tone: 'warn',
+                text: status.message ?? 'Some audio in this room is not arriving — still retrying.',
+            };
         case 'blocked':
             return {
                 show: true,
@@ -228,10 +240,6 @@ export function timeline({ room = {}, items = [], typing = [], voice = {} } = {}
         <h1>${esc(room.name ?? 'Room')}</h1>
         <span class="room-topic" id="roomTopic" ${room.topic ? '' : 'hidden'}>${esc(room.topic ?? '')}</span>
         <span class="room-head-spacer"></span>
-        <button type="button" class="icon-btn media-btn" id="camBtn" data-toggle-cam hidden
-                title="Turn your camera on" aria-label="Turn your camera on" aria-pressed="false">${icons.camera}</button>
-        <button type="button" class="icon-btn media-btn" id="screenBtn" data-toggle-screen hidden
-                title="Share your screen" aria-label="Share your screen" aria-pressed="false">${icons.screen}</button>
         <button type="button" class="icon-btn" id="dmCallBtn" data-dm-call hidden
                 title="Start a private call" aria-label="Start a private call">${icons.phone}</button>
         <button type="button" class="icon-btn danger-btn" id="dmHangupBtn" data-dm-hangup hidden

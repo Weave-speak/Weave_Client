@@ -120,9 +120,9 @@ export function createRoomState({ me = null, server = {} } = {}) {
     const viewedId = () => state.viewChannelId ?? state.currentChannelId;
     const viewedChannel = () => state.channels.find((c) => c.id === viewedId()) ?? null;
 
-    function liveTyping() {
+    function liveTyping(key = viewedId()) {
         const now = Date.now();
-        const forChannel = state.typing.get(viewedId());
+        const forChannel = state.typing.get(key);
         if (!forChannel) return [];
         for (const [name, expires] of forChannel) if (expires <= now) forChannel.delete(name);
         return [...forChannel.keys()].filter((n) => n !== state.me?.username);
@@ -266,8 +266,36 @@ export function createRoomState({ me = null, server = {} } = {}) {
             const list = state.messages.get(channelId) ?? [];
             if (item.id && list.some((m) => m.id === item.id)) return false;
             state.messages.set(channelId, [...list, item]);
+            // Their message IS the end of their typing; waiting out the expiry would
+            // show "X is typing…" under the message X just sent.
+            state.typing.get(channelId)?.delete(item.authorName);
             emit();
             return true;
+        },
+
+        /**
+         * One reaction delta, applied to wherever that message is being shown. count is
+         * the server's total — the one number every client converges on regardless of
+         * the order deltas arrive in.
+         */
+        applyReaction({ channelId, messageId, emoji, count, on, username }) {
+            const list = state.messages.get(channelId);
+            if (!list) return;
+            const at = list.findIndex((m) => m.id === messageId);
+            if (at < 0) return;
+            const record = list[at];
+            const rest = (record.reactions ?? []).filter((r) => r.emoji !== emoji);
+            const prior = (record.reactions ?? []).find((r) => r.emoji === emoji);
+            const mine = username === state.me?.username ? on : (prior?.mine ?? false);
+            const next = count > 0 ? [...rest, { emoji, count, mine }] : rest;
+            // Keep first-seen order: replace in place rather than re-sorting.
+            const reactions = count > 0 && prior
+                ? (record.reactions ?? []).map((r) => (r.emoji === emoji ? { emoji, count, mine } : r))
+                : next;
+            const updated = [...list];
+            updated[at] = { ...record, reactions };
+            state.messages.set(channelId, updated);
+            emit();
         },
 
         setMessages(channelId, items) {
@@ -313,6 +341,25 @@ export function createRoomState({ me = null, server = {} } = {}) {
             if (mention) entry.mentions += 1;
             state.unreads.set(channelId, entry);
             emit();
+        },
+
+        /**
+         * The heartbeat's room snapshot: replace each named peer's producer list with
+         * the server's version. Missing frames poisoned the old bookkeeping exactly
+         * once too often; this is the antidote arriving every 25 seconds.
+         */
+        applyProducersTruth(entries = []) {
+            let changed = false;
+            for (const entry of entries) {
+                const peer = state.peers.get(entry.cid);
+                if (!peer) continue;
+                const now = JSON.stringify(entry.producers ?? []);
+                if (JSON.stringify(peer.producers ?? []) !== now) {
+                    peer.producers = entry.producers ?? [];
+                    changed = true;
+                }
+            }
+            if (changed) emit();
         },
 
         /**
@@ -439,6 +486,7 @@ export function createRoomState({ me = null, server = {} } = {}) {
                             id: viewed.id,
                             name: viewed.name,
                             kind: viewed.kind,
+                            topic: viewed.topic ?? '',
                             private: Boolean(viewed.private),
                             member: viewed.private ? Boolean(viewed.member) : undefined,
                         }
@@ -465,7 +513,7 @@ export function createRoomState({ me = null, server = {} } = {}) {
                     users: state.users,
                     me: state.me,
                 }),
-                typing: activeDm ? [] : liveTyping(),
+                typing: activeDm ? liveTyping(activeDm.id) : liveTyping(),
                 people: roster,
             };
         },

@@ -133,7 +133,12 @@ function createWindow() {
     });
 
     // Shown only once it has something to paint.
-    win.once('ready-to-show', () => win.show());
+    win.once('ready-to-show', () => {
+        // Launch filling the screen. maximize() before show() means one paint at the
+        // final size instead of a small window visibly snapping open.
+        win.maximize();
+        win.show();
+    });
 
     // "The window is blank" is otherwise an unfalsifiable bug report. These two lines turn
     // it into a log entry that says which file failed and why.

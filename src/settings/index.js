@@ -279,8 +279,9 @@ export function createSettings({
         }));
         $$('[data-chan-rename-save]', el).forEach((b) => b.addEventListener('click', () => {
             const name = $('[data-chan-rename-input]', el)?.value?.trim();
+            const topic = $('[data-chan-topic-input]', el)?.value?.trim() ?? '';
             if (!name) return;
-            adminAct(() => api.request('PUT', `/api/channels/${b.dataset.chanRenameSave}`, { body: { name } }));
+            adminAct(() => api.request('PUT', `/api/channels/${b.dataset.chanRenameSave}`, { body: { name, topic } }));
         }));
         $$('[data-chan-clear]', el).forEach((b) => b.addEventListener('click', () => {
             const id = b.dataset.chanClear;

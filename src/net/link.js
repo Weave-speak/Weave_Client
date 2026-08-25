@@ -279,6 +279,11 @@ export function createLink({
                 outstandingPings = 0;
                 if (typeof msg.t === 'number') rttMs = now() - msg.t;
                 if (state === LINK.DEGRADED) setState(LINK.LIVE, { force: true });
+                // The room-producer truth rides the pong; surface it as its own event so
+                // the room can reconcile against the SERVER's memory rather than its own.
+                if (Array.isArray(msg.producers)) {
+                    handleEvent({ type: 'producers_truth', producers: msg.producers });
+                }
                 return;
 
             case 'error':

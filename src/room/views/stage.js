@@ -58,25 +58,40 @@ const streamPill = (t) => `
     </button>
   </span>`;
 
+/**
+ * What an unwatched stream shows instead of pictures: stripes and a glyph for a screen,
+ * the person's face-circle for a camera. Nothing is being received — the placeholder IS
+ * the indication that something could be. Hovering offers the one verb that matters.
+ */
+const placeholder = (t) => (t.slot === 'screen' ? `
+    <div class="ph ph-screen" aria-hidden="true">${icons.screen}</div>` : `
+    <div class="ph ph-cam" aria-hidden="true">
+      <span class="ph-face" style="--av: hsl(${esc(userHue(t.chipName ?? t.label))}, 55%, 40%)">${esc(initialsOf(t.chipName ?? t.label))}</span>
+    </div>`);
+
+const watchButton = (t) => `
+    <span class="watch-veil" aria-hidden="true"></span>
+    <button type="button" class="watch-btn" data-watch-tile="${esc(t.key)}"
+            aria-label="Watch ${esc(t.label)}">${icons.expand}<span>Watch</span></button>`;
+
 const tile = (t, focusKey) => {
     const focused = t.key === focusKey;
     return `
-  <div class="tile${focused ? ' focused' : ''}${t.self ? ' self' : ''}"
-       data-tile="${esc(t.key)}" role="button" tabindex="0"
+  <div class="tile${focused ? ' focused' : ''}${t.self ? ' self' : ''}${t.live ? '' : ' idle'}"
+       data-tile="${esc(t.key)}" role="${focused ? 'group' : 'button'}" tabindex="${focused ? '-1' : '0'}"
        aria-label="${esc(t.label)}${t.slot === 'screen' ? "'s screen" : ''}${focused ? ', focused' : ''}">
-    <video autoplay playsinline ${t.self ? 'muted' : ''}></video>
+    ${t.live ? `<video autoplay playsinline ${t.self ? 'muted' : ''}></video>` : placeholder(t)}
     ${focused ? `
     <span class="live-badge"><i aria-hidden="true"></i>LIVE · ${esc(t.label)}</span>
     ${streamPill(t)}` : `
     ${t.slot === 'screen' ? '<span class="live-badge small"><i aria-hidden="true"></i>LIVE</span>' : ''}
     ${identityChip(t)}
-    ${focusKey ? '' : `
-    <span class="tile-bar">
-      <span class="tile-bar-spacer"></span>
-      <span class="watch-cue">Watch ${icons.expand}</span>
-    </span>`}`}
+    ${watchButton(t)}`}
   </div>`;
 };
+
+/** How many thumbnails ride the carousel before it earns scroll buttons. */
+export const STRIP_VISIBLE = 4;
 
 /**
  * The stage. Empty tiles array renders nothing at all — the room looks exactly as it
@@ -87,12 +102,19 @@ export function stageView({ tiles = [], focus = null, heightPx = null } = {}) {
     const ordered = orderTiles(tiles);
     const focusKey = ordered.some((t) => t.key === focus) ? focus : null;
 
+    const thumbs = ordered.filter((t) => t.key !== focusKey);
     return `
     <section class="stage${focusKey ? ' has-focus' : ''}" aria-label="Live video"${heightPx ? ` style="height: ${Math.round(heightPx)}px"` : ''}>
       ${focusKey ? `
       <div class="stage-main">${tile(ordered.find((t) => t.key === focusKey), focusKey)}</div>
-      ${ordered.length > 1 ? `
-      <div class="stage-strip">${ordered.filter((t) => t.key !== focusKey).map((t) => tile(t, focusKey)).join('')}</div>` : ''}
+      ${thumbs.length ? `
+      <div class="strip-shell${thumbs.length > STRIP_VISIBLE ? ' scrollable' : ''}">
+        ${thumbs.length > STRIP_VISIBLE ? `
+        <button type="button" class="strip-nav" data-strip-nav="-1" aria-label="Earlier streams">‹</button>` : ''}
+        <div class="stage-strip">${thumbs.map((t) => tile(t, focusKey)).join('')}</div>
+        ${thumbs.length > STRIP_VISIBLE ? `
+        <button type="button" class="strip-nav" data-strip-nav="1" aria-label="More streams">›</button>` : ''}
+      </div>` : ''}
       ` : `
       <div class="stage-grid" data-count="${Math.min(ordered.length, 9)}">
         ${ordered.map((t) => tile(t, focusKey)).join('')}

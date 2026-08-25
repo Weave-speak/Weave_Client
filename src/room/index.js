@@ -79,12 +79,23 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         if (state.raw.currentChannelId) voice.sync(roomPeers()).catch(() => {});
     }, 15_000);
 
+    // The pill's "opus 64 kb/s": polled while voice is up, blank otherwise.
+    let mediaStats = { codec: null, bitrateKbps: null };
+    const statsTimer = setInterval(async () => {
+        const next = (await voice.mediaStats().catch(() => null)) ?? { codec: null, bitrateKbps: null };
+        if (next.codec !== mediaStats.codec || next.bitrateKbps !== mediaStats.bitrateKbps) {
+            mediaStats = next;
+            paintConnection({ ...state.raw.connection, ...mediaStats });
+        }
+    }, 5_000);
+
     let prefs = readPrefs(server.id);
     let pttHeld = false;
     // Text channels are openable-from-anywhere only when the server broadcasts chat
     // that way; against an older server every click is still a move.
     const canBrowse = features.includes('chat.browse');
     const canDm = features.includes('module.dm');
+    const canReact = features.includes('chat.reactions');
     const canCall = features.includes('dm.calls');
     // The call the user is part of, and where to stand again when it ends.
     let activeCallThreadId = null;
@@ -111,12 +122,11 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                 if (stageFocus === key) stageFocus = null;
             } else {
                 videoStreams.set(key, stream);
+                // Watching is opt-in now, so every remote stream that arrives here was
+                // ASKED for — pendingFocus carries the click that asked.
                 if (pendingFocus === key) {
                     stageFocus = key;
                     pendingFocus = null;
-                } else if (slot === 'screen' && cid !== 'self' && !stageFocus) {
-                    // A screen is THE thing: focus the first one to arrive unprompted.
-                    stageFocus = key;
                 }
             }
             paintStage();
@@ -260,6 +270,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         if (walkingOut) return;
         walkingOut = true;
         clearInterval(syncTimer);
+        clearInterval(statsTimer);
         api.setToken(null);
         await platform.tokens.clear(server.id).catch(() => {});
         // A wiped or revoked account's saved password is dead weight that would re-fill
@@ -274,6 +285,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
     async function signOut() {
         clearInterval(syncTimer);
+        clearInterval(statsTimer);
         await api.logout().catch(() => {
             // A network failure must not trap somebody in a signed-in interface. The
             // session lapses on its own; the important part is that this client forgets it.
@@ -324,7 +336,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         if (railEl) railEl.outerHTML = rail({ dms: view.dms, inRoom: !view.dmOpen });
         setHtml('.typing', typingLine(view.typing));
         setHtml('#voiceNotice', voiceNoticeMarkup(voiceState));
-        paintConnection(view.connection);
+        paintConnection({ ...view.connection, ...mediaStats });
         paintRoomHead(view.room);
         paintMediaButtons();
         paintMessages(view.items);
@@ -408,30 +420,46 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
         const me = state.raw.me;
         const tiles = [];
+
+        // Your own streams: always live (they are local tracks, they cost nothing).
         for (const [key, stream] of videoStreams) {
             const [cid, slotName] = key.split(':');
-            if (cid === 'self') {
-                tiles.push({
-                    key, cid, slot: slotName, label: 'You', self: true, stream,
-                    chipName: me?.username ?? 'You',
-                });
-                continue;
-            }
-            const peer = state.raw.peers.get(cid);
-            // Only what is in the room with us: a consumer should not exist otherwise,
-            // but a stale one must not paint a ghost.
-            if (!peer || peer.channelId !== state.raw.currentChannelId) continue;
-            const audioSlot = slotName === 'screen' ? 'screen-audio' : 'audio';
-            const hasAudio = (peer.producers ?? []).some((pr) => pr.slot === audioSlot);
+            if (cid !== 'self') continue;
             tiles.push({
-                key, cid, slot: slotName,
-                label: peer.displayName || peer.username || 'Someone',
-                chipName: peer.username,
-                self: peer.userId === me?.id,
-                stream,
-                audio: hasAudio ? { ...voice.getListen(cid, audioSlot), slot: audioSlot } : null,
+                key, cid, slot: slotName, label: 'You', self: true, live: true, stream,
+                chipName: me?.username ?? 'You',
             });
         }
+
+        // Everyone else's come from the ROSTER's producer list, watched or not: an
+        // unwatched stream is a placeholder tile — present, silent, costing nothing —
+        // and clicking Watch is what starts the packets.
+        for (const peer of state.raw.peers.values()) {
+            if (peer.channelId !== state.raw.currentChannelId) continue;
+            if (peer.userId === me?.id) continue;
+            for (const producer of peer.producers ?? []) {
+                if (producer.slot !== 'screen' && producer.slot !== 'webcam') continue;
+                const key = tileKey(peer.cid, producer.slot);
+                const stream = videoStreams.get(key) ?? null;
+                const audioSlot = producer.slot === 'screen' ? 'screen-audio' : 'audio';
+                const hasAudio = (peer.producers ?? []).some((pr) => pr.slot === audioSlot);
+                tiles.push({
+                    key,
+                    cid: peer.cid,
+                    slot: producer.slot,
+                    label: peer.displayName || peer.username || 'Someone',
+                    chipName: peer.username,
+                    self: false,
+                    live: Boolean(stream),
+                    stream,
+                    audio: stream && hasAudio
+                        ? { ...voice.getListen(peer.cid, audioSlot), slot: audioSlot } : null,
+                });
+            }
+        }
+
+        // Focus may only rest on a live tile; a placeholder in focus would be a black box.
+        if (stageFocus && !tiles.some((t) => t.key === stageFocus && t.live)) stageFocus = null;
 
         slot.innerHTML = stageView({ tiles, focus: stageFocus, heightPx: stageHeightPx });
 
@@ -448,6 +476,35 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         paintMediaButtons();
     }
 
+    /**
+     * Put one stream in the big frame — the SWAP the carousel promises. Whatever held
+     * focus before goes back to being a thumbnail; if it was a remote stream, watching
+     * it ends too, so exactly one remote stream is consumed at a time.
+     */
+    function focusTileKey(key) {
+        if (!key || key === stageFocus) return;
+        const previous = stageFocus;
+        if (previous && !previous.startsWith('self:') && previous !== key) {
+            const [prevCid, prevSlot] = previous.split(':');
+            voice.setWatching(prevCid, prevSlot, false);
+        }
+        if (key.startsWith('self:')) {
+            // Your own preview is already local and live; focus is immediate.
+            stageFocus = key;
+            pendingFocus = null;
+        } else {
+            const [cid, slot] = key.split(':');
+            if (videoStreams.has(key)) {
+                stageFocus = key;
+                pendingFocus = null;
+            } else {
+                pendingFocus = key;
+                voice.setWatching(cid, slot, true);
+            }
+        }
+        paintStage();
+    }
+
     /** The header's camera and screen buttons: shown where sending is possible, lit while on. */
     function paintMediaButtons() {
         const standing = state.raw.channels.find((c) => c.id === state.raw.currentChannelId);
@@ -459,11 +516,13 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         const screen = $('#screenBtn', mount);
         if (cam) {
             cam.hidden = !canSend;
+            cam.classList.toggle('on', voice.webcamOn);
             cam.setAttribute('aria-pressed', String(voice.webcamOn));
             cam.title = voice.webcamOn ? 'Turn your camera off' : 'Turn your camera on';
         }
         if (screen) {
             screen.hidden = !canSend;
+            screen.classList.toggle('on', voice.screenOn);
             screen.setAttribute('aria-pressed', String(voice.screenOn));
             screen.title = voice.screenOn ? 'Stop sharing your screen' : 'Share your screen';
         }
@@ -487,7 +546,11 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         // of teleporting the view to wherever the old scrollTop now points.
         const fromBottom = scroller.scrollHeight - scroller.scrollTop;
 
-        list.innerHTML = messageList(items);
+        // Reacting is possible in channels when the server carries the module; DM
+        // messages have no reaction store yet, so the add button stays away there.
+        const inDm = Boolean(state.raw.activeDmId);
+        list.innerHTML = messageList(items.map((i) =>
+            (i.kind === 'message' ? { ...i, canReact: canReact && !inDm } : i)));
 
         // The "this is the start" note lives outside the list. Rebuilt every paint rather
         // than cached, so it always names the CURRENT room — it once said "the room"
@@ -555,6 +618,35 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             return;
         }
 
+        if (msg.type === 'producers_truth') {
+            // Server memory beats client memory: update the roster's bookkeeping AND
+            // hand the same list straight to the media layer, so the heal runs on what
+            // the server knows rather than on whatever frames happened to survive.
+            state.applyProducersTruth(msg.producers);
+            voice.sync(msg.producers).catch(() => {});
+            paintStage();
+            return;
+        }
+
+        if (msg.type === 'text-chat:typing' && msg.channelId) {
+            // 8s of life per ping against the server's 4s relay throttle: one lost ping
+            // costs a flicker, never a stuck banner. The receiver owns expiry — and
+            // schedules the repaint that makes the lapse visible, since expiry is the
+            // one state change no event announces.
+            state.noteTyping(msg.channelId, msg.username, 8000);
+            setTimeout(() => paint(), 8200);
+            return;
+        }
+        if (msg.type === 'dm:typing' && msg.threadId) {
+            state.noteTyping(msg.threadId, msg.username, 8000);
+            setTimeout(() => paint(), 8200);
+            return;
+        }
+        if (msg.type === 'reactions:changed' && msg.messageId) {
+            state.applyReaction(msg);
+            return;
+        }
+
         if (msg.type === 'text-chat:cleared' && msg.channelId) {
             // An admin emptied the channel. What we are showing of it is now fiction.
             state.setMessages(msg.channelId, []);
@@ -564,6 +656,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
         if (msg.type === 'dm:message' && msg.message) {
             const record = msg.message;
+            state.raw.typing.get(record.threadId)?.delete(record.authorName);
             const known = state.raw.dms.some((t) => t.id === record.threadId);
             if (!known) {
                 // Someone opened a brand-new thread by writing into it: fetch the rail
@@ -692,10 +785,14 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         // has claimed is not something the roster needs to see.
         if (voice.handle(msg)) {
             state.apply(msg);
+            // Placeholder tiles are drawn from the roster's producer lists, so the frames
+            // that change those lists repaint the stage even when no stream is consumed.
+            if (['producer_new', 'producer_closed', 'peer_left'].includes(msg.type)) paintStage();
             return;
         }
 
         state.apply(msg);
+        if (['joined', 'moved', 'peer_joined', 'peer_left'].includes(msg.type)) paintStage();
     }
 
     /**
@@ -761,6 +858,18 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         }
     }
 
+    /** Staple aggregated reactions onto a fetched page. Absent module, absent call. */
+    async function withReactions(records) {
+        if (!canReact || !records?.length) return records ?? [];
+        try {
+            const ids = records.map((r) => r.id).join(',');
+            const { reactions } = await api.request('GET', `/api/reactions?messageIds=${ids}`);
+            return records.map((r) => (reactions[r.id] ? { ...r, reactions: reactions[r.id] } : r));
+        } catch {
+            return records;   // history without reaction counts still beats no history
+        }
+    }
+
     async function loadHistory(channelId) {
         if (!channelId) return;
         const entry = freshHistory();
@@ -770,7 +879,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                 `/api/chat/${encodeURIComponent(channelId)}/messages?${nextPageQuery(entry)}`);
             history.set(channelId, advanceHistory(entry, reply));
             // The page arrives oldest-first already; it IS the timeline.
-            state.setMessages(channelId, reply.messages ?? []);
+            state.setMessages(channelId, await withReactions(reply.messages));
         } catch {
             // A server with the chat module disabled answers 404, and that is a legitimate
             // configuration rather than an error. The room still works; it just has no text.
@@ -794,7 +903,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             const reply = await api.request('GET',
                 `/api/chat/${encodeURIComponent(channelId)}/messages?${nextPageQuery(entry)}`);
             history.set(channelId, advanceHistory(entry, reply));
-            if (!state.prependMessages(channelId, reply.messages ?? [])) paint();
+            if (!state.prependMessages(channelId, await withReactions(reply.messages))) paint();
         } catch {
             // A failed page is retried by the next scroll; the timeline already held is
             // untouched. busy is released either way.
@@ -818,6 +927,34 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             list.insertAdjacentHTML('beforebegin',
                 '<div class="history-note cap">Where it all began.</div>');
         }
+    }
+
+    /* ── the reaction picker ─────────────────────────────────────────────── */
+
+    // A fixed palette rather than a full emoji keyboard: eight covers most reacting,
+    // and any emoji already on the message can be joined by clicking it.
+    const REACT_SET = ['👍', '❤️', '😂', '😮', '😢', '🔥', '✅', '👀'];
+    let reactPickEl = null;
+
+    function closeReactPicker() {
+        reactPickEl?.remove();
+        reactPickEl = null;
+    }
+
+    function toggleReactPicker(anchor) {
+        const messageId = anchor.closest('[data-message]')?.dataset.message;
+        if (!messageId) return;
+        if (reactPickEl?.dataset.for === messageId) return closeReactPicker();
+        closeReactPicker();
+        const pick = document.createElement('div');
+        pick.className = 'react-pick';
+        pick.dataset.for = messageId;
+        pick.innerHTML = REACT_SET.map((e) =>
+            `<button type="button" data-react="${e}" aria-label="React with ${e}">${e}</button>`).join('');
+        // Inside the message li, so [data-message] resolves for the delegated handler
+        // and a repaint of the list sweeps the popover away with its message.
+        anchor.closest('[data-message]')?.append(pick);
+        reactPickEl = pick;
     }
 
     /* ── what the user does ──────────────────────────────────────────────── */
@@ -868,6 +1005,20 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                 return;
             }
 
+            const chip = event.target.closest('[data-react]');
+            if (chip) {
+                const messageId = chip.closest('[data-message]')?.dataset.message;
+                if (messageId) link.send('reactions:react', { messageId, emoji: chip.dataset.react });
+                closeReactPicker();
+                return;
+            }
+            const adder = event.target.closest('[data-add-reaction]');
+            if (adder) {
+                toggleReactPicker(adder);
+                return;
+            }
+            if (!event.target.closest('.react-pick')) closeReactPicker();
+
             const watch = event.target.closest('[data-watch]');
             if (watch) {
                 const key = watch.dataset.watch;
@@ -875,17 +1026,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                 const peer = state.raw.peers.get(cid);
                 if (!peer) return;
                 if (peer.channelId === state.raw.currentChannelId) {
-                    if (videoStreams.has(key)) {
-                        // Already on the stage: bring it to focus.
-                        stageFocus = key;
-                        pendingFocus = null;
-                    } else {
-                        // Not on the stage — most likely stopped earlier. Watch again.
-                        pendingFocus = key;
-                        const [, slotName] = key.split(':');
-                        voice.setWatching(cid, slotName, true);
-                    }
-                    paintStage();
+                    focusTileKey(key);
                 } else if (peer.channelId) {
                     // Elsewhere: participate — join their room, and focus their stream
                     // the moment it lands.
@@ -893,6 +1034,19 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                     link.noteChannel(peer.channelId);
                     link.send('move', { channelId: peer.channelId });
                 }
+                return;
+            }
+
+            const watchBtn = event.target.closest('[data-watch-tile]');
+            if (watchBtn) {
+                focusTileKey(watchBtn.dataset.watchTile);
+                return;
+            }
+            const nav = event.target.closest('[data-strip-nav]');
+            if (nav) {
+                const strip = nav.closest('.strip-shell')?.querySelector('.stage-strip');
+                // One viewport of thumbnails per press, in reading order.
+                strip?.scrollBy({ left: Number(nav.dataset.stripNav) * strip.clientWidth, behavior: 'smooth' });
                 return;
             }
 
@@ -936,8 +1090,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                 // The focused window itself is inert — misclicks on a stream you are
                 // reading must not tear the layout down. Thumbnails and grid tiles focus.
                 if (tile.closest('.stage-main')) return;
-                stageFocus = tile.dataset.tile;
-                paintStage();
+                focusTileKey(tile.dataset.tile);
                 return;
             }
 
@@ -1158,6 +1311,23 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         input?.addEventListener('input', () => {
             input.style.height = 'auto';
             input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
+        });
+
+        // Typing pings: throttled to one per 5s of ACTIVE typing (the server relays at
+        // most every 4s regardless), never for an emptied composer, and reset on send so
+        // the next message starts a fresh window.
+        let typingSentAt = 0;
+        input?.addEventListener('input', () => {
+            if (!input.value.trim()) return;
+            const now = Date.now();
+            if (now - typingSentAt < 5000) return;
+            typingSentAt = now;
+            if (state.raw.activeDmId) {
+                link.send('dm:typing', { threadId: state.raw.activeDmId });
+            } else {
+                const channelId = state.raw.viewChannelId ?? state.raw.currentChannelId;
+                if (channelId) link.send('text-chat:typing', { channelId });
+            }
         });
     }
 
@@ -1561,6 +1731,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         get state() { return state; },
         destroy() {
             clearInterval(syncTimer);
+            clearInterval(statsTimer);
             voice.stop();
             background?.destroy();
             link.onEvent = () => {};

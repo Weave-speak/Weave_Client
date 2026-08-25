@@ -128,6 +128,7 @@ export function selfBar(me = {}) {
           <span class="self-state">${esc(where)}</span>
         </span>
       </button>
+      <span class="self-rule" aria-hidden="true"></span>
       <span class="self-actions">
         ${me.pttOn ? `
         <button type="button" class="round-btn ptt" data-toggle-mic disabled
@@ -147,6 +148,12 @@ export function selfBar(me = {}) {
                 aria-label="${me.deafened ? 'Turn sound back on' : 'Turn all sound off'}">
           ${me.deafened ? icons.speakerOff : icons.headphones}
         </button>
+        <button type="button" class="round-btn media-btn" id="camBtn" data-toggle-cam hidden
+                title="Turn your camera on" aria-label="Turn your camera on"
+                aria-pressed="false">${icons.camera}</button>
+        <button type="button" class="round-btn media-btn" id="screenBtn" data-toggle-screen hidden
+                title="Share your screen" aria-label="Share your screen"
+                aria-pressed="false">${icons.screen}</button>
         ${inRoom ? `
         <button type="button" class="round-btn leave" data-leave
                 title="Leave the room" aria-label="Leave the room">${icons.power}</button>` : ''}

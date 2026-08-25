@@ -101,10 +101,26 @@ export function createVoice({
     let recoverAttempts = 0;
     let running = false;
 
-    // Streams the user said "stop watching" to, as 'cid:slot'. Watching is the default;
-    // an entry here survives resyncs (so the heal cannot resurrect the picture) and is
-    // erased when that producer closes, so a NEW stream from the same person shows again.
-    const unwatched = new Set();
+    // Streams the user chose to watch, as 'cid:slot'. Video is OPT-IN: availability is
+    // indicated with a placeholder tile and nothing is consumed — no packets, no CPU —
+    // until the person clicks Watch. A screen's system audio follows its screen's key.
+    // Entries survive resyncs (so the heal consumes what is watched and only that) and
+    // are erased when that producer closes or the room changes.
+    const watching = new Set();
+
+    /** The key whose watch-state governs this slot: screen-audio rides its screen. */
+    const watchKey = (cid, slot) =>
+        (slot === SLOTS.SCREEN_AUDIO ? `${cid}:${SLOTS.SCREEN}` : `${cid}:${slot}`);
+
+    /** Slots governed by the watch switch; plain voice audio never is. */
+    const isWatchable = (slot) =>
+        slot === SLOTS.SCREEN || slot === SLOTS.WEBCAM || slot === SLOTS.SCREEN_AUDIO;
+
+    // Consecutive sync-consume failures per cid:slot; three in a row becomes a banner.
+    const consumeFails = new Map();
+
+    // Previous outbound-rtp byte counter, for the bitrate the connection pill shows.
+    let statSample = null;
 
     const consumers = new Map();   // consumerId -> { consumer, cid, slot, audio, meter }
     // Local listening preferences per `${cid}:${slot}` — YOUR ears, nobody else's
@@ -483,7 +499,7 @@ export function createVoice({
     async function consume(cid, slot) {
         if (!device?.loaded) return null;
         if ([...consumers.values()].some((c) => c.cid === cid && c.slot === slot)) return null;
-        if (unwatched.has(`${cid}:${slot}`)) return null;
+        if (isWatchable(slot) && !watching.has(watchKey(cid, slot))) return null;
 
         await ensureRecv();
         link.send('consume', { cid, slot, rtpCapabilities: device.rtpCapabilities });
@@ -829,26 +845,42 @@ export function createVoice({
             }
             for (const key of want) {
                 if (have.has(key)) continue;
-                if (unwatched.has(key)) continue;
                 const [cid, slot] = key.split(':');
-                await consume(cid, slot).catch(() => {});
+                if (isWatchable(slot) && !watching.has(watchKey(cid, slot))) continue;
+                try {
+                    await consume(cid, slot);
+                    consumeFails.delete(key);
+                } catch (err) {
+                    // A consume that keeps failing was invisible once, and it cost a
+                    // person fifteen silent minutes of "he can't hear me". Three strikes
+                    // and it is SAID, on screen, while the retrying continues.
+                    const n = (consumeFails.get(key) ?? 0) + 1;
+                    consumeFails.set(key, n);
+                    console.warn(`[voice] consume ${key} failed (attempt ${n}):`, err?.message ?? err);
+                    if (n === 3) {
+                        onChange({
+                            state: 'consume-failed',
+                            message: 'Some audio in this room is not arriving — still retrying.',
+                        });
+                    }
+                }
             }
         },
 
         /**
-         * Watch or stop watching one stream. Stopping actually stops — the consumer
-         * closes and the server is told, not merely hidden — and a stopped screen takes
-         * its system audio with it, because "stop watching" means the whole broadcast.
+         * Watch or stop watching one stream. Watching starts the consumers (the video,
+         * and a screen's system audio with it); stopping actually stops — consumers
+         * close and the server is told, not merely hidden.
          */
         setWatching(cid, slot, on) {
-            const keys = slot === SLOTS.SCREEN ? [slot, SLOTS.SCREEN_AUDIO] : [slot];
-            for (const k of keys) {
-                const key = `${cid}:${k}`;
-                if (on) {
-                    unwatched.delete(key);
-                    consume(cid, k).catch(() => {});
-                } else {
-                    unwatched.add(key);
+            const slots = slot === SLOTS.SCREEN ? [slot, SLOTS.SCREEN_AUDIO] : [slot];
+            const key = `${cid}:${slot}`;
+            if (on) {
+                watching.add(key);
+                for (const k of slots) consume(cid, k).catch(() => {});
+            } else {
+                watching.delete(key);
+                for (const k of slots) {
                     for (const [id, entry] of [...consumers]) {
                         if (entry.cid === cid && entry.slot === k) {
                             link.send('closeConsumer', { consumerId: id });
@@ -856,6 +888,35 @@ export function createVoice({
                         }
                     }
                 }
+            }
+        },
+
+        /** Whether this stream is currently opted into. */
+        isWatching(cid, slot) { return watching.has(`${cid}:${slot}`); },
+
+        /**
+         * What the mic is sending, for the connection pill: codec name and a bitrate
+         * measured between calls. First call primes the counter and reports codec only.
+         */
+        async mediaStats() {
+            if (!micProducer || micProducer.closed) { statSample = null; return null; }
+            try {
+                const codec = micProducer.rtpParameters?.codecs?.[0]?.mimeType
+                    ?.split('/')[1]?.toLowerCase() ?? null;
+                const report = await micProducer.getStats();
+                let out = null;
+                for (const row of report.values()) {
+                    if (row.type === 'outbound-rtp') out = row;
+                }
+                if (!out) return { codec, bitrateKbps: null };
+                const prev = statSample;
+                statSample = { bytes: out.bytesSent ?? 0, at: out.timestamp ?? Date.now() };
+                const kbps = prev && statSample.at > prev.at
+                    ? Math.round(((statSample.bytes - prev.bytes) * 8) / (statSample.at - prev.at))
+                    : null;
+                return { codec, bitrateKbps: kbps && kbps > 0 ? kbps : null };
+            } catch {
+                return null;
             }
         },
 
@@ -870,7 +931,9 @@ export function createVoice({
 
                 case 'producer_closed':
                     dropConsumersOf(msg.cid, msg.slot);
-                    unwatched.delete(`${msg.cid}:${msg.slot}`);
+                    // The choice belonged to THAT broadcast; a new one starts as a
+                    // placeholder again.
+                    watching.delete(`${msg.cid}:${msg.slot}`);
                     return true;
 
                 case 'consumerClosed':
@@ -879,7 +942,7 @@ export function createVoice({
 
                 case 'peer_left':
                     dropConsumersOf(msg.cid);
-                    for (const key of [...unwatched]) if (key.startsWith(`${msg.cid}:`)) unwatched.delete(key);
+                    for (const key of [...watching]) if (key.startsWith(`${msg.cid}:`)) watching.delete(key);
                     return true;
 
                 case 'transportFailed':
@@ -909,6 +972,9 @@ export function createVoice({
          */
         async onMoved({ rtpCapabilities, mediaReset = false } = {}) {
             for (const id of [...consumers.keys()]) dropConsumer(id);
+            // A different room is a different audience: everything starts as a
+            // placeholder again.
+            watching.clear();
 
             if (mediaReset) {
                 try { micProducer?.close(); } catch { /* already closed */ }

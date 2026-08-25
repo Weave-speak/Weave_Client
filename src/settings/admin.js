@@ -112,11 +112,13 @@ function channelRow(c, { editing, armedKey }) {
           <span class="adm-edit">
             <input data-chan-rename-input value="${esc(c.name)}" maxlength="40"
                    aria-label="Channel name">
+            <input data-chan-topic-input value="${esc(c.topic ?? '')}" maxlength="120"
+                   placeholder="Topic — one line under the name" aria-label="Channel topic">
             <button type="button" class="btn small primary" data-chan-rename-save="${esc(c.id)}">Save</button>
             <button type="button" class="btn small" data-chan-rename-cancel>Cancel</button>
           </span>` : `
           <span class="adm-display">${esc(c.name)}</span>
-          <span class="adm-username">${esc(kind)}${c.isDefault ? ' · landing room' : ''}</span>`}
+          <span class="adm-username">${esc(kind)}${c.isDefault ? ' · landing room' : ''}${c.topic ? ` · ${esc(c.topic)}` : ''}</span>`}
         </span>
       </span>
       <span class="adm-actions">

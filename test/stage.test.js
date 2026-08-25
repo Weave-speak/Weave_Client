@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 
 import { stageView, orderTiles, tileKey, sharePickerView } from '../src/room/views/stage.js';
 
-const t = (cid, slot, extra = {}) => ({ key: tileKey(cid, slot), cid, slot, label: cid, ...extra });
+const t = (cid, slot, extra = {}) => ({ key: tileKey(cid, slot), cid, slot, label: cid, live: true, ...extra });
 
 test('no video, no stage — the room looks exactly as it always did', () => {
     assert.equal(stageView({ tiles: [] }), '');
@@ -107,13 +107,43 @@ test('a focused stream without audio keeps fullscreen and the way out', () => {
     assert.match(view, /data-stop-watching/);
 });
 
-test('grid tiles invite the click, screens declare LIVE, and the divider offers the drag', () => {
+test('grid tiles offer the centred Watch, screens declare LIVE, the divider offers the drag', () => {
     const grid = stageView({ tiles: [t('kes', 'screen'), t('moth', 'webcam')] });
-    assert.match(grid, /watch-cue/);
+    assert.match(grid, /watch-btn/);
+    assert.match(grid, /data-watch-tile="kes:screen"/);
     assert.match(grid, /live-badge small/);
     assert.match(grid, /data-stage-divider/);
     assert.ok(!grid.includes('stream-pill'), 'no pill without a focus');
 
     const sized = stageView({ tiles: [t('kes', 'screen')], heightPx: 400 });
     assert.match(sized, /style="height: 400px"/);
+});
+
+test('an unwatched stream is a placeholder: no video, no packets, just the invitation', () => {
+    const screen = stageView({ tiles: [t('kes', 'screen', { live: false })] });
+    assert.ok(!screen.includes('<video'), 'nothing is being received');
+    assert.match(screen, /ph-screen/);
+    assert.match(screen, /tile idle/);
+    assert.match(screen, /data-watch-tile="kes:screen"/);
+
+    const cam = stageView({ tiles: [t('kes', 'webcam', { live: false, chipName: 'kestrel' })] });
+    assert.match(cam, /ph-face/, 'a camera placeholder wears the face, not stripes');
+    assert.match(cam, /KE/, 'initials come from the person');
+});
+
+test('the strip is a carousel: quiet at four, scroll buttons past it', () => {
+    const four = stageView({
+        tiles: [t('a', 'screen'), t('b', 'webcam'), t('c', 'webcam'), t('d', 'webcam'), t('e', 'webcam')],
+        focus: 'a:screen',
+    });
+    assert.ok(!four.includes('strip-nav'), 'four thumbnails need no chrome');
+
+    const six = stageView({
+        tiles: [t('a', 'screen'), t('b', 'webcam'), t('c', 'webcam'),
+            t('d', 'webcam'), t('e', 'webcam'), t('f', 'webcam')],
+        focus: 'a:screen',
+    });
+    assert.match(six, /data-strip-nav="-1"/);
+    assert.match(six, /data-strip-nav="1"/);
+    assert.match(six, /strip-shell scrollable/);
 });

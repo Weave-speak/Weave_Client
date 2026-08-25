@@ -118,6 +118,10 @@ export function createVoice({
 
     // Consecutive sync-consume failures per cid:slot; three in a row becomes a banner.
     const consumeFails = new Map();
+    // Whether the 'consume-failed' banner is the thing currently on screen, so a later
+    // success knows it is safe to clear it (and knows NOT to stomp on some other status
+    // — 'recovering', 'no-mic' — that came along in the meantime).
+    let failureSignaled = false;
 
     // Previous outbound-rtp byte counter, for the bitrate the connection pill shows.
     let statSample = null;
@@ -225,8 +229,57 @@ export function createVoice({
         return transport;
     }
 
-    const ensureSend = async () => (sendTransport ??= await createTransport('send'));
-    const ensureRecv = async () => (recvTransport ??= await createTransport('recv'));
+    // Bumped on every teardown; a transport that finishes creating under a stale epoch
+    // is closed rather than adopted, so a recover() that ran WHILE an old creation was
+    // still in flight can never have that old one clobber the fresh one.
+    let mediaEpoch = 0;
+    let sendTransportPromise = null;
+    let recvTransportPromise = null;
+
+    /**
+     * The single place a send/recv transport gets created. `??=` alone is NOT safe here:
+     * it checks the target variable SYNCHRONOUSLY, before the `await` — so two calls
+     * arriving before the first resolves (recover()'s own ensureRecv() racing the room's
+     * 15s/25s periodic voice.sync(), which happens most often right after the network
+     * blip that triggered recovery in the first place) each start their OWN
+     * createTransport() round trip. waitFor('transportCreated', ...) matches only on
+     * `direction`, with no per-request id, so the two replies can be handed to either
+     * caller — one local Transport object can end up paired with ICE/DTLS parameters
+     * the server no longer associates with this peer's current transport, since the
+     * server keeps exactly one transport per direction and the later create silently
+     * replaces the earlier one there. Signalling all still succeeds, so nothing throws;
+     * the consumer just never receives a single packet. That is exactly the shape of
+     * "some audio in this room is not arriving — still retrying": the retries were
+     * never going to work, because the transport itself was never really connected.
+     * A single in-flight promise, shared by every concurrent caller, makes two
+     * createTransport() round trips for the same direction structurally impossible.
+     */
+    function ensureTransport(direction) {
+        const current = direction === 'send' ? sendTransport : recvTransport;
+        if (current) return Promise.resolve(current);
+        const already = direction === 'send' ? sendTransportPromise : recvTransportPromise;
+        if (already) return already;
+
+        const epoch = mediaEpoch;
+        const promise = createTransport(direction).then((t) => {
+            if (epoch !== mediaEpoch) {
+                // teardownMedia() ran while this was in flight — a recover() cycle is
+                // already building its own transport. Adopting this one instead would
+                // reopen the exact race this function exists to close.
+                try { t.close(); } catch { /* already gone */ }
+                throw new Error('Voice was reset while connecting; the next attempt will pick it up.');
+            }
+            if (direction === 'send') sendTransport = t; else recvTransport = t;
+            return t;
+        }).finally(() => {
+            if (direction === 'send') sendTransportPromise = null; else recvTransportPromise = null;
+        });
+
+        if (direction === 'send') sendTransportPromise = promise; else recvTransportPromise = promise;
+        return promise;
+    }
+    const ensureSend = () => ensureTransport('send');
+    const ensureRecv = () => ensureTransport('recv');
 
     /* ── the microphone ──────────────────────────────────────────────────── */
 
@@ -662,6 +715,9 @@ export function createVoice({
         try { recvTransport?.close(); } catch { /* already closed */ }
         sendTransport = null;
         recvTransport = null;
+        // Invalidates any creation still in flight from before this teardown — see
+        // ensureTransport()'s comment for why that matters.
+        mediaEpoch += 1;
     }
 
     /* ── public surface ──────────────────────────────────────────────────── */
@@ -850,6 +906,15 @@ export function createVoice({
                 try {
                     await consume(cid, slot);
                     consumeFails.delete(key);
+                    // The banner said a specific stream was stuck; once nothing is stuck
+                    // any more, say so too. onChange REPLACES the whole displayed voice
+                    // state, so without this the room stays stuck on "still retrying"
+                    // forever after the retry that actually worked — nothing else was
+                    // going to overwrite it.
+                    if (failureSignaled && consumeFails.size === 0) {
+                        failureSignaled = false;
+                        onChange({ state: 'live', recovered: true });
+                    }
                 } catch (err) {
                     // A consume that keeps failing was invisible once, and it cost a
                     // person fifteen silent minutes of "he can't hear me". Three strikes
@@ -858,6 +923,7 @@ export function createVoice({
                     consumeFails.set(key, n);
                     console.warn(`[voice] consume ${key} failed (attempt ${n}):`, err?.message ?? err);
                     if (n === 3) {
+                        failureSignaled = true;
                         onChange({
                             state: 'consume-failed',
                             message: 'Some audio in this room is not arriving — still retrying.',
@@ -975,6 +1041,11 @@ export function createVoice({
             // A different room is a different audience: everything starts as a
             // placeholder again.
             watching.clear();
+            // A key naming an old room's peer would otherwise sit in this map forever
+            // (nothing will ever consume it again to clear it), permanently blocking the
+            // banner from ever being allowed to clear again — see sync()'s check.
+            consumeFails.clear();
+            failureSignaled = false;
 
             if (mediaReset) {
                 try { micProducer?.close(); } catch { /* already closed */ }
@@ -1008,6 +1079,8 @@ export function createVoice({
             teardownMedia();
             levels.clear();
             waiters.clear();
+            consumeFails.clear();
+            failureSignaled = false;
             try { audioContext?.close(); } catch { /* already closed */ }
             audioContext = null;
             sink?.remove();

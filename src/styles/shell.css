@@ -984,22 +984,62 @@
 
 /* ── Reactions ────────────────────────────────────────────────────────────── */
 
-.reactions { display: flex; gap: var(--s-1); flex-wrap: wrap; margin-top: var(--s-2); }
+.reactions { display: flex; gap: var(--s-2); flex-wrap: wrap; margin-top: var(--s-2); align-items: center; }
 .reaction {
     display: inline-flex;
     align-items: center;
     gap: var(--s-1);
-    padding: 2px var(--s-2);
-    border-radius: var(--r-1);
+    padding: 3px var(--s-2);
+    border-radius: var(--r-pill);
     background: var(--surface-2);
     border: 1px solid var(--line-soft);
     font-size: var(--t-sm);
     color: var(--ink-dim);
     font-variant-numeric: tabular-nums;
 }
+/* The icon-set rule: size ALWAYS comes from CSS. Without this the smiley rendered as
+   an unsized blot — the reported "black dot". */
+.reaction svg { width: 15px; height: 15px; flex: none; }
 .reaction:hover { border-color: var(--line-strong); }
 .reaction.mine { background: var(--accent-tint); border-color: rgb(var(--accent-rgb) / 0.45); color: var(--accent-hi); }
-.reaction.add { color: var(--ink-faint); }
+/* The add button: a quiet smiley that wakes when the message is under the pointer. */
+.reaction.add {
+    color: var(--ink-faint);
+    padding: 3px var(--s-2);
+    opacity: 0.4;
+    transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.msg:hover .reaction.add,
+.reaction.add:focus-visible { opacity: 1; color: var(--ink-dim); }
+.reaction.add:hover { color: var(--accent-hi); border-color: rgb(var(--accent-rgb) / 0.45); }
+
+/* The emoji palette: floats ABOVE the message on the popover layer — it borrows no
+   space from the timeline, so opening it never shifts a single line of chat. */
+.msg { position: relative; }
+.react-pick {
+    position: absolute;
+    z-index: var(--z-popover);
+    display: flex;
+    gap: 2px;
+    padding: var(--s-1);
+    background: var(--surface-2);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-pill);
+    box-shadow: var(--shadow-2);
+    backdrop-filter: blur(8px);
+    white-space: nowrap;
+}
+.react-pick button {
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    font-size: 18px;
+    line-height: 1;
+    transition: transform var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.react-pick button:hover { background: var(--accent-tint-hi); transform: scale(1.15); }
 
 /* ── Attachments and previews ─────────────────────────────────────────────── */
 

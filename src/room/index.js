@@ -978,8 +978,21 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         pick.innerHTML = REACT_SET.map((e) =>
             `<button type="button" data-react="${e}" aria-label="React with ${e}">${e}</button>`).join('');
         // Inside the message li, so [data-message] resolves for the delegated handler
-        // and a repaint of the list sweeps the popover away with its message.
-        anchor.closest('[data-message]')?.append(pick);
+        // and a repaint of the list sweeps the popover away with its message. Absolute
+        // within the li: the palette floats over the text and costs the layout nothing.
+        const host = anchor.closest('[data-message]');
+        if (!host) return;
+        host.append(pick);
+        const a = anchor.getBoundingClientRect();
+        const h = host.getBoundingClientRect();
+        pick.style.left = `${Math.max(8, Math.round(a.left - h.left) - 8)}px`;
+        // Above the button by default; below it when the timeline's edge would clip it.
+        const scroller = host.closest('.timeline');
+        const clipTop = scroller ? scroller.getBoundingClientRect().top : 0;
+        const above = a.top - pick.offsetHeight - 8 >= clipTop;
+        pick.style.top = above
+            ? `${Math.round(a.top - h.top) - pick.offsetHeight - 8}px`
+            : `${Math.round(a.bottom - h.top) + 8}px`;
         reactPickEl = pick;
     }
 

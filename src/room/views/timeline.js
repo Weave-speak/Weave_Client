@@ -32,13 +32,25 @@ export function fileSize(bytes) {
  */
 export function messageText(text, mentions = []) {
     let out = esc(text ?? '');
-    if (!mentions.length) return out;
 
-    const known = new Set(mentions.map((m) => String(m).toLowerCase()));
-    out = out.replace(/@([A-Za-z0-9._-]{1,32})/g, (whole, name) =>
-        (known.has(name.toLowerCase())
-            ? `<span class="mention">@${esc(name)}</span>`
-            : whole));
+    if (mentions.length) {
+        const known = new Set(mentions.map((m) => String(m).toLowerCase()));
+        out = out.replace(/@([A-Za-z0-9._-]{1,32})/g, (whole, name) =>
+            (known.has(name.toLowerCase())
+                ? `<span class="mention">@${esc(name)}</span>`
+                : whole));
+    }
+
+    // Links become links. This runs on already-escaped text, so `&` inside a URL reads
+    // `&amp;` here — correct in the href (HTML parses it back) and correct on screen.
+    // target=_blank routes through the desktop shell's window-open policy, which opens
+    // the system browser and denies everything else.
+    out = out.replace(/https?:\/\/[^\s<>"']+/g, (url) => {
+        const clean = url.replace(/[.,;:!?]+$/, '');
+        const tail = url.slice(clean.length);
+        const shown = clean.length > 64 ? `${clean.slice(0, 61)}…` : clean;
+        return `<a class="msg-link" href="${clean}" target="_blank" rel="noreferrer noopener">${shown}</a>${tail}`;
+    });
     return out;
 }
 
@@ -71,14 +83,43 @@ const reactions = (list = [], canReact = false) => ((list.length || canReact) ? 
  * a description of a destination, and the message text above it carries the actual link.
  */
 const linkPreview = (p) => (p ? `
-  <div class="link-preview">
-    <span class="preview-icon">${icons.doc}</span>
+  <a class="link-preview" href="${esc(p.url ?? '#')}" target="_blank" rel="noreferrer noopener">
+    ${p.image ? `<img class="preview-thumb" src="${esc(p.image)}" alt="" loading="lazy">`
+        : `<span class="preview-icon">${icons.doc}</span>`}
     <span class="preview-body">
       <span class="preview-site">${esc(p.site ?? '')}</span>
       <span class="preview-title">${esc(p.title ?? '')}</span>
       <span class="preview-desc">${esc(p.description ?? '')}</span>
     </span>
-  </div>` : '');
+  </a>` : '');
+
+/**
+ * A recognised video link: a click-to-play card, never an auto-loaded iframe. The
+ * controller swaps in the provider's official embed player on click; until then the
+ * message costs the room nothing.
+ */
+const videoEmbed = (m) => {
+    if (!m.embed) return '';
+    // Once playing, the iframe is part of the VIEW — a repaint of the list re-renders
+    // it rather than silently killing the video mid-watch.
+    if (m.embedPlaying) {
+        return `
+  <div class="video-embed playing">
+    <iframe src="${esc(m.embed.embedUrl)}" allowfullscreen
+            sandbox="allow-scripts allow-same-origin allow-popups allow-presentation"
+            allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+            referrerpolicy="no-referrer" title="Embedded ${esc(m.embed.label)} video"></iframe>
+  </div>`;
+    }
+    return `
+  <div class="video-embed" data-embed-play="${esc(m.id)}"
+       role="button" tabindex="0" aria-label="Play ${esc(m.embed.label)} video">
+    ${m.preview?.image ? `<img class="embed-thumb" src="${esc(m.preview.image)}" alt="" loading="lazy">` : ''}
+    <span class="embed-veil"></span>
+    <span class="embed-play">${icons.play ?? '▶'}</span>
+    <span class="embed-provider">${esc(m.embed.label)}</span>
+  </div>`;
+};
 
 /**
  * An attachment.
@@ -86,16 +127,28 @@ const linkPreview = (p) => (p ? `
  * The filename shown is the one the uploader chose, which is why it is escaped and why it
  * is never used to decide what the file IS — that comes from the server's own content type.
  */
-const attachment = (a) => (a ? `
+const attachment = (a) => {
+    if (!a) return '';
+    if (String(a.mime ?? '').startsWith('image/')) {
+        // Uploads are auth-gated, so a bare <img src> would 401: the controller fetches
+        // the bytes with the bearer and fills data-auth-src elements with blob URLs.
+        return `
+  <figure class="attach-image-wrap">
+    <img class="attach-image" data-auth-src="${esc(a.url ?? '')}" data-lightbox
+         alt="${esc(a.name ?? 'image')}" title="${esc(a.name ?? '')}">
+  </figure>`;
+    }
+    return `
   <div class="attachment">
-    <span class="preview-icon">${String(a.mime ?? '').startsWith('image/') ? icons.image : icons.doc}</span>
+    <span class="preview-icon">${icons.doc}</span>
     <span class="attach-body">
       <span class="attach-name">${esc(a.name ?? 'file')}</span>
-      <span class="attach-meta">${esc((a.mime ?? '').split('/').pop().toUpperCase())} · ${esc(fileSize(a.size))}</span>
+      <span class="attach-meta">${esc((a.mime ?? '').split('/').pop().toUpperCase())} · ${esc(fileSize(a.size ?? a.bytes))}</span>
     </span>
     <button type="button" class="composer-btn" data-download="${esc(a.id ?? '')}"
             aria-label="Download ${esc(a.name ?? 'file')}">${icons.download}</button>
-  </div>` : '');
+  </div>`;
+};
 
 function message(m) {
     const classes = ['msg', m.mentionsMe ? 'mentions-me' : ''].filter(Boolean).join(' ');
@@ -109,7 +162,8 @@ function message(m) {
           <span class="msg-time">${esc(m.at)}</span>
         </div>
         <div class="msg-body">${messageText(m.text, m.mentions)}</div>
-        ${linkPreview(m.preview)}
+        ${videoEmbed(m)}
+        ${m.embed ? '' : linkPreview(m.preview)}
         ${attachment(m.attachment)}
         ${reactions(m.reactions, m.canReact)}
       </div>

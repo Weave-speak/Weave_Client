@@ -56,6 +56,8 @@ export function resolveMentions(body, usernames) {
  * share a millisecond, and when they do an unstable sort makes them swap places on every
  * re-render, which looks like the conversation rewriting itself.
  */
+import { extractUrls, embedFor } from './embeds.js';
+
 export function toTimelineItems(records = [], { users = new Map(), me = null, now = Date.now() } = {}) {
     const usernames = [...users.values()].map((u) => u.username);
     const sorted = [...records].sort((a, b) =>
@@ -93,6 +95,10 @@ export function toTimelineItems(records = [], { users = new Map(), me = null, no
             },
             text: record.body,
             reactions: record.reactions ?? [],
+            attachment: record.attachment ?? null,
+            preview: record.preview ?? null,
+            embed: embedFor(record.body),
+            firstUrl: extractUrls(record.body)[0] ?? null,
             mentions,
             mentionsMe: Boolean(me?.username)
                 && mentions.some((m) => m.toLowerCase() === me.username.toLowerCase()),

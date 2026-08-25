@@ -66,6 +66,33 @@ export function createApi({ origin, token = null }) {
         serverInfo: () => request('GET', '/api/server-info'),
         securityQuestions: () => request('GET', '/api/auth/questions'),
 
+        /**
+         * A file, raw. request() JSON-encodes, which would wreck bytes; this path sends
+         * the blob as-is and lets the server's magic-byte sniffing decide what it is.
+         */
+        async uploadFile(file) {
+            const res = await fetch(origin + '/api/uploads', {
+                method: 'POST',
+                headers: { ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) },
+                body: file,
+                credentials: 'omit',
+                signal: AbortSignal.timeout(60_000),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new ApiError(data.message ?? data.error ?? 'Upload failed.', { status: res.status });
+            return data;
+        },
+
+        /** Auth-gated bytes (uploads) as a blob, for <img> tags and downloads. */
+        async fetchBlob(path) {
+            const res = await fetch(origin + path, {
+                headers: { ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) },
+                credentials: 'omit',
+            });
+            if (!res.ok) throw new ApiError('Could not load the file.', { status: res.status });
+            return res.blob();
+        },
+
         login: (username, password) =>
             request('POST', '/api/auth/login', { body: { username, password } }),
 

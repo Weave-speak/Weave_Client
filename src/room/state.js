@@ -298,6 +298,18 @@ export function createRoomState({ me = null, server = {} } = {}) {
             emit();
         },
 
+        /** A fetched link preview joining its message; repaints via the normal emit. */
+        setMessagePreview(channelId, messageId, preview) {
+            const list = state.messages.get(channelId);
+            if (!list) return;
+            const at = list.findIndex((m) => m.id === messageId);
+            if (at < 0) return;
+            const updated = [...list];
+            updated[at] = { ...updated[at], preview };
+            state.messages.set(channelId, updated);
+            emit();
+        },
+
         setMessages(channelId, items) {
             state.messages.set(channelId, items ?? []);
             emit();

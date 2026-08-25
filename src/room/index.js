@@ -27,9 +27,10 @@ import { userHue } from '../ui/hue.js';
 import { mentionQuery, matchMentions, insertMention } from './mentions.js';
 import { freshHistory, advanceHistory, nextPageQuery, shouldLoadOlder } from './history.js';
 import { stageView, tileKey, sharePickerView } from './views/stage.js';
+import { extractUrls } from './embeds.js';
 import { avatar } from './views/parts.js';
 import { esc } from '../ui/dom.js';
-import { $, $$, html } from '../ui/dom.js';
+import { $, $$, html, safe } from '../ui/dom.js';
 
 /** Close enough to the bottom that the reader is following along. */
 const STICK_PX = 80;
@@ -96,6 +97,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
     const canBrowse = features.includes('chat.browse');
     const canDm = features.includes('module.dm');
     const canReact = features.includes('chat.reactions');
+    const canPreview = features.includes('chat.link-previews');
     const canCall = features.includes('dm.calls');
     // The call the user is part of, and where to stand again when it ends.
     let activeCallThreadId = null;
@@ -572,7 +574,11 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         // messages have no reaction store yet, so the add button stays away there.
         const inDm = Boolean(state.raw.activeDmId);
         list.innerHTML = messageList(items.map((i) =>
-            (i.kind === 'message' ? { ...i, canReact: canReact && !inDm } : i)));
+            (i.kind === 'message'
+                ? { ...i, canReact: canReact && !inDm, embedPlaying: playingEmbeds.has(i.id) }
+                : i)));
+        hydrateAuthImages();
+        if (!inDm) requestPreviews(state.raw.viewChannelId ?? state.raw.currentChannelId);
 
         // The "this is the start" note lives outside the list. Rebuilt every paint rather
         // than cached, so it always names the CURRENT room — it once said "the room"
@@ -955,6 +961,167 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         }
     }
 
+    /* ── rich content: uploads, previews, images, embeds ─────────────────── */
+
+    // The image waiting on the composer, if any: uploaded already, sent with the next
+    // message, shown as a chip the user can discard.
+    let pendingAttachment = null;
+    let attachInput = null;
+
+    // Messages whose video embed the user has started; the view renders those as the
+    // live iframe rather than the card.
+    const playingEmbeds = new Set();
+
+    // url -> objectURL for auth-gated images, so each image is fetched once.
+    const blobUrls = new Map();
+    // url -> preview | null (null = asked and answered nothing), so the server is asked once.
+    const previewCache = new Map();
+    const previewAsked = new Set();
+
+    /** Fill every <img data-auth-src> with bearer-fetched bytes. Idempotent per paint. */
+    function hydrateAuthImages() {
+        for (const img of $$('img[data-auth-src]', mount)) {
+            const url = img.dataset.authSrc;
+            delete img.dataset.authSrc;
+            const held = blobUrls.get(url);
+            if (held) { img.src = held; continue; }
+            api.fetchBlob(url).then((blob) => {
+                const obj = URL.createObjectURL(blob);
+                blobUrls.set(url, obj);
+                img.src = obj;
+            }).catch(() => { img.closest('.attach-image-wrap')?.remove(); });
+        }
+    }
+
+    /**
+     * Ask the server about the first link in any message that has one and no preview
+     * yet. Once per message, once per URL — the server caches too, but not asking at
+     * all is cheaper than asking politely.
+     */
+    function requestPreviews(channelId) {
+        if (!canPreview) return;
+        const list = state.raw.messages.get(channelId) ?? [];
+        for (const record of list) {
+            if (record.preview !== undefined && record.preview !== null) continue;
+            if (previewAsked.has(record.id)) continue;
+            const url = extractUrls(record.body)[0];
+            if (!url) continue;
+            previewAsked.add(record.id);
+            const held = previewCache.get(url);
+            if (held !== undefined) {
+                if (held) state.setMessagePreview(channelId, record.id, held);
+                continue;
+            }
+            api.request('GET', `/api/link-preview?url=${encodeURIComponent(url)}`)
+                .then((data) => {
+                    previewCache.set(url, data);
+                    state.setMessagePreview(channelId, record.id, data);
+                })
+                .catch(() => { previewCache.set(url, null); });
+        }
+    }
+
+    async function pickAttachment() {
+        if (!attachInput) {
+            attachInput = document.createElement('input');
+            attachInput.type = 'file';
+            attachInput.accept = 'image/png,image/jpeg,image/gif,image/webp';
+            attachInput.addEventListener('change', async () => {
+                const file = attachInput.files?.[0];
+                attachInput.value = '';
+                if (!file) return;
+                paintAttachStrip({ uploading: true, name: file.name });
+                try {
+                    const stored = await api.uploadFile(file);
+                    pendingAttachment = { ...stored, name: file.name.slice(0, 80) };
+                    paintAttachStrip();
+                } catch (err) {
+                    pendingAttachment = null;
+                    paintAttachStrip({ error: err?.message ?? 'Upload failed.' });
+                }
+            });
+        }
+        attachInput.click();
+    }
+
+    /** The little chip above the composer: what is about to ride the next message. */
+    function paintAttachStrip(stateOverride = null) {
+        let strip = $('#attachStrip', mount);
+        if (!strip) {
+            const wrap = $('.composer-wrap', mount) ?? $('.composer', mount)?.parentElement;
+            if (!wrap) return;
+            strip = document.createElement('div');
+            strip.id = 'attachStrip';
+            wrap.prepend(strip);
+        }
+        if (stateOverride?.uploading) {
+            strip.innerHTML = safe`<span class="attach-chip">Uploading ${stateOverride.name}…</span>`;
+            return;
+        }
+        if (stateOverride?.error) {
+            strip.innerHTML = safe`<span class="attach-chip error">${stateOverride.error}</span>`;
+            setTimeout(() => { if (!pendingAttachment) strip.innerHTML = ''; }, 4000);
+            return;
+        }
+        if (!pendingAttachment) { strip.innerHTML = ''; return; }
+        strip.innerHTML = safe`
+          <span class="attach-chip">
+            <img data-auth-src="${pendingAttachment.url}" alt="">
+            <span>${pendingAttachment.name}</span>
+            <button type="button" data-attach-clear aria-label="Remove attachment">✕</button>
+          </span>`;
+        hydrateAuthImages();
+    }
+
+    /* ── the composer's emoji palette ────────────────────────────────────── */
+
+    const COMPOSER_EMOJI = [
+        '😀', '😄', '😂', '🤣', '😊', '😉', '😍', '😘',
+        '🤔', '🙃', '😅', '😭', '😤', '😡', '🥶', '😱',
+        '👍', '👎', '👏', '🙌', '🤝', '💪', '🙏', '👀',
+        '❤️', '🔥', '✨', '🎉', '💯', '✅', '❌', '❓',
+        '🍕', '☕', '🍺', '🎮', '🎲', '🎧', '🖥️', '🚀',
+    ];
+    let emojiPopEl = null;
+
+    function closeEmojiPop() { emojiPopEl?.remove(); emojiPopEl = null; }
+
+    function toggleEmojiPop(anchor) {
+        if (emojiPopEl) return closeEmojiPop();
+        const pop = document.createElement('div');
+        pop.className = 'emoji-pop';
+        pop.innerHTML = COMPOSER_EMOJI.map((e) =>
+            `<button type="button" data-emoji-insert="${e}" aria-label="Insert ${e}">${e}</button>`).join('');
+        const wrap = anchor.closest('.composer');
+        wrap.style.position = 'relative';
+        wrap.append(pop);
+        emojiPopEl = pop;
+    }
+
+    /* ── the image lightbox ──────────────────────────────────────────────── */
+
+    function openLightbox(src, alt = '') {
+        closeLightbox();
+        const layer = document.createElement('div');
+        layer.className = 'lightbox';
+        layer.id = 'lightbox';
+        layer.innerHTML = safe`
+          <button type="button" class="lightbox-close" data-lightbox-close
+                  aria-label="Close (Esc)">✕</button>
+          <img src="${src}" alt="${alt}">`;
+        layer.addEventListener('click', (e) => {
+            // The image itself is the only thing that is not an exit.
+            if (e.target.tagName !== 'IMG') closeLightbox();
+        });
+        mount.append(layer);
+        document.addEventListener('keydown', lightboxKey);
+    }
+    function lightboxKey(e) { if (e.key === 'Escape') closeLightbox(); }
+    function closeLightbox() {
+        $('#lightbox', mount)?.remove();
+        document.removeEventListener('keydown', lightboxKey);
+    }
+
     /* ── the reaction picker ─────────────────────────────────────────────── */
 
     // A fixed palette rather than a full emoji keyboard: eight covers most reacting,
@@ -1041,6 +1208,56 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             }
             if (event.target.closest('[data-add-member]')) {
                 toggleMemberPicker();
+                return;
+            }
+
+            if (event.target.closest('[data-attach]')) { pickAttachment(); return; }
+            if (event.target.closest('[data-attach-clear]')) {
+                pendingAttachment = null;
+                paintAttachStrip();
+                return;
+            }
+            const emojiBtn = event.target.closest('[data-emoji]');
+            if (emojiBtn) { toggleEmojiPop(emojiBtn); return; }
+            const emojiPick = event.target.closest('[data-emoji-insert]');
+            if (emojiPick) {
+                const input = $('#composerInput', mount);
+                if (input) {
+                    const at = input.selectionStart ?? input.value.length;
+                    input.setRangeText(emojiPick.dataset.emojiInsert, at, input.selectionEnd ?? at, 'end');
+                    input.focus();
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+                return;
+            }
+            if (!event.target.closest('.emoji-pop') && emojiPopEl) closeEmojiPop();
+
+            const shot = event.target.closest('[data-lightbox]');
+            if (shot?.src) { openLightbox(shot.src, shot.alt); return; }
+            if (event.target.closest('[data-lightbox-close]')) { closeLightbox(); return; }
+
+            const embed = event.target.closest('[data-embed-play]');
+            if (embed) {
+                // Click-to-play: only NOW does the provider's player get a seat, and only
+                // its official embed surface, sandboxed. The playing set drives the VIEW,
+                // so repaints re-render the iframe instead of killing the video.
+                playingEmbeds.add(embed.dataset.embedPlay);
+                paint();
+                return;
+            }
+
+            const dl = event.target.closest('[data-download]');
+            if (dl) {
+                const a = dl.closest('[data-message]');
+                const url = `/api/uploads/${dl.dataset.download}`;
+                api.fetchBlob(url).then((blob) => {
+                    const obj = URL.createObjectURL(blob);
+                    const link2 = document.createElement('a');
+                    link2.href = obj;
+                    link2.download = a?.querySelector('.attach-name')?.textContent ?? 'file';
+                    link2.click();
+                    setTimeout(() => URL.revokeObjectURL(obj), 30_000);
+                }).catch(() => {});
                 return;
             }
 
@@ -1704,8 +1921,12 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
     function sendMessage() {
         const input = $('#composerInput', mount);
-        const body = input?.value.trim();
-        if (!body) return;
+        const body = input?.value.trim() ?? '';
+        const attachment = pendingAttachment
+            ? { id: pendingAttachment.id, mime: pendingAttachment.mime,
+                bytes: pendingAttachment.bytes, name: pendingAttachment.name }
+            : null;
+        if (!body && !attachment) return;
         mention = null;
         paintMentionPop();
         msgNoise.record(Date.now());
@@ -1714,14 +1935,18 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         // that on a slow link people retype, or send twice.
         input.value = '';
         input.style.height = 'auto';
+        pendingAttachment = null;
+        paintAttachStrip();
+        closeEmojiPop();
         if (state.raw.activeDmId) {
-            link.send('dm:send', { threadId: state.raw.activeDmId, body });
+            link.send('dm:send', { threadId: state.raw.activeDmId, body, ...(attachment ? { attachment } : {}) });
         } else if (!(state.raw.viewChannelId ?? state.raw.currentChannelId)) {
             return;   // standing nowhere, viewing nothing: there is no "here" to message
         } else {
             link.send('text-chat:send', {
                 channelId: state.raw.viewChannelId ?? state.raw.currentChannelId,
                 body,
+                ...(attachment ? { attachment } : {}),
             });
         }
     }

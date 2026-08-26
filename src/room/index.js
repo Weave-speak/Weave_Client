@@ -646,6 +646,32 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             return;
         }
 
+        if (msg.type === 'media_reset') {
+            // The server's announced media address moved — on a home line the ISP can
+            // change it under us, and every transport we hold is now pointed at somebody
+            // else's IP. Nothing looks wrong from here: the socket is fine, the roster is
+            // right, and no audio arrives in either direction. Rebuild against the new
+            // address rather than waiting out an ICE timeout per transport.
+            const channel = state.raw.channels.find((c) => c.id === state.raw.currentChannelId)
+                ?? { id: state.raw.currentChannelId };
+            // Without capabilities startVoice() tears media down and then returns before
+            // rebuilding it — worse than doing nothing. Leave the existing path alone and
+            // let it heal the slow way instead.
+            if (state.raw.currentChannelId && msg.rtpCapabilities) {
+                startVoice({
+                    type: 'moved',
+                    channel,
+                    mediaReset: true,
+                    rtpCapabilities: msg.rtpCapabilities,
+                    peers: roomPeers(),
+                }).catch((err) => {
+                    voiceState = { state: 'failed', message: err.message };
+                    paint();
+                });
+            }
+            return;
+        }
+
         if (msg.type === 'producers_truth') {
             // Server memory beats client memory: update the roster's bookkeeping AND
             // hand the same list straight to the media layer, so the heal runs on what

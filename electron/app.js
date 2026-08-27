@@ -175,7 +175,26 @@ function createWindow() {
     // must not leave a pending capture request forever.
     win.webContents.session.setDisplayMediaRequestHandler(async (_request, callback) => {
         let done = false;
-        const finish = (result) => { if (!done) { done = true; callback(result); } };
+        // Declining is the awkward half of this API. Electron has no "no thanks" value: a
+        // result without a video source raises `TypeError: Video was requested, but no video
+        // stream was provided` out of the native binding -- and because that lands in an IPC
+        // listener or a timer rather than in the try below, it reached the top and killed the
+        // app. Verified against Electron 43: the throw is cosmetic. The request IS completed,
+        // and the renderer's getDisplayMedia() rejects with AbortError, which is exactly what
+        // a cancel should look like. So swallow it, and let a genuine failure be logged.
+        const finish = (result) => {
+            if (done) return;
+            done = true;
+            try {
+                callback(result);
+            } catch (err) {
+                if (result?.video) {
+                    log.error({ evt: 'share.callback_failed', err: String(err) }, 'Capture callback rejected a real source');
+                } else {
+                    log.info({ evt: 'share.declined' }, 'Screen share cancelled');
+                }
+            }
+        };
         try {
             const sources = await desktopCapturer.getSources({
                 types: ['screen', 'window'],

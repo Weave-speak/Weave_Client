@@ -1458,8 +1458,11 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             if (event.target.closest('[data-toggle-screen]')) {
                 (voice.screenOn ? Promise.resolve(voice.disableScreen()) : voice.enableScreen())
                     .catch((err) => {
-                        // Cancelling the picker is a decision, not a failure.
-                        if (err?.name === 'NotAllowedError') return;
+                        // Cancelling the picker is a decision, not a failure. The two names
+                        // are the two pickers: a browser's own declines with NotAllowedError,
+                        // while our desktop picker declines by handing Electron no source,
+                        // which surfaces here as AbortError.
+                        if (err?.name === 'NotAllowedError' || err?.name === 'AbortError') return;
                         voiceState = { state: 'no-mic', message: `Screen share failed: ${err.message}` };
                         paint();
                     })

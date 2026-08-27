@@ -27,6 +27,7 @@ import { userHue } from '../ui/hue.js';
 import { mentionQuery, matchMentions, insertMention } from './mentions.js';
 import { freshHistory, advanceHistory, nextPageQuery, shouldLoadOlder } from './history.js';
 import { stageView, tileKey, sharePickerView } from './views/stage.js';
+import { stageSignature, stagePaintDecision } from './stage-paint.js';
 import { extractUrls } from './embeds.js';
 import { avatar } from './views/parts.js';
 import { esc } from '../ui/dom.js';
@@ -112,6 +113,15 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
     let stageHeightPx = null;
     // A watch clicked from another room: focus lands when the stream does.
     let pendingFocus = null;
+    // What the stage last rendered. Repainting writes innerHTML, which throws away every
+    // tile and builds new ones -- so an identical repaint is not free: it re-creates each
+    // <video> and re-attaches srcObject. The pong carries the room's producer truth every
+    // 25 s whether or not anything changed, so without this guard the stage rebuilt itself
+    // on a timer, forever.
+    let lastStageSignature = null;
+    // Set when a repaint was withheld because it would have dropped the viewer out of
+    // fullscreen; flushed the moment they leave it.
+    let stagePaintDeferred = false;
 
     const voice = createVoice({
         link,
@@ -466,9 +476,36 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         // A dragged height belongs to the SPLIT; the compact indication row sizes itself.
         if (!stageFocus) stageHeightPx = null;
 
-        slot.innerHTML = stageView({ tiles, focus: stageFocus, heightPx: stageHeightPx });
+        const signature = stageSignature({ tiles, focus: stageFocus, heightPx: stageHeightPx });
+        const decision = stagePaintDecision({
+            signature,
+            lastSignature: lastStageSignature,
+            hasChildren: slot.childElementCount > 0,
+            // The tile holder is what was handed to requestFullscreen, so it carries the key.
+            fullscreenKey: document.fullscreenElement?.dataset?.tile ?? null,
+            tiles,
+        });
+        if (decision !== 'paint') {
+            // A deferred paint is owed one; a skipped paint is not, because nothing changed.
+            if (decision === 'defer') stagePaintDeferred = true;
+            // Still reconcile the streams. The signature deliberately ignores MediaStream
+            // identity, so a stream REPLACED on a tile that is already live (a heal, a
+            // re-consume) does not move it — and without this the tile would keep playing a
+            // dead object until something unrelated forced a repaint.
+            attachStreams(slot);
+            paintMediaButtons();
+            return;
+        }
 
-        // Streams attach after paint; a view that touched srcObject would not be a view.
+        lastStageSignature = signature;
+        slot.innerHTML = stageView({ tiles, focus: stageFocus, heightPx: stageHeightPx });
+        attachStreams(slot);
+        paintMediaButtons();
+    }
+
+    // Streams attach after paint; a view that touched srcObject would not be a view.
+    // Idempotent, so it is safe to run on a stage that was not redrawn.
+    function attachStreams(slot) {
         for (const el of slot.querySelectorAll('[data-tile]')) {
             const stream = videoStreams.get(el.dataset.tile);
             const video = el.querySelector('video');
@@ -477,9 +514,16 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                 video.play().catch(() => { /* autoplay policies; the click that follows fixes it */ });
             }
         }
-
-        paintMediaButtons();
     }
+
+    // Anything the stage wanted to draw while the viewer was in fullscreen was withheld so
+    // it would not eject them; draw it now that leaving is their own doing.
+    function onFullscreenChange() {
+        if (document.fullscreenElement || !stagePaintDeferred) return;
+        stagePaintDeferred = false;
+        paintStage();
+    }
+    document.addEventListener('fullscreenchange', onFullscreenChange);
 
     /**
      * Put one stream in the big frame — the SWAP the carousel promises. Whatever held
@@ -2050,6 +2094,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         start,
         get state() { return state; },
         destroy() {
+            document.removeEventListener('fullscreenchange', onFullscreenChange);
             clearInterval(syncTimer);
             clearInterval(statsTimer);
             voice.stop();

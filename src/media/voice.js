@@ -130,6 +130,28 @@ export function createVoice({
     // Local listening preferences per `${cid}:${slot}` — YOUR ears, nobody else's
     // stream. Survives a re-consume, so a recovery does not un-mute someone you muted.
     const audioPrefs = new Map();
+
+    // Deafened means hearing nobody. It was, until now, purely a badge: the flag went to
+    // the server, muted the microphone (the server pauses the producer, so that half was
+    // real) and changed an icon — while every incoming stream kept playing. Somebody
+    // deafened themselves and could still hear the room, which is the one thing the
+    // button promises not to happen.
+    let deafened = false;
+
+    /**
+     * What one stream should sound like right now.
+     *
+     * Deafen beats every per-stream choice while it is on, and turning it off RESTORES
+     * those choices rather than blanket-unmuting — somebody you had individually muted
+     * stays muted, which is what you would expect and what a simpler implementation
+     * would quietly get wrong.
+     */
+    function applyListen(audio, key) {
+        if (!audio) return;
+        const pref = audioPrefs.get(key) ?? { muted: false, volume: 1 };
+        audio.muted = deafened || Boolean(pref.muted);
+        audio.volume = Math.max(0, Math.min(1, pref.volume ?? 1));
+    }
     const waiters = new Set();
     const levels = new Map();      // cid -> 0..1
 
@@ -624,11 +646,10 @@ export function createVoice({
         const meter = slot === SLOTS.AUDIO ? meterFor(stream, cid) : null;
         consumers.set(consumer.id, { consumer, cid, slot, kind: 'audio', audio, meter });
 
-        const pref = audioPrefs.get(`${cid}:${slot}`);
-        if (pref) {
-            audio.muted = Boolean(pref.muted);
-            audio.volume = Math.max(0, Math.min(1, pref.volume ?? 1));
-        }
+        // Always applied, never only-when-a-preference-exists: a stream that arrives
+        // WHILE deafened has no preference of its own and must still be silent. Somebody
+        // joining and talking is exactly when the old code would have let sound through.
+        applyListen(audio, `${cid}:${slot}`);
 
         // Playback can be refused when nothing on the page has been interacted with yet.
         // It is worth knowing about rather than silently having no sound.
@@ -788,13 +809,26 @@ export function createVoice({
             if (volume !== undefined) pref.volume = Math.max(0, Math.min(1, Number(volume)));
             audioPrefs.set(key, pref);
             for (const entry of consumers.values()) {
-                if (entry.cid === cid && entry.slot === slot && entry.audio) {
-                    entry.audio.muted = pref.muted;
-                    entry.audio.volume = pref.volume;
-                }
+                if (entry.cid === cid && entry.slot === slot) applyListen(entry.audio, key);
             }
             return pref;
         },
+
+        /**
+         * Hear everybody, or nobody. Idempotent, so it is safe to call from a repaint or
+         * after a media rebuild to reassert the state rather than tracking who last set it.
+         */
+        setDeafened(on) {
+            const next = Boolean(on);
+            if (next === deafened) return deafened;
+            deafened = next;
+            for (const entry of consumers.values()) {
+                if (entry.kind === 'audio') applyListen(entry.audio, `${entry.cid}:${entry.slot}`);
+            }
+            return deafened;
+        },
+
+        get deafened() { return deafened; },
 
         getListen(cid, slot) {
             return { muted: false, volume: 1, ...(audioPrefs.get(`${cid}:${slot}`) ?? {}) };

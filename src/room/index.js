@@ -850,6 +850,10 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         }
 
         state.apply(msg);
+        // The server is the authority on this flag — it may have forced muted:true
+        // alongside it, and another of this account's devices can change it. Reasserting
+        // here (idempotent) means the audio always matches the state everyone can see.
+        if (msg.type === 'muteChanged') voice.setDeafened(Boolean(msg.deafened));
         if (['joined', 'moved', 'peer_joined', 'peer_left'].includes(msg.type)) paintStage();
     }
 
@@ -904,6 +908,11 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             paint();
             return;
         }
+
+        // A rebuild creates brand-new consumers. Reassert deafen against them before the
+        // microphone comes up, so a reconnect or a channel move can never restore sound
+        // to somebody who asked for silence.
+        voice.setDeafened(Boolean(state.toShell().me.deafened));
 
         try {
             await voice.enableMic();
@@ -1466,6 +1475,16 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                 // Deafening implies muting: it is not honest to keep sending audio to a room
                 // you have stopped listening to.
                 const deafened = !me.deafened;
+                // Locally first, like the microphone toggle: silence is what the button
+                // promises, and it should not wait on a round trip to happen. The server
+                // still pauses the producer, which is what stops us being HEARD.
+                voice.setDeafened(deafened);
+                voice.setMuted(effectiveMute({
+                    pushToTalk: Boolean(prefs.pushToTalk),
+                    held: pttHeld,
+                    muted: me.muted,
+                    deafened,
+                }));
                 link.send('setMute', { muted: deafened || me.muted, deafened });
                 return;
             }

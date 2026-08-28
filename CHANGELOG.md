@@ -4,6 +4,25 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.42] - 2026-08-28
+
+### Fixed
+- Screen shares were black. 0.1.41 asked for VP9 with spatial layers, which negotiated and
+  connected perfectly — the share was produced, both viewers consumed it, the server log
+  was clean — and then no frame ever decoded. Back to the codec that worked. VP9 is still
+  the right choice for screen text and the server still offers it; it returns when it has
+  been tested between two real machines rather than reasoned about.
+- Everyone watching a screen share heard themselves through it. 0.1.41 turned off echo
+  cancellation on the shared-audio capture, on the grounds that it degrades music. It does
+  — but that capture is the machine's whole output mix, and the mix contains the call, so
+  echo cancellation was also the only thing stopping everyone's voices being picked up and
+  sent back to them. It stays on.
+
+  Noise suppression and automatic gain stay off, since neither had anything to do with the
+  loop and both flatten music. The cost is that shared audio is mono again: the echo
+  canceller downmixes. Getting stereo back needs the shared application's audio captured
+  on its own rather than the whole system mix, which is a feature rather than a setting.
+
 ## [0.1.41] - 2026-08-28
 
 ### Fixed

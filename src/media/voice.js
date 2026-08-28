@@ -759,23 +759,16 @@ export function createVoice({
         try { video.contentHint = getScreenContentHint(); } catch { /* advisory only */ }
         video.addEventListener('ended', () => disableScreenInner());
 
-        // VP9 asked for by name, for this slot only, rather than by reordering the
-        // router's codec list. Order decides the default for EVERY producer, so leaving
-        // H264 first keeps the webcam on the codec that has hardware encoders everywhere
-        // and keeps older clients exactly as they were.
-        //
-        // No feature flag is needed: rtpCapabilities IS the advertisement. Against a
-        // server with no VP9 entry this falls back to the single-layer H264 share, which
-        // is what every share was until now.
-        const vp9 = device?.rtpCapabilities?.codecs
-            ?.find((c) => c.kind === 'video' && c.mimeType.toLowerCase() === 'video/vp9');
-        const encodings = getScreenEncodings();
-
+        // The router's first video codec, which is H264 — NOT VP9. Asking for VP9 by
+        // name here (0.1.41) gave every viewer a black picture: the share negotiated,
+        // produced and was consumed by both peers with a clean journal, and no frame
+        // ever decoded. The server still advertises VP9 and it is still the right codec
+        // for screen text; what is missing is evidence that the SVC path works between
+        // two real machines, and that has to come before it is asked for again.
         screenProducer = await sendTransport.produce({
             track: video,
             appData: { slot: SLOTS.SCREEN },
-            encodings: vp9 ? encodings : encodings.map(({ scalabilityMode, ...rest }) => rest),
-            ...(vp9 ? { codec: vp9 } : {}),
+            encodings: getScreenEncodings(),
             codecOptions: { videoGoogleStartBitrate: 1200 },
         });
 

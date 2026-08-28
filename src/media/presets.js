@@ -26,38 +26,44 @@ export function screenShareSettings({ preset = DEFAULT_STREAM_PRESET, prefer = '
                 frameRate: { ideal: p.fps, max: p.fps },
                 ...(p.width ? { width: { max: p.width }, height: { max: p.height } } : {}),
             },
-            // Stated rather than left to the engine. `audio: true` accepted the
-            // getUserMedia defaults, and those defaults are written for a MICROPHONE:
-            // echo cancellation subtracts the very thing a loopback capture is
-            // capturing, noise suppression treats sustained music as noise and gates
-            // it, and auto gain flattens a film's dynamic range into a pump. Stereo is
-            // asked for because a system mix IS stereo, and until now the opusStereo we
-            // set at produce time had only mono to work with.
+            // ECHO CANCELLATION MUST STAY ON. This looks wrong for a loopback capture
+            // and is not. The capture is the machine's whole output mix, and that mix
+            // contains the CALL — everyone else's voices, playing out of this machine.
+            // AEC is the only thing removing them, so turning it off sends the room
+            // back to itself and every viewer hears their own voice returned through
+            // the stream. That shipped in 0.1.41 and is what this comment exists to
+            // stop happening again. Headphones do not help: the loopback is taken from
+            // the render mix, not from a microphone.
             //
-            // These are advisory — Electron's loopback path and each browser honour them
-            // to different degrees — but stating them costs nothing and takes the
-            // guesswork out of the next report of "the stream sounds underwater".
+            // Noise suppression and auto gain are a different matter and stay OFF: NS
+            // treats sustained music as noise and gates it, AGC flattens a film's
+            // dynamic range into a pump, and neither has anything to do with the
+            // feedback loop above.
+            //
+            // The cost is mono — Chromium's echo canceller downmixes — so a system mix
+            // is carried as one channel. Getting stereo back means capturing the shared
+            // APPLICATION's audio rather than the whole system mix, which is what
+            // Discord does and what Electron's desktopCapturer cannot currently express.
+            // That is the real fix, and it is a feature, not a constraint tweak.
             audio: {
-                echoCancellation: false,
+                echoCancellation: true,
                 noiseSuppression: false,
                 autoGainControl: false,
-                channelCount: 2,
                 sampleRate: 48000,
             },
         },
-        // One VP9 stream carrying several layers, rather than one flat layer. This is the
-        // change that stops one person on hotel wifi ruining the share for everybody: with
-        // a single encoding the SFU has nothing smaller to give them, so their congestion
-        // controller drags the whole encoder down. '_KEY' is K-SVC — inter-layer
-        // prediction on key frames only — which is what lets the SFU move a viewer between
-        // layers without forcing a full refresh on everyone else.
+        // ONE LAYER. VP9 K-SVC was tried here in 0.1.41 — 'L2T3_KEY' for detail,
+        // 'L3T3_KEY' for motion — and every viewer got a black picture while the audio
+        // from the same share played fine. Signalling was healthy end to end: producers
+        // made, consumers made, packets moving. So the frames arrived and could not be
+        // decoded, which points at the SVC layer selection rather than at anything in
+        // the transport.
         //
-        // The mode follows the same setting as the content hint because it answers the
-        // same question one level up: what should survive when the link tightens.
-        encodings: [{
-            maxBitrate: p.maxBitrate,
-            scalabilityMode: prefer === 'motion' ? 'L3T3_KEY' : 'L2T3_KEY',
-        }],
+        // It is worth having: with a single encoding the SFU has no smaller rung to move
+        // a struggling viewer to, so one bad connection drags the encoder down for
+        // everybody. But it goes back in behind a real two-machine test, not on
+        // reasoning — that is exactly how it shipped broken the first time.
+        encodings: [{ maxBitrate: p.maxBitrate }],
         contentHint: prefer === 'motion' ? 'motion' : 'detail',
     };
 }

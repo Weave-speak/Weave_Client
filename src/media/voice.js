@@ -32,6 +32,8 @@
 
 import { Device } from 'mediasoup-client';
 import { createMicChain, sensitivityToDb, gainToLinear } from './chain.js';
+import { micCodecOptions, screenAudioCodecOptions } from './audio-options.js';
+import { createStallDetector, readFlow } from './stall.js';
 
 // Bundled beside the app; under weave:// and vite alike this resolves to a real URL.
 const GATE_WORKLET_URL = new URL('./gate-worklet.js', import.meta.url);
@@ -49,6 +51,15 @@ export const SLOTS = Object.freeze({
  * reconnect. Its own counter, never shared with the socket's — see the note above.
  */
 const MAX_RECOVER = 4;
+
+/**
+ * How long to wait before trying again after a recovery cycle itself fails.
+ *
+ * Long enough that four attempts span a real outage rather than a burst, short enough
+ * that a person does not sit in silence wondering. The alternative — what used to happen
+ * — was no retry at all.
+ */
+const RETRY_MS = 4_000;
 
 /** How long a reply may take before we stop waiting for it. */
 const REPLY_TIMEOUT_MS = 12_000;
@@ -80,6 +91,8 @@ export function createVoice({
     getScreenContentHint = () => 'detail',
     /** Encoder budget for a screen share, read fresh per share so presets apply next time. */
     getScreenEncodings = () => [{ maxBitrate: 4_000_000 }],
+    getVideoEncodings = () => [{ maxBitrate: 1_800_000 }],
+    canRestartIce = () => false,
     /** The stage's feed: called with { cid, slot, stream } and stream null on teardown. */
     onVideo = () => {},
 } = {}) {
@@ -244,8 +257,18 @@ export function createVoice({
 
         // ICE dying is how a call ends without anyone being told. The server also reports
         // it, but the client sees it first and more reliably.
+        //
+        // 'disconnected' is fed to the watchdog rather than acted on here. It used to be
+        // ignored entirely — this handler only knew 'failed', and the server's
+        // transportFailed frame was only honoured for 'closed' — so a transport that
+        // landed on 'disconnected' and stayed there was handled by nobody. That is the
+        // silent, one-directional dropout people were reconnecting to escape. Browsers do
+        // usually fix it themselves within a few seconds, which is why the grace period
+        // lives in the detector instead of becoming an instant rebuild.
         transport.on('connectionstatechange', (statev) => {
-            if (statev === 'failed') recover(`${direction} transport ICE failed`);
+            transportState[direction] = statev;
+            if (statev === 'connected') watchdog.start();
+            assess(direction).catch(() => { /* the next tick tries again */ });
         });
 
         return transport;
@@ -278,7 +301,16 @@ export function createVoice({
      */
     function ensureTransport(direction) {
         const current = direction === 'send' ? sendTransport : recvTransport;
-        if (current) return Promise.resolve(current);
+        // `current && !current.closed`, not just `current`. A closed mediasoup Transport
+        // is still a perfectly truthy object, and these two variables are only nulled by
+        // teardownMedia() and the mediaReset branch of onMoved(). Any other path that
+        // closed a transport — a DTLS failure, the server closing its end — left the
+        // corpse here, and every later ensureSend()/ensureRecv() handed it straight back.
+        // Producing and consuming against it then failed for the rest of the session.
+        if (current && !current.closed) return Promise.resolve(current);
+        if (current) {
+            if (direction === 'send') sendTransport = null; else recvTransport = null;
+        }
         const already = direction === 'send' ? sendTransportPromise : recvTransportPromise;
         if (already) return already;
 
@@ -321,6 +353,28 @@ export function createVoice({
 
     /* ── the microphone ──────────────────────────────────────────────────── */
 
+    /**
+     * The one AudioContext, pinned to the rate Opus actually wants.
+     *
+     * A context built with no options runs at the hardware rate, so on the many machines
+     * that capture at 44.1 kHz the gate's output was resampled on its way into a 48 kHz
+     * encoder — for nothing. 'interactive' asks for the smallest buffer the engine will
+     * give us, which is what a conversation wants and what makes the meter look live.
+     *
+     * Wrapped, because Safari has historically refused a sampleRate it does not natively
+     * support, and a refused context must cost the meter, never the call.
+     */
+    function ensureAudioContext() {
+        if (audioContext) return audioContext;
+        const Ctor = window.AudioContext ?? window.webkitAudioContext;
+        try {
+            audioContext = new Ctor({ sampleRate: 48000, latencyHint: 'interactive' });
+        } catch {
+            audioContext = new Ctor();
+        }
+        return audioContext;
+    }
+
     async function openMicrophone() {
         micStream = await navigator.mediaDevices.getUserMedia({
             audio: getAudioConstraints(),
@@ -338,12 +392,14 @@ export function createVoice({
         });
 
         track.enabled = !muted;
+        // Tells the engine this is speech, so its own processing and any codec heuristics
+        // optimise for intelligibility rather than fidelity. Advisory, hence the guard.
+        try { track.contentHint = 'speech'; } catch { /* advisory only */ }
 
         // The chain sits between the device and the producer. If it cannot build — no
         // worklet, refused context — the raw track is used and nothing else changes.
-        audioContext ??= new (window.AudioContext ?? window.webkitAudioContext)();
         const settings = getChainSettings();
-        micChain = await createMicChain(audioContext, micStream, {
+        micChain = await createMicChain(ensureAudioContext(), micStream, {
             workletUrl: GATE_WORKLET_URL,
             gain: gainToLinear(settings.micGain),
             gateEnabled: Boolean(settings.noiseGate),
@@ -352,6 +408,118 @@ export function createVoice({
         });
         return micChain.track;
     }
+
+    /* ── the stall watchdog ──────────────────────────────────────────────── */
+    //
+    // Three faults present as the same symptom — one direction of audio silently stops
+    // and the person has to reconnect. Only the first is a state change:
+    //
+    //   A. the transport reaches 'disconnected' and stays there (nobody used to act);
+    //   B. ICE still says 'connected' while the path is dead, because a NAT rebinding
+    //      moved the UDP mapping and consent requests still flow outbound;
+    //   C. the server's own ICE consent timeout expires.
+    //
+    // So the watchdog watches BOTH the state and the bytes. Restarting ICE is the cheap
+    // rung: it repairs the path with every producer and consumer left in place, where a
+    // rebuild costs a DTLS handshake, new consumers and a second or two of silence.
+
+    const WATCHDOG_MS = 2_000;
+    const transportState = { send: 'new', recv: 'new' };
+    const detectors = { send: createStallDetector(), recv: createStallDetector() };
+    let repairInFlight = null;
+
+    /** Is anything supposed to be moving on this transport right now? */
+    function expectingFlow(direction) {
+        if (direction === 'send') {
+            return [micProducer, camProducer, screenProducer, screenAudioProducer]
+                .some((p) => p && !p.closed);
+        }
+        return [...consumers.values()].some((c) => !c.consumer?.closed);
+    }
+
+    async function flowOn(direction) {
+        const transport = direction === 'send' ? sendTransport : recvTransport;
+        if (!transport || transport.closed) return null;
+        try {
+            return readFlow(await transport.getStats());
+        } catch {
+            // Stats are a diagnostic, never a dependency: an engine that refuses them
+            // leaves the state machine running on states alone rather than breaking it.
+            return null;
+        }
+    }
+
+    /** Sample one transport and act on the verdict. */
+    async function assess(direction) {
+        if (!running || repairInFlight) return;
+        const transport = direction === 'send' ? sendTransport : recvTransport;
+        if (!transport || transport.closed) return;
+
+        const verdict = detectors[direction].sample({
+            state: transportState[direction],
+            packets: await flowOn(direction),
+            expecting: expectingFlow(direction),
+            now: Date.now(),
+        });
+        if (verdict === 'ok') return;
+
+        // Without server support the cheap rung does not exist, so skip straight to the
+        // expensive one — which is what every client did before ICE restart was added.
+        if (verdict === 'restart-ice' && canRestartIce()) {
+            await repairIce(direction);
+            return;
+        }
+        await recover(`${direction} transport stopped carrying media`);
+    }
+
+    /**
+     * Ask the server for fresh ICE credentials and hand them to the transport.
+     *
+     * Deliberately does NOT spend a recover() attempt: this repairs the path without
+     * disturbing anything riding on it, so a user reconnecting through a flaky NAT should
+     * not be four ICE restarts closer to "rejoin the room to try again".
+     */
+    async function repairIce(direction) {
+        if (repairInFlight) return repairInFlight;
+        const transport = direction === 'send' ? sendTransport : recvTransport;
+        if (!transport || transport.closed) return undefined;
+
+        onChange({ state: 'recovering', reason: `restoring the ${direction} connection` });
+
+        repairInFlight = (async () => {
+            link.send('restartIce', { direction });
+            const reply = await waitFor('iceRestarted', (m) => m.direction === direction);
+            if (transport.closed) return;
+            await transport.restartIce({ iceParameters: reply.iceParameters });
+            onChange({ state: 'live', repaired: true });
+        })().catch(async (err) => {
+            // A server too old to know the message, or one that could not restart: the
+            // rebuild is still there, and it is what used to happen every time.
+            await recover(`ICE restart failed on ${direction}: ${err.message}`);
+        }).finally(() => { repairInFlight = null; });
+
+        return repairInFlight;
+    }
+
+    const watchdog = {
+        timer: null,
+        start() {
+            if (this.timer || !running) return;
+            this.timer = setInterval(() => {
+                assess('send').catch(() => {});
+                assess('recv').catch(() => {});
+            }, WATCHDOG_MS);
+            this.timer.unref?.();
+        },
+        stop() {
+            if (this.timer) clearInterval(this.timer);
+            this.timer = null;
+            detectors.send.reset();
+            detectors.recv.reset();
+            transportState.send = 'new';
+            transportState.recv = 'new';
+        },
+    };
 
     /* ── recovery ────────────────────────────────────────────────────────── */
 
@@ -366,9 +534,11 @@ export function createVoice({
     // regardless of which one's failure triggered the call, so a second trigger arriving
     // while the first is still running has nothing left to do but wait for it.
     let recoveryInFlight = null;
+    let retryTimer = null;
 
     async function recover(reason) {
         if (!running) return;
+        if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
         if (recoveryInFlight) return recoveryInFlight;
         recoveryInFlight = runRecovery(reason).finally(() => { recoveryInFlight = null; });
         return recoveryInFlight;
@@ -390,9 +560,25 @@ export function createVoice({
         try {
             await ensureRecv();
             if (micProducerWanted) await enableMic();
+            // A rebuilt recv path with no microphone wanted is a complete success for a
+            // listener. Without this the counter could only ever be reset by a successful
+            // produce (see enableMic), so anyone listening — mic refused, mic switched
+            // off — burned all four attempts across a session's ordinary blips and then
+            // met "rejoin the room to try again" for a hiccup everyone else survived.
+            if (!micProducerWanted) recoverAttempts = 0;
+            watchdog.start();
             onChange({ state: 'live', recovered: true });
         } catch (err) {
             onChange({ state: 'recovering', reason: err.message, attempt: recoverAttempts, of: MAX_RECOVER });
+            // Re-arm. teardownMedia() has already closed both transports and with them the
+            // connectionstatechange listeners that would have triggered another attempt,
+            // so a cycle that failed here used to be the end of it: if ensureRecv() threw,
+            // enableMic() above never ran and the microphone stayed dead for the rest of
+            // the session, silently, with nothing left to notice.
+            if (running && recoverAttempts < MAX_RECOVER) {
+                retryTimer = setTimeout(() => { recover(`retrying after: ${err.message}`); }, RETRY_MS);
+                retryTimer.unref?.();
+            }
         }
     }
 
@@ -424,7 +610,7 @@ export function createVoice({
         micProducer = await sendTransport.produce({
             track,
             appData: { slot: SLOTS.AUDIO },
-            codecOptions: { opusDtx: true, opusFec: true },
+            codecOptions: micCodecOptions(),
         });
 
         // TRUST NOTHING ABOUT THE CHAIN. On at least one Chromium build, a worklet graph
@@ -438,6 +624,7 @@ export function createVoice({
         // the recovery counter is allowed to reset. Resetting it on a socket reconnect
         // instead is what produced 51 rebuilds in 18 minutes.
         recoverAttempts = 0;
+        watchdog.start();
         onChange({ state: 'live', talking: true });
 
         // The proven path is the moment to restore anything video the user still wants:
@@ -488,12 +675,6 @@ export function createVoice({
 
     /* ── producing video ─────────────────────────────────────────────────── */
 
-    /** Simulcast for faces: three quality rungs the server picks between per viewer. */
-    const CAM_ENCODINGS = [
-        { scaleResolutionDownBy: 4, maxBitrate: 150_000 },
-        { scaleResolutionDownBy: 2, maxBitrate: 500_000 },
-        { scaleResolutionDownBy: 1, maxBitrate: 1_800_000 },
-    ];
 
     async function enableWebcam() {
         camWanted = true;
@@ -514,7 +695,10 @@ export function createVoice({
         camProducer = await sendTransport.produce({
             track,
             appData: { slot: SLOTS.WEBCAM },
-            encodings: CAM_ENCODINGS,
+            // Simulcast for faces: three rungs the SFU picks between per viewer, sized
+            // to the resolution actually being captured. A fixed ladder meant a 1080p
+            // capture was squeezed into a 720p budget, so "sharper" made it softer.
+            encodings: getVideoEncodings(),
             codecOptions: { videoGoogleStartBitrate: 800 },
         });
         onVideo({ cid: 'self', slot: SLOTS.WEBCAM, stream: camStream });
@@ -535,6 +719,29 @@ export function createVoice({
         onChange({ state: 'live', webcam: false });
     }
 
+    /**
+     * State the degradation preference instead of inheriting one.
+     *
+     * Chromium derives a preference from the content hint, but the derivation differs by
+     * version and by whether the source is flagged as a screencast, and none of it is
+     * observable from here. The user answered this question in Settings — "keep text
+     * readable" or "keep motion smooth" — and that answer should reach the encoder as
+     * itself rather than as a hint about a hint.
+     *
+     * Best effort on purpose: Firefox ignores the field, and Chromium throws
+     * InvalidModificationError if the encodings array identity is disturbed. So read,
+     * change one field, write back, and never let a refusal cost the share.
+     */
+    function applyDegradationPreference(producer, hint) {
+        const sender = producer?.rtpSender;
+        if (!sender?.getParameters) return;
+        try {
+            const params = sender.getParameters();
+            params.degradationPreference = hint === 'motion' ? 'maintain-framerate' : 'maintain-resolution';
+            sender.setParameters(params).catch(() => { /* advisory */ });
+        } catch { /* the content hint still applies */ }
+    }
+
     async function enableScreen() {
         screenWanted = true;
         if (!device?.loaded) throw new Error('Voice is not ready yet.');
@@ -552,23 +759,37 @@ export function createVoice({
         try { video.contentHint = getScreenContentHint(); } catch { /* advisory only */ }
         video.addEventListener('ended', () => disableScreenInner());
 
+        // VP9 asked for by name, for this slot only, rather than by reordering the
+        // router's codec list. Order decides the default for EVERY producer, so leaving
+        // H264 first keeps the webcam on the codec that has hardware encoders everywhere
+        // and keeps older clients exactly as they were.
+        //
+        // No feature flag is needed: rtpCapabilities IS the advertisement. Against a
+        // server with no VP9 entry this falls back to the single-layer H264 share, which
+        // is what every share was until now.
+        const vp9 = device?.rtpCapabilities?.codecs
+            ?.find((c) => c.kind === 'video' && c.mimeType.toLowerCase() === 'video/vp9');
+        const encodings = getScreenEncodings();
+
         screenProducer = await sendTransport.produce({
             track: video,
             appData: { slot: SLOTS.SCREEN },
-            // One layer whose budget the preset decides: a screen is one truth, not a
-            // face to be downscaled.
-            encodings: getScreenEncodings(),
+            encodings: vp9 ? encodings : encodings.map(({ scalabilityMode, ...rest }) => rest),
+            ...(vp9 ? { codec: vp9 } : {}),
             codecOptions: { videoGoogleStartBitrate: 1200 },
         });
 
+        applyDegradationPreference(screenProducer, getScreenContentHint());
+
         const [sysAudio] = screenStream.getAudioTracks();
         if (sysAudio) {
+            // 'music' is the counterpart to the capture constraints: it tells the engine
+            // not to apply the speech-shaped processing that makes shared audio pump.
+            try { sysAudio.contentHint = 'music'; } catch { /* advisory only */ }
             screenAudioProducer = await sendTransport.produce({
                 track: sysAudio,
                 appData: { slot: SLOTS.SCREEN_AUDIO },
-                // Music and game audio: stereo, and no DTX — silence suppression makes
-                // music gap and pump.
-                codecOptions: { opusStereo: true, opusDtx: false },
+                codecOptions: screenAudioCodecOptions(),
             });
         }
 
@@ -606,7 +827,17 @@ export function createVoice({
 
     async function consume(cid, slot) {
         if (!device?.loaded) return null;
-        if ([...consumers.values()].some((c) => c.cid === cid && c.slot === slot)) return null;
+        // A LIVE duplicate. The guard used to test only for the presence of a map entry,
+        // so a consumer that had died — its transport closed, or the server closing it
+        // without a frame we understood — blocked its own replacement for ever. That is
+        // what defeated the server's reconciler: it re-announced the producer every five
+        // seconds, this line returned null every time, and the listener stayed silently
+        // deaf to one particular person until they rejoined.
+        for (const [id, entry] of consumers) {
+            if (entry.cid !== cid || entry.slot !== slot) continue;
+            if (!entry.consumer?.closed) return null;
+            dropConsumer(id);
+        }
         if (isWatchable(slot) && !watching.has(watchKey(cid, slot))) return null;
 
         await ensureRecv();
@@ -689,7 +920,7 @@ export function createVoice({
      */
     function meterFor(stream, key) {
         try {
-            audioContext ??= new (window.AudioContext ?? window.webkitAudioContext)();
+            ensureAudioContext();
             const source = audioContext.createMediaStreamSource(stream);
             const analyser = audioContext.createAnalyser();
             analyser.fftSize = 512;
@@ -741,6 +972,8 @@ export function createVoice({
     /* ── teardown ────────────────────────────────────────────────────────── */
 
     function teardownMedia() {
+        // Everything the detectors know describes a path that is about to stop existing.
+        watchdog.stop();
         for (const id of [...consumers.keys()]) dropConsumer(id);
 
         try { micProducer?.close(); } catch { /* already closed */ }
@@ -1077,10 +1310,23 @@ export function createVoice({
                     return true;
 
                 case 'transportFailed':
-                    // The server saw ICE die. It reports 'disconnected' too, which often
-                    // recovers on its own, so only a close is treated as fatal here — the
-                    // client's own connectionstatechange handles the rest.
-                    if (msg.state === 'closed') recover(`server reported ${msg.direction} ${msg.state}`);
+                    // 'closed' is terminal: the transport is already gone server-side, so
+                    // there is nothing left to repair in place.
+                    if (msg.state === 'closed') {
+                        recover(`server reported ${msg.direction} ${msg.state}`);
+                        return true;
+                    }
+                    // 'disconnected' used to be discarded here, on the grounds that the
+                    // client's own connectionstatechange would handle it. It did not — that
+                    // handler only knew 'failed' — so this frame and that handler each
+                    // deferred to the other and the transport stayed silently dead. Now it
+                    // goes to the watchdog, which gives the browser its grace period and
+                    // then repairs.
+                    if (msg.state === 'disconnected' && msg.direction) {
+                        transportState[msg.direction] = 'disconnected';
+                        watchdog.start();
+                        assess(msg.direction).catch(() => {});
+                    }
                     return true;
 
                 default:
@@ -1149,6 +1395,8 @@ export function createVoice({
         stop() {
             running = false;
             micProducerWanted = false;
+            watchdog.stop();
+            if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
             clearInterval(levelTimer);
             levelTimer = null;
             teardownMedia();

@@ -18,7 +18,7 @@ import { createRoomState } from './state.js';
 import { WeaveBackground, createMessageNoise } from '../ui/weave-background.js';
 import { createVoice } from '../media/voice.js';
 import { effectiveMute, onPushToTalkChange } from '../media/mute-policy.js';
-import { screenShareSettings, cameraConstraints } from '../media/presets.js';
+import { screenShareSettings, cameraConstraints, cameraEncodings } from '../media/presets.js';
 import { createSettings, readPrefs } from '../settings/index.js';
 import { createRoomBrowser } from '../rooms/browser.js';
 import { createModal } from '../ui/modal.js';
@@ -147,6 +147,14 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             echoCancellation: prefs.echoCancellation !== false,
             noiseSuppression: prefs.noiseSuppression !== false,
             autoGainControl: prefs.autoGainControl !== false,
+            // Opus is a 48 kHz codec. Capturing at the device's native rate — 44100 on a
+            // great many Windows machines — puts a resample in front of the encoder and
+            // another behind the decoder, for nothing. Ask for the rate the codec wants.
+            sampleRate: 48000,
+            // One channel, stated. It is what the chain produces and what speech wants,
+            // and a stereo device is what used to crash the noise-gate worklet.
+            channelCount: 1,
+            latency: 0.01,
             ...(prefs.micDevice ? { deviceId: { exact: prefs.micDevice } } : {}),
         }),
         getChainSettings: () => ({
@@ -162,6 +170,11 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             res: prefs.camRes ?? '720',
             fps: Number(prefs.camFps ?? 30),
         }),
+        getVideoEncodings: () => cameraEncodings({ res: prefs.camRes ?? '720' }),
+        // Whether the cheap repair is available at all. A server without it gets the old
+        // behaviour — straight to rebuilding the transport — rather than a failed round
+        // trip on every hiccup.
+        canRestartIce: () => features.includes('media.ice-restart'),
         getScreenConstraints: () => screenShareSettings({
             preset: prefs.streamPreset, prefer: prefs.streamPrefer,
         }).constraints,

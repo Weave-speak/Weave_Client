@@ -56,7 +56,24 @@ export async function createMicChain(context, micStream, {
         gainNode.gain.value = Math.max(0, Math.min(2, gain));
 
         const gate = new AudioWorkletNode(context, 'weave-noise-gate', {
-            numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1],
+            numberOfInputs: 1,
+            numberOfOutputs: 1,
+            outputChannelCount: [1],
+            // channelCount + 'explicit' make the GRAPH do the downmix, before the
+            // processor sees anything. Without them channelCountMode defaults to 'max',
+            // which makes the node's input follow the source: a stereo capture device fed
+            // process() two input channels against the one output pinned above, the write
+            // to output[1] threw, and Chromium responds to a throw inside process() by
+            // never calling it again — a producer track of pure silence, with every API
+            // reporting success. Letting Web Audio mix is better than mixing by hand:
+            // no channel arithmetic here, and it is correct for 3+ channel devices too.
+            //
+            // Mono is the right target and not a limitation: a microphone is one sound
+            // source, and stereo capture would double the Opus bitrate to encode a phase
+            // difference nobody wants in a voice mix.
+            channelCount: 1,
+            channelCountMode: 'explicit',
+            channelInterpretation: 'speakers',
         });
         gate.parameters.get('enabled').value = gateEnabled ? 1 : 0;
         gate.parameters.get('thresholdDb').value = gateThresholdDb;

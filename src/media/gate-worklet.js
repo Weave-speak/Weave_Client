@@ -67,7 +67,20 @@ class NoiseGate extends AudioWorkletProcessor {
             ? Math.min(1, this.gain + openStep)
             : Math.max(0, this.gain - closeStep);
 
-        for (let channel = 0; channel < input.length; channel += 1) {
+        // Bounded by the OUTPUT, not the input. chain.js pins the output to one channel
+        // while the node's input follows the source, so a stereo capture device — a USB
+        // interface, a line-in, a headset driver exposing a stereo mix — used to hand this
+        // loop two input channels and one output. `output[1]` was undefined, the write
+        // threw, and Chromium answers a throw inside process() by never calling it again:
+        // the produced track was silence for ever, with every API reporting success. That
+        // is the "processed mic tracks can be silently empty in Chromium" failure, and it
+        // is why verifyChainCarries() had to exist.
+        //
+        // The graph now downmixes ahead of us (channelCountMode 'explicit'), so in
+        // practice this is 1:1. Clamping anyway costs one Math.min per block and means no
+        // future graph change can reintroduce silence.
+        const channels = Math.min(input.length, output.length);
+        for (let channel = 0; channel < channels; channel += 1) {
             const from = input[channel];
             const to = output[channel];
             for (let i = 0; i < from.length; i += 1) to[i] = from[i] * this.gain;

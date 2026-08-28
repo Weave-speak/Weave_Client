@@ -294,6 +294,16 @@ export function voicePanel({ prefs = {}, devices = [], cameras = [], features = 
         value: prefs.camRes ?? '720',
         options: [['720', '720p — kind to upload'], ['1080', '1080p — sharper, heavier']],
     })}
+    ${choose({
+        id: 'camFps', label: 'Camera frame rate',
+        hint: 'Higher is smoother and costs upload. Most webcams top out at 30.',
+        value: String(prefs.camFps ?? 30),
+        options: [
+            ['15', '15 fps — low light, low upload'],
+            ['30', '30 fps — the everyday default'],
+            ['60', '60 fps — needs a camera that can'],
+        ],
+    })}
 
     <h3 class="panel-section">Screen sharing</h3>
 

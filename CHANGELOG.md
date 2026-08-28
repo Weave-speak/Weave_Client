@@ -4,6 +4,42 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.41] - 2026-08-28
+
+### Fixed
+- Some microphones produced complete silence, on some machines only, with nothing reported
+  anywhere. If your capture device presented two channels — many USB interfaces, line
+  inputs, and several headset drivers do — the noise gate crashed on the first block of
+  audio and was never run again. Everything went on reporting success while nothing was
+  sent. If you have ever been told you sounded fine one day and were inaudible the next,
+  this was probably why.
+- Stream quality, camera quality, input gain and the noise gate all reverted every time you
+  restarted, and again every time you opened Settings. They were saved correctly and then
+  discarded on the way back in, so choosing 1080p60 quietly left you on 1080p30 for ever.
+- Shared system audio was being run through the processing meant for a microphone. Echo
+  cancellation was subtracting the audio being shared, noise suppression was treating
+  sustained music as noise, and automatic gain was flattening everything to one volume.
+  Shared audio is now captured untouched, and in stereo — it was only ever stereo in name.
+- Losing one direction of audio no longer means reconnecting by hand. A connection that
+  stopped carrying media went unnoticed: it was only acted on when the browser gave up
+  entirely, which it often never did, so the room simply stopped hearing you — or you
+  stopped hearing them — with nothing on screen to say so. It is now noticed and repaired,
+  and while that is happening the connection indicator says so.
+- After a failed reconnection attempt, the microphone stayed off for the rest of the
+  session with nothing left to notice. A listener who never turned their microphone on
+  could also exhaust the reconnection budget over a session's ordinary hiccups and be told
+  to rejoin the room for something everyone else survived.
+
+### Added
+- Voice is encoded at 64 kb/s rather than roughly 32, and shared system audio at 128 in
+  stereo. This is most of the difference between "muffled" and "clear".
+- Screen shares use VP9 where the server offers it, which is considerably sharper on text
+  and carries several quality layers at once, so one viewer on a poor connection no longer
+  drags the picture down for everybody.
+- A camera frame rate setting, which was already being read but could never be set.
+- The camera's quality ladder now follows the resolution you chose. Picking 1080p used to
+  give a 1080p picture squeezed into a 720p budget, which looked worse than 720p.
+
 ## [0.1.8] - 2026-08-23
 
 ### Added

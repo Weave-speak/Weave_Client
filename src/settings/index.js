@@ -13,6 +13,7 @@ import { createModal } from '../ui/modal.js';
 import { settingsFor } from '../server/store.js';
 import { $, $$ } from '../ui/dom.js';
 import { VERSION } from '../platform/index.js';
+import { DEFAULT_STREAM_PRESET } from '../media/presets.js';
 import {
     adminUsersPanel, adminChannelsPanel, adminServerPanel, adminDangerPanel,
 } from './admin.js';
@@ -21,8 +22,18 @@ import {
     placeholderPanel, sectionById, PLACEHOLDER_REASONS,
 } from './panels.js';
 
-/** Defaults, chosen to match what the media layer already does. */
-const DEFAULTS = {
+/**
+ * Defaults, chosen to match what the media layer already does.
+ *
+ * This list is the CONTRACT, not documentation. readPrefs() copies only the keys named
+ * here, so a preference written by set() but missing from this object is stored and then
+ * silently discarded on the next read — at app start, and again every time the settings
+ * modal opens. Eight preferences were in exactly that state: the noise gate never
+ * engaged, input gain was always 100%, and anyone who picked 1080p60 got 1080p30 back.
+ *
+ * If you add a control, add its key here. settings.test.js fails if you do not.
+ */
+export const DEFAULTS = {
     pushToTalk: false,
     pushToTalkKey: 'Space',
     noiseSuppression: true,
@@ -31,6 +42,17 @@ const DEFAULTS = {
     staticBackground: false,
     micDevice: '',
     afkExempt: false,
+    // The mic chain. `noiseGate` defaults off because a gate the user did not ask for is
+    // indistinguishable from a broken microphone; 64 is mid-slider, ~-55 dBFS.
+    micGain: 100,
+    noiseGate: false,
+    gateSensitivity: 64,
+    // Camera and screen share. These are the ones people actually noticed reverting.
+    camDevice: '',
+    camRes: '720',
+    camFps: 30,
+    streamPreset: DEFAULT_STREAM_PRESET,
+    streamPrefer: 'detail',
 };
 
 /** Read every preference for a server, defaults filled in. */

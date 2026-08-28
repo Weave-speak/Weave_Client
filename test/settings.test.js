@@ -268,3 +268,53 @@ test('the sessions panel states the RUNNING version, because updates install on 
     assert.match(markup, /Weave 9\.9\.9/);
     assert.match(markup, /installs when the app restarts/);
 });
+
+// ── the preference contract ──────────────────────────────────────────────────
+
+test('every control the settings panels persist survives a round trip', async () => {
+    // A structural test, deliberately. Eight preferences — the noise gate, input gain,
+    // gate sensitivity, camera device/resolution/fps and both stream settings — were
+    // written by set() and then dropped by readPrefs(), because readPrefs copies only the
+    // keys DEFAULTS names. Nothing failed; the values just quietly reverted at every app
+    // start and every time the modal reopened, which is why it survived so long.
+    //
+    // Asserting against the RENDERED markup rather than a hand-kept list is the point: a
+    // control added tomorrow without a default fails here rather than in a bug report.
+    const { DEFAULTS } = await import('../src/settings/index.js');
+    const prefs = { ...DEFAULTS };
+    const markup = [
+        voicePanel({ prefs, devices: [], cameras: [], features: [] }),
+        appearancePanel({ prefs }),
+    ].join('\n');
+
+    const named = [...markup.matchAll(/data-setting="([^"]+)"/g)].map((m) => m[1]);
+    assert.ok(named.length > 5, 'the panels should expose several settings to check');
+
+    for (const key of new Set(named)) {
+        assert.ok(key in DEFAULTS, `"${key}" is persisted but absent from DEFAULTS, so readPrefs drops it`);
+    }
+});
+
+test('a stored stream preset is the one that comes back', async () => {
+    // The structural test above proves DEFAULTS names every control. This proves the
+    // consequence people actually felt: picking 1080p60 and getting 1080p30 back, because
+    // readPrefs seeded from DEFAULTS and copied only the keys it already knew.
+    const map = new Map();
+    globalThis.localStorage = {
+        getItem: (k) => (map.has(k) ? map.get(k) : null),
+        setItem: (k, v) => map.set(k, String(v)),
+        removeItem: (k) => map.delete(k),
+    };
+    const { readPrefs } = await import('../src/settings/index.js');
+    const { settingsFor } = await import('../src/server/store.js');
+
+    const store = settingsFor('server-1');
+    store.set('streamPreset', '1080p60');
+    store.set('micGain', 160);
+    store.set('noiseGate', true);
+
+    const prefs = readPrefs('server-1');
+    assert.equal(prefs.streamPreset, '1080p60');
+    assert.equal(prefs.micGain, 160, 'input gain is not silently reset to unity');
+    assert.equal(prefs.noiseGate, true, 'a gate the user switched on stays on');
+});

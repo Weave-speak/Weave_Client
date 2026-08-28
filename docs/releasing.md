@@ -58,6 +58,35 @@ not exist, and the error — "Published releases must have a valid tag" — arri
 113 MB upload has already started. `npm run release` now checks this first and stops with a
 useful message instead.
 
+### Never push the tag ahead of the release
+
+electron-updater does not read the releases API. `GitHubProvider` reads
+`https://github.com/OWNER/REPO/releases.atom`, and **that feed lists bare tags alongside
+real releases**. So a pushed tag with no release behind it becomes, as far as every
+running client is concerned, the newest version — and each one then fetches
+`releases/download/<tag>/latest.yml`, gets a 404, and shows "Update failed" until the tag
+goes away or the release appears.
+
+This is the same 404 as the mid-publish window above, but it lasts as long as the gap
+between tagging and publishing rather than a minute. Creating the release as a draft does
+not help: the draft is invisible, but the *tag* is not.
+
+So push the tag and publish in one breath, never as two separate decisions:
+
+```bash
+git push --follow-tags && npm run release
+```
+
+If a tag has already been pushed and the release is not going out immediately, delete it
+again — `git push --delete origin v<version>` — and re-push it when you are ready. The
+atom feed is cached for a minute or so, so verify with the feed rather than the tag list:
+
+```bash
+curl -sS https://github.com/Weave-speak/Weave_Client/releases.atom | grep -oE "<title>[^<]*</title>" | head -3
+```
+
+The top entry after the feed title is what every updater believes is current.
+
 ### Why the release is created before the upload
 
 electron-builder publishes its artifacts **concurrently**, and each publisher creates the

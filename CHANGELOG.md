@@ -4,6 +4,19 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.43] - 2026-08-29
+
+### Fixed
+- Voice crackled and popped. 0.1.41 pinned the audio graph to 48 kHz and asked the
+  microphone for a 10 ms buffer, both to save Opus a resample it never needed saving from.
+  The sample rate asked of a microphone is only a request — a device that runs at 44.1 kHz
+  carries on doing so — while the graph was pinned regardless, and feeding a 44.1 kHz
+  microphone into a 48 kHz graph is the mismatch that clicks. The 10 ms buffer then left no
+  headroom for a machine doing anything else, and each underrun is heard as a pop.
+
+  Both are gone. Capture and the graph follow the hardware, as they did before, so they
+  always agree. The resample this was avoiding is inaudible; the crackling was not.
+
 ## [0.1.42] - 2026-08-28
 
 ### Fixed

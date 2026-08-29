@@ -147,14 +147,22 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             echoCancellation: prefs.echoCancellation !== false,
             noiseSuppression: prefs.noiseSuppression !== false,
             autoGainControl: prefs.autoGainControl !== false,
-            // Opus is a 48 kHz codec. Capturing at the device's native rate — 44100 on a
-            // great many Windows machines — puts a resample in front of the encoder and
-            // another behind the decoder, for nothing. Ask for the rate the codec wants.
-            sampleRate: 48000,
             // One channel, stated. It is what the chain produces and what speech wants,
             // and a stereo device is what used to crash the noise-gate worklet.
             channelCount: 1,
-            latency: 0.01,
+            // NO sampleRate, and NO latency. Both were set to 48000/10ms in 0.1.41 to
+            // save Opus a resample, and together they made voice crackle and pop.
+            //
+            // sampleRate here is a HINT, not a guarantee — a device that only does 44100
+            // keeps doing 44100. The AudioContext, meanwhile, was pinned to 48000, so the
+            // mic chain ended up feeding a 44.1k track into a 48k graph through a
+            // MediaStreamAudioSourceNode, which is the documented Chromium mismatch that
+            // glitches. Letting both follow the hardware means they always agree, which
+            // is what they did before and why it sounded fine.
+            //
+            // latency: 0.01 asked for a 10 ms capture buffer on top of that. Too small on
+            // a machine doing anything else, and an underrun is heard as a click. The
+            // resample it was avoiding is inaudible; the underruns were not.
             ...(prefs.micDevice ? { deviceId: { exact: prefs.micDevice } } : {}),
         }),
         getChainSettings: () => ({

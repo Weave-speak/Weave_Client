@@ -354,24 +354,22 @@ export function createVoice({
     /* ── the microphone ──────────────────────────────────────────────────── */
 
     /**
-     * The one AudioContext, pinned to the rate Opus actually wants.
+     * The one AudioContext, at whatever rate the hardware is already using.
      *
-     * A context built with no options runs at the hardware rate, so on the many machines
-     * that capture at 44.1 kHz the gate's output was resampled on its way into a 48 kHz
-     * encoder — for nothing. 'interactive' asks for the smallest buffer the engine will
-     * give us, which is what a conversation wants and what makes the meter look live.
+     * It was pinned to 48000 in 0.1.41 to save Opus a resample. That made voice crackle:
+     * the mic constraint asking for 48 kHz is only a HINT, so a device that runs at 44100
+     * carries on at 44100 — and a 44.1k track fed into a 48k graph through a
+     * MediaStreamAudioSourceNode is the documented Chromium mismatch that glitches. Left
+     * alone, the context adopts the hardware rate and the two always agree.
      *
-     * Wrapped, because Safari has historically refused a sampleRate it does not natively
-     * support, and a refused context must cost the meter, never the call.
+     * 'interactive' stays: it asks for a small buffer, which is what a conversation wants
+     * and what makes the settings meter look live. It is a hint about scheduling, not a
+     * clock, so it cannot produce the mismatch above.
      */
     function ensureAudioContext() {
-        if (audioContext) return audioContext;
-        const Ctor = window.AudioContext ?? window.webkitAudioContext;
-        try {
-            audioContext = new Ctor({ sampleRate: 48000, latencyHint: 'interactive' });
-        } catch {
-            audioContext = new Ctor();
-        }
+        audioContext ??= new (window.AudioContext ?? window.webkitAudioContext)({
+            latencyHint: 'interactive',
+        });
         return audioContext;
     }
 

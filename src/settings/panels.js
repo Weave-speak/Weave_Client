@@ -309,7 +309,7 @@ export function voicePanel({ prefs = {}, devices = [], cameras = [], features = 
 
     ${choose({
         id: 'streamPreset', label: 'Stream quality',
-        hint: 'Applies from your next share.',
+        hint: 'Applies from your next share. The frame rate is a target rather than a ceiling: a 70fps game streams at 35 rather than stuttering against a hard 30.',
         value: prefs.streamPreset ?? '1080p30',
         options: [
             ['720p30', '720p · 30fps — kind to every connection'],
@@ -320,7 +320,7 @@ export function voicePanel({ prefs = {}, devices = [], cameras = [], features = 
     })}
     ${choose({
         id: 'streamPrefer', label: 'When the connection tightens',
-        hint: 'The encoder cannot always keep both. Pick what survives.',
+        hint: 'The encoder cannot always keep both. Pick what survives — a game usually wants motion.',
         value: prefs.streamPrefer ?? 'detail',
         options: [['detail', 'Keep text readable'], ['motion', 'Keep motion smooth']],
     })}

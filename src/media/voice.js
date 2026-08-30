@@ -33,10 +33,17 @@
 import { Device } from 'mediasoup-client';
 import { createMicChain, sensitivityToDb, gainToLinear } from './chain.js';
 import { micCodecOptions, screenAudioCodecOptions } from './audio-options.js';
+import { bestFitFramerate } from './presets.js';
 import { createStallDetector, readFlow } from './stall.js';
 
 // Bundled beside the app; under weave:// and vite alike this resolves to a real URL.
 const GATE_WORKLET_URL = new URL('./gate-worklet.js', import.meta.url);
+
+// How long to let a fresh capture settle before believing its frame rate, and how often to
+// look again afterwards. Three seconds because media-source stats average over about a
+// second, and the first of those covers the picker and the window handshake, not the game.
+const FPS_SETTLE_MS = 3_000;
+const FPS_RECHECK_MS = 15_000;
 
 /** Producer slots, matching the server's own names. */
 export const SLOTS = Object.freeze({
@@ -86,7 +93,7 @@ export function createVoice({
     /** Camera constraints, read fresh per open, same reasoning as the microphone's. */
     getVideoConstraints = () => ({ width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }),
     /** Screen constraints: resolution/fps caps and whether to bring system audio. */
-    getScreenConstraints = () => ({ video: { frameRate: { ideal: 30, max: 60 } }, audio: true }),
+    getScreenConstraints = () => ({ video: { frameRate: { max: 120 } }, audio: true }),
     /** 'detail' keeps text readable under motion; 'motion' keeps games smooth. */
     getScreenContentHint = () => 'detail',
     /** Encoder budget for a screen share, read fresh per share so presets apply next time. */
@@ -110,6 +117,9 @@ export function createVoice({
     let screenProducer = null;
     let screenAudioProducer = null;
     let screenWanted = false;
+    let screenFpsTimer = null;
+    let screenFpsApplied = null;
+    let screenFpsTarget = null;
     let muted = false;
     let recoverAttempts = 0;
     let running = false;
@@ -737,6 +747,82 @@ export function createVoice({
         } catch { /* the content hint still applies */ }
     }
 
+    /**
+     * Snap the encoder's rate cap to a cadence the source divides into evenly.
+     *
+     * `track.getSettings().frameRate` cannot answer this: it reports what was ASKED FOR, not
+     * what the game is drawing. The `media-source` entry in the sender's stats is the capture
+     * rate before any encoder decision, which is the number that needs dividing.
+     *
+     * Why it is measured at all rather than chosen up front: nothing knows a game's cadence
+     * until frames are arriving, and the cadence moves — a menu, a loading screen, a vsync
+     * toggle mid-session. So this looks again rather than deciding once.
+     *
+     * Best effort throughout. A share running at the plain preset rate is a worse picture; a
+     * share that threw while measuring is no picture at all.
+     */
+    async function snapScreenFramerate() {
+        const producer = screenProducer;
+        const sender = producer?.rtpSender;
+        if (!producer || !sender?.getParameters) return;
+        if (!screenFpsTarget) return;
+
+        let sourceFps = null;
+        try {
+            const stats = await producer.getStats();
+            for (const entry of stats.values()) {
+                if (entry.type === 'media-source' && entry.kind === 'video') sourceFps = entry.framesPerSecond;
+            }
+        } catch { return; }
+        // The share can end while the stats are being fetched; do not write to its successor.
+        if (screenProducer !== producer) return;
+
+        const fit = bestFitFramerate(sourceFps, screenFpsTarget);
+        if (fit === null || fit === screenFpsApplied) return;
+
+        // Read, change ONE FIELD IN PLACE, write back. Replacing the encodings array or its
+        // entries is what makes Chromium throw InvalidModificationError — the same trap
+        // applyDegradationPreference above documents, and the same way around it.
+        try {
+            const params = sender.getParameters();
+            if (!params.encodings?.length) return;
+            params.encodings[0].maxFramerate = fit;
+            await sender.setParameters(params);
+            screenFpsApplied = fit;
+        } catch { /* advisory; the preset's own rate still applies */ }
+    }
+
+    /**
+     * Watch a fresh share's cadence: once the capture has settled, then periodically.
+     *
+     * Rescheduling is conditional on the producer being the same one, so the watcher retires
+     * itself even on a teardown path that forgets to stop it. Every teardown does stop it —
+     * this is the belt to that braces, because there are three of them.
+     */
+    function watchScreenFramerate() {
+        stopScreenFramerateWatch();
+        // Frozen for the life of the share, like every other preset value: the settings panel
+        // says 'Applies from your next share', and a target that moved mid-share would leave
+        // the rate following one preset while the bitrate still followed another.
+        screenFpsTarget = getScreenEncodings()?.[0]?.maxFramerate ?? null;
+        const producer = screenProducer;
+        const tick = (delay) => {
+            screenFpsTimer = setTimeout(async () => {
+                await snapScreenFramerate();
+                if (screenProducer === producer) tick(FPS_RECHECK_MS);
+                else screenFpsTimer = null;
+            }, delay);
+        };
+        tick(FPS_SETTLE_MS);
+    }
+
+    function stopScreenFramerateWatch() {
+        clearTimeout(screenFpsTimer);
+        screenFpsTimer = null;
+        screenFpsApplied = null;
+        screenFpsTarget = null;
+    }
+
     async function enableScreen() {
         screenWanted = true;
         if (!device?.loaded) throw new Error('Voice is not ready yet.');
@@ -768,6 +854,7 @@ export function createVoice({
         });
 
         applyDegradationPreference(screenProducer, getScreenContentHint());
+        watchScreenFramerate();
 
         const [sysAudio] = screenStream.getAudioTracks();
         if (sysAudio) {
@@ -788,6 +875,7 @@ export function createVoice({
 
     function disableScreenInner() {
         screenWanted = false;
+        stopScreenFramerateWatch();
         for (const [slot, ref] of [[SLOTS.SCREEN, screenProducer], [SLOTS.SCREEN_AUDIO, screenAudioProducer]]) {
             if (!ref) continue;
             link.send('closeProducer', { slot });
@@ -972,6 +1060,7 @@ export function createVoice({
         screenProducer = null;
         try { screenAudioProducer?.close(); } catch { /* already closed */ }
         screenAudioProducer = null;
+        stopScreenFramerateWatch();
         for (const track of camStream?.getTracks() ?? []) track.stop();
         camStream = null;
         for (const track of screenStream?.getTracks() ?? []) track.stop();
@@ -1355,6 +1444,7 @@ export function createVoice({
                 screenProducer = null;
                 try { screenAudioProducer?.close(); } catch { /* already closed */ }
                 screenAudioProducer = null;
+                stopScreenFramerateWatch();
                 try { sendTransport?.close(); } catch { /* already closed */ }
                 try { recvTransport?.close(); } catch { /* already closed */ }
                 sendTransport = null;

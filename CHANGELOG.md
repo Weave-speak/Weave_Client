@@ -4,6 +4,40 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.46] - 2026-08-30
+
+### Fixed
+- Screen shares of games stuttered, and the cause was our own frame rate cap rather than
+  anything on the network. A quality setting of 30fps was applied as a hard ceiling, which
+  makes the capture run on a fixed timer — and a game drawing 70 frames a second into a
+  30-per-second grid puts two frames in one slot and one in the next, over and over. Nothing
+  was being lost. The stagger was manufactured before the picture ever left the machine.
+
+  The rate you pick is now a target rather than a ceiling, and a share settles on the nearest
+  rate the source divides into evenly. A 70fps game streams at 35 — two whole frames each
+  time, evenly spaced — where before it stumbled along at a nominal 30. A 144fps game streams
+  at 28.8, a 50fps one at 25. There is nothing to configure: it measures what you are actually
+  sharing a few seconds in, and looks again as you play, because a game's frame rate moves
+  between a menu and a firefight.
+
+- Shared audio sounded far worse than it should have. Nothing was setting a bitrate for it, so
+  it fell back to the browser engine's own default of around 32 kb/s — and then split even
+  that across two channels, well under what music or a game's soundtrack needs to survive at
+  all. It is now encoded at 256 kb/s, which is Opus's own recommended ceiling for stereo music
+  and a rounding error beside the video it travels with.
+
+  This is not the voice bitrate that 0.1.45 handed back to server operators, and that decision
+  stands: your microphone is untouched and still follows the server. A screen's system audio is
+  a different slot with a different job, and the server has only one value to give both —
+  raising it there to suit shared music would drag every microphone up with it for nothing.
+
+### Known
+- Shared system audio is still carried as one channel rather than two. Echo cancellation has to
+  stay on for it, because the capture is your machine's whole output mix and that mix contains
+  the call — without it, everyone hears their own voice returned through your stream — and
+  cancelling echo downmixes to mono as a side effect. Sharing one application's audio instead
+  of the whole mix is the real answer, and it is a larger piece of work.
+
 ## [0.1.45] - 2026-08-29
 
 ### Changed

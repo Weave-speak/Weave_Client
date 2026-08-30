@@ -27,18 +27,32 @@ test('neither slot asks for Opus NACK', () => {
     }
 });
 
-test('neither slot pins a bitrate in the client', () => {
-    // The server declares it, so an operator can change it and listen without cutting a
-    // release. A value baked in here would override that and take the knob away.
+test('the microphone leaves its bitrate to the server; the stream does not', () => {
+    // The mic defers so an operator can change WEAVE_OPUS_BITRATE and listen without cutting
+    // a release. The stream cannot afford the same deference, for two reasons. The router's
+    // value is a floor for EVERY producer, so raising it there to suit shared music drags the
+    // microphone up with it for no gain — the two slots have to be able to disagree. And that
+    // knob ships OFF, so "the server decides" has meant Chromium's own fallback of roughly
+    // 32 kb/s, split across two channels at that. Game and film audio arriving as a smeared
+    // mono blur is the whole of what people were reporting.
+    assert.equal(micCodecOptions().opusMaxAverageBitrate, undefined, 'the operator decides, by ear');
+    assert.equal(screenAudioCodecOptions().opusMaxAverageBitrate, 256_000, 'Opus own ceiling for stereo music');
+});
+
+test('neither slot pins a playback rate', () => {
+    // Pinning fullband stops Opus narrowing its own bandwidth when the link tightens, which
+    // is a thing it is good at and which being told otherwise prevented.
     for (const opts of [micCodecOptions(), screenAudioCodecOptions()]) {
-        assert.equal(opts.opusMaxAverageBitrate, undefined);
         assert.equal(opts.opusMaxPlaybackRate, undefined, 'let Opus narrow its own bandwidth under pressure');
     }
 });
 
 test('system audio is stereo, and does not suppress silence', () => {
     // Silence suppression makes music gap and pump. Stereo is asked for even though echo
-    // cancellation currently downmixes the capture to mono — it costs nothing and is
-    // correct the moment per-application capture makes real stereo possible.
-    assert.deepEqual(screenAudioCodecOptions(), { opusStereo: true, opusDtx: false });
+    // cancellation currently downmixes the capture to mono — it costs nothing, is correct
+    // the moment per-application capture makes real stereo possible, and at 256 kb/s no
+    // longer has a starved budget to halve.
+    assert.deepEqual(screenAudioCodecOptions(), {
+        opusStereo: true, opusDtx: false, opusMaxAverageBitrate: 256_000,
+    });
 });

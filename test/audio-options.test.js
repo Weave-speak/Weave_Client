@@ -1,51 +1,44 @@
-// What we ask Opus for. These numbers are the difference between "sounds like Discord"
-// and "sounds like a phone", so they are asserted rather than trusted to a code review.
+// What we ask Opus for.
+//
+// These assertions are a record of what NOT to change without listening first. Four
+// releases tried to improve this path and each made something worse; the values below are
+// what shipped in every version people described as sounding fine.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { micCodecOptions, screenAudioCodecOptions } from '../src/media/audio-options.js';
 
-test('the microphone asks for a bitrate at all', () => {
-    // Without opusMaxAverageBitrate, Chromium picks ~32 kb/s mono. Discord's default
-    // channel is 64 kb/s; below roughly 48 kb/s speech starts losing its top octave.
-    const o = micCodecOptions();
-    assert.equal(o.opusMaxAverageBitrate, 64_000);
-    assert.equal(o.opusMaxPlaybackRate, 48_000, 'fullband, stated rather than assumed');
-    assert.equal(o.opusStereo, false, 'a microphone is one sound source');
-    assert.equal(o.opusFec, true);
-});
-
-test('the microphone does not use DTX', () => {
-    // The noise gate already emits digital silence. DTX on top of it stops sending
-    // altogether, and the first syllable after a pause arrives before the decoder has
-    // re-primed — heard as a clipped word. It would also make a quiet-but-connected
-    // microphone indistinguishable from a dead send path, which the stall watchdog reads.
-    assert.equal(micCodecOptions().opusDtx, false);
-});
-
-test('system audio is stereo and given room to breathe', () => {
-    const o = screenAudioCodecOptions();
-    assert.equal(o.opusStereo, true);
-    assert.equal(o.opusMaxAverageBitrate, 128_000);
-    assert.equal(o.opusDtx, false, 'silence suppression makes music gap and pump');
+test('the microphone asks for FEC and DTX, and nothing else', () => {
+    // Deliberately minimal. Every addition here has cost something: opusNack made distant
+    // callers fast-forward, and pinning the bitrate and playback rate belongs on the
+    // server where it can be A/B tested with an environment variable instead of a release.
+    assert.deepEqual(micCodecOptions(), { opusDtx: true, opusFec: true });
 });
 
 test('neither slot asks for Opus NACK', () => {
-    // Asking for it made callers on another continent sound fast-forwarded and crackly.
-    // Retransmission costs a round trip, so the receiver holds its jitter buffer open and
-    // then time-compresses to catch up — and the server never retransmits audio anyway,
-    // so the wait bought nothing. In-band FEC is the loss resilience that suits a long
-    // link, because it costs no round trip at all.
+    // Retransmission costs a full round trip, so the receiver holds its jitter buffer open
+    // and then time-compresses to catch up — heard as fast-forwarded speech. It only ever
+    // showed up for callers on another continent, and the server never retransmits audio
+    // anyway, so the wait bought nothing. In-band FEC is the loss resilience for a long
+    // link, because the redundancy travels inside the next packet at no round-trip cost.
     for (const opts of [micCodecOptions(), screenAudioCodecOptions()]) {
         assert.equal(opts.opusNack, undefined, 'let mediasoup-client strip it, as it does by default');
-        assert.equal(opts.opusFec, true, 'FEC is the one that helps a distant caller');
     }
 });
 
-test('the two slots do not share a bitrate', () => {
-    // The reason these cannot be declared once on the router: its codec parameters are the
-    // floor for EVERY producer, so a single value would either starve the stream or drag
-    // the microphone up for nothing.
-    assert.notEqual(micCodecOptions().opusMaxAverageBitrate, screenAudioCodecOptions().opusMaxAverageBitrate);
+test('neither slot pins a bitrate in the client', () => {
+    // The server declares it, so an operator can change it and listen without cutting a
+    // release. A value baked in here would override that and take the knob away.
+    for (const opts of [micCodecOptions(), screenAudioCodecOptions()]) {
+        assert.equal(opts.opusMaxAverageBitrate, undefined);
+        assert.equal(opts.opusMaxPlaybackRate, undefined, 'let Opus narrow its own bandwidth under pressure');
+    }
+});
+
+test('system audio is stereo, and does not suppress silence', () => {
+    // Silence suppression makes music gap and pump. Stereo is asked for even though echo
+    // cancellation currently downmixes the capture to mono — it costs nothing and is
+    // correct the moment per-application capture makes real stereo possible.
+    assert.deepEqual(screenAudioCodecOptions(), { opusStereo: true, opusDtx: false });
 });

@@ -4,6 +4,30 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.45] - 2026-08-29
+
+### Changed
+- Voice encoding is back to exactly what 0.1.40 did. Four releases tried to improve it and
+  each one made something worse — a mismatched audio clock, then retransmission that made
+  distant callers sound fast-forwarded, then a general loss of quality that no single
+  explanation covered. That last one is the point: when three explanations in a row have
+  been wrong, the right move is to return to the version people were happy with rather
+  than reason a fourth time.
+
+  So the microphone is captured and encoded the way it was before any of this started.
+  Nothing is pinned, nothing is forced, and Opus is left to make its own decisions about
+  bandwidth under pressure — which it is good at, and which being told otherwise prevented.
+
+- Raising the voice bitrate is now something a server operator turns on and listens to,
+  rather than a guess baked into a release. It is genuinely worth having, and it will come
+  back on by default once somebody has compared the two by ear.
+
+### Kept
+- Every actual bug fix from 0.1.41 onwards stays: the noise gate no longer kills stereo
+  microphones, quality settings survive a restart, a dead connection is noticed and
+  repaired instead of silently staying dead, shared audio no longer echoes the room back
+  to itself, and screen shares are not black.
+
 ## [0.1.44] - 2026-08-29
 
 ### Fixed

@@ -390,9 +390,6 @@ export function createVoice({
         });
 
         track.enabled = !muted;
-        // Tells the engine this is speech, so its own processing and any codec heuristics
-        // optimise for intelligibility rather than fidelity. Advisory, hence the guard.
-        try { track.contentHint = 'speech'; } catch { /* advisory only */ }
 
         // The chain sits between the device and the producer. If it cannot build — no
         // worklet, refused context — the raw track is used and nothing else changes.

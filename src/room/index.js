@@ -147,22 +147,11 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             echoCancellation: prefs.echoCancellation !== false,
             noiseSuppression: prefs.noiseSuppression !== false,
             autoGainControl: prefs.autoGainControl !== false,
-            // One channel, stated. It is what the chain produces and what speech wants,
-            // and a stereo device is what used to crash the noise-gate worklet.
-            channelCount: 1,
-            // NO sampleRate, and NO latency. Both were set to 48000/10ms in 0.1.41 to
-            // save Opus a resample, and together they made voice crackle and pop.
-            //
-            // sampleRate here is a HINT, not a guarantee — a device that only does 44100
-            // keeps doing 44100. The AudioContext, meanwhile, was pinned to 48000, so the
-            // mic chain ended up feeding a 44.1k track into a 48k graph through a
-            // MediaStreamAudioSourceNode, which is the documented Chromium mismatch that
-            // glitches. Letting both follow the hardware means they always agree, which
-            // is what they did before and why it sounded fine.
-            //
-            // latency: 0.01 asked for a 10 ms capture buffer on top of that. Too small on
-            // a machine doing anything else, and an underrun is heard as a click. The
-            // resample it was avoiding is inaudible; the underruns were not.
+            // NOTHING ELSE. sampleRate, latency and channelCount were all added in
+            // 0.1.41 and every one of them cost something: a 48 kHz request the device
+            // ignored while the graph was pinned to it (crackling), a 10 ms buffer with
+            // no headroom (popping), and a channel count the chain already handles. The
+            // three flags above are what shipped for every version people liked.
             ...(prefs.micDevice ? { deviceId: { exact: prefs.micDevice } } : {}),
         }),
         getChainSettings: () => ({

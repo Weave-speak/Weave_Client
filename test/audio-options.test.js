@@ -31,6 +31,18 @@ test('system audio is stereo and given room to breathe', () => {
     assert.equal(o.opusDtx, false, 'silence suppression makes music gap and pump');
 });
 
+test('neither slot asks for Opus NACK', () => {
+    // Asking for it made callers on another continent sound fast-forwarded and crackly.
+    // Retransmission costs a round trip, so the receiver holds its jitter buffer open and
+    // then time-compresses to catch up — and the server never retransmits audio anyway,
+    // so the wait bought nothing. In-band FEC is the loss resilience that suits a long
+    // link, because it costs no round trip at all.
+    for (const opts of [micCodecOptions(), screenAudioCodecOptions()]) {
+        assert.equal(opts.opusNack, undefined, 'let mediasoup-client strip it, as it does by default');
+        assert.equal(opts.opusFec, true, 'FEC is the one that helps a distant caller');
+    }
+});
+
 test('the two slots do not share a bitrate', () => {
     // The reason these cannot be declared once on the router: its codec parameters are the
     // floor for EVERY producer, so a single value would either starve the stream or drag

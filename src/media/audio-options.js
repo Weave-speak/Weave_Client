@@ -22,15 +22,24 @@
  * and with DTX on, a connected-but-quiet microphone is indistinguishable from a dead path.
  *
  * FEC on — a packet reconstructed from the next one matters more to a conversation than
- * any bitrate does. NACK on so the SFU may retransmit; mediasoup-client strips Opus NACK
- * unless it is asked for.
+ * any bitrate does, and it costs no round trip: the redundancy rides inside the next
+ * packet, so a long link benefits exactly as much as a short one.
+ *
+ * NACK deliberately NOT set. mediasoup-client strips Opus NACK unless asked, and asking
+ * for it (0.1.41) made distant callers sound fast-forwarded and crackly. Retransmission
+ * costs a full round trip, so the receiver holds its jitter buffer open waiting — and
+ * then time-compresses the audio to catch up, which is what "fast-forwarded" is. Worse,
+ * nothing was ever going to arrive: the server leaves enableRtx at its default, which is
+ * false for audio, so it never retransmits. The wait was pure cost.
+ *
+ * Over a short hop the delay is small enough to hide. Over an international one it is
+ * not, which is why this only ever showed up for callers on another continent.
  */
 export function micCodecOptions() {
     return {
         opusStereo: false,
         opusFec: true,
         opusDtx: false,
-        opusNack: true,
         opusMaxAverageBitrate: 64_000,
         opusMaxPlaybackRate: 48_000,
     };
@@ -54,7 +63,6 @@ export function screenAudioCodecOptions() {
         opusStereo: true,
         opusFec: true,
         opusDtx: false,
-        opusNack: true,
         opusMaxAverageBitrate: 128_000,
         opusMaxPlaybackRate: 48_000,
     };

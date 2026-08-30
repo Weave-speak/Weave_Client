@@ -4,6 +4,21 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.44] - 2026-08-29
+
+### Fixed
+- Callers on another continent sounded fast-forwarded and crackly. 0.1.41 asked for Opus
+  retransmission, which mediasoup-client otherwise strips. Retransmission costs a full
+  round trip, so the receiver holds its jitter buffer open waiting for a repeat of any
+  lost packet — and then plays the audio slightly fast to catch back up, which is exactly
+  what "fast-forwarded" is. Nothing was ever coming: the server does not retransmit audio,
+  so the waiting bought nothing at all.
+
+  Over a short hop the delay is small enough to go unnoticed, which is why this only ever
+  showed up for people calling from far away. Removed. Forward error correction, which
+  costs no round trip because the redundancy travels inside the next packet, still does
+  the loss resilience — and it helps a distant caller just as much as a near one.
+
 ## [0.1.43] - 2026-08-29
 
 ### Fixed

@@ -4,6 +4,39 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.48] - 2026-08-31
+
+### Added
+- **A profile picture.** Settings → My Profile now has an upload button. Pick an image and
+  it opens in a circular frame — drag it to choose what sits inside the circle, use the
+  slider to zoom, then save. What you see in the frame is exactly what gets stored: the
+  crop happens here on your machine, and only the finished square is sent.
+
+  It then appears wherever you do — the room list, the bottom bar, your messages. Remove
+  takes it away again and puts your initials back.
+
+- **A status, behind your own name.** Clicking your profile in the bottom bar now opens a
+  small panel: Online or Away, with a tick on the one you are on, and Settings underneath.
+  The dot beside your name changes to match, and so does the one everybody else sees.
+
+  Your choice is remembered by the server, so it survives closing the app. It is also a
+  separate thing from being moved to the away room for going quiet — that is about where
+  you are, this is about whether you want to be disturbed, and neither undoes the other any
+  more.
+
+### Changed
+- The dot beside somebody in a room means something now. It used to say only that they were
+  connected, which everyone in the list is anyway; it now shows what that person has said
+  about themselves.
+
+- Settings is one click further away, reached from the panel behind your name rather than
+  directly. That is the trade for status living somewhere you will actually use it — buried
+  in a preferences dialog, a status is one nobody sets and nobody trusts.
+
+### Requires
+- A server running **0.1.20** or newer. Against an older one the upload button and the
+  status options are simply not shown, rather than shown and failing.
+
 ## [0.1.47] - 2026-08-31
 
 ### Added

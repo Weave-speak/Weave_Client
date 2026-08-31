@@ -11,7 +11,8 @@
 // interpretation of them.
 
 import {
-    OUTPUT_PX, minimumScale, clampOffset, centredOffset, sourceRect, zoomAbout, MAX_ZOOM,
+    OUTPUT_PX, minimumScale, clampOffset, centredOffset, sourceRect, zoomAbout,
+    scaleForPercent, MAX_ZOOM,
 } from './avatar-crop.js';
 
 /** Matches the frame in shell.css. Read once rather than measured, so the maths is stable. */
@@ -128,7 +129,11 @@ export function createAvatarPicker({ root, api, onSaved = () => {}, onError = ()
 
     function setZoom(percent) {
         if (!image) return;
-        view = zoomAbout({ ...dims(), ...view, next: percent / 100 });
+        // Through scaleForPercent, because the slider is a multiple of "fills the frame"
+        // rather than an absolute scale. Passing percent/100 straight in works only for
+        // images small enough that covering the frame needs a scale above 1 — which is
+        // almost no real photograph, and is exactly the shape of image a test reaches for.
+        view = zoomAbout({ ...dims(), ...view, next: scaleForPercent({ percent, ...dims() }) });
         paint();
     }
 

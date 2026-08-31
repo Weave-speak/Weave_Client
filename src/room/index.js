@@ -112,7 +112,14 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
     // Avatars are behind the session, so they cannot be an <img src> straight to the API.
     // The cache fetches each one once and repaints when it lands — until then the initials
     // stand in, which is why nothing here has a loading state.
-    const avatarCache = createAvatarCache({ api, onResolved: () => paint() });
+    const avatarCache = createAvatarCache({
+        api,
+        onResolved: () => {
+            paint();
+            // The settings dialog is its own DOM and does not repaint with the room.
+            settings?.refreshProfile?.();
+        },
+    });
     const canMovePeople = Boolean(user?.isAdmin) && features.includes('peers.admin-move');
     const canModeratePeople = Boolean(user?.isAdmin) && features.includes('moderation');
     // The call the user is part of, and where to stand again when it ends.
@@ -253,6 +260,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         // A picture is a fact about the roster, not about the settings dialog. The server
         // broadcasts it to everybody else; this is what makes it appear HERE without
         // waiting for our own frame to come back to us.
+        avatars: avatarCache,
         onProfileChange: (next) => {
             if (next?.avatar) avatarCache.forget(next.avatar);
             state.setMyAvatar(next?.avatar ?? null);

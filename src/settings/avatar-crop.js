@@ -56,6 +56,31 @@ export const centredOffset = ({ width, height, scale, frame }) => ({
 });
 
 /**
+ * The absolute scale a zoom slider position means.
+ *
+ * The slider is RELATIVE to "fills the frame", not to the image's own pixels: 100% is
+ * whatever scale covers the circle, 400% is four times that. Reading it as an absolute
+ * scale is a bug that hides completely behind a small test image and then does nothing at
+ * all on a real photograph.
+ *
+ * A 3000x2000 photo covers a 220px frame at 0.11, so its zoom ceiling is 0.44 — while an
+ * absolute slider asks for 1.0 through 4.0, every one of which clamps to that same 0.44.
+ * The control moves, the picture does not, and nothing anywhere reports a problem.
+ */
+export function scaleForPercent({ percent, width, height, frame }) {
+    const lowest = minimumScale({ width, height, frame });
+    const wanted = (Number(percent) || 100) / 100;
+    return lowest * Math.max(1, Math.min(MAX_ZOOM, wanted));
+}
+
+/** The slider position that matches a scale. The inverse, for putting the thumb back. */
+export function percentForScale({ scale, width, height, frame }) {
+    const lowest = minimumScale({ width, height, frame });
+    if (!lowest) return 100;
+    return Math.round((scale / lowest) * 100);
+}
+
+/**
  * The rectangle of the ORIGINAL image that the frame is currently showing.
  *
  * This is the whole point of the file. The frame shows displayed pixels; the canvas needs

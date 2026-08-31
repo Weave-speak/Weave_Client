@@ -88,7 +88,10 @@ test('presence is derived from peers, not stored on the user', () => {
 
     state.apply({ type: 'peer_joined', peer: peer('cid-kes', 'u-kes', 'kestrel') });
     const after = state.toShell().people;
-    assert.equal(after.find((p) => p.username === 'kestrel').presence, 'live');
+    // 'online' rather than the old 'live': a connected person who has said nothing is
+    // online by default. The point this test defends is unchanged — it comes from having
+    // a peer, never from the user row.
+    assert.equal(after.find((p) => p.username === 'kestrel').presence, 'online');
     assert.equal(after.find((p) => p.username === 'kestrel').roomId, 'c-hall');
 
     state.apply({ type: 'peer_left', cid: 'cid-kes' });
@@ -105,11 +108,11 @@ test('one person on two machines is one entry in the member list', () => {
 
     const kestrels = state.toShell().people.filter((p) => p.username === 'kestrel');
     assert.equal(kestrels.length, 1);
-    assert.equal(kestrels[0].presence, 'live');
+    assert.equal(kestrels[0].presence, 'online');
 
     // And closing one connection does not make them vanish while the other is still open.
     state.apply({ type: 'peer_left', cid: 'cid-kes-2' });
-    assert.equal(state.toShell().people.find((p) => p.username === 'kestrel').presence, 'live');
+    assert.equal(state.toShell().people.find((p) => p.username === 'kestrel').presence, 'online');
 });
 
 test('one person on two connections occupies a room once', () => {
@@ -129,14 +132,35 @@ test('one person on two connections occupies a room once', () => {
     assert.equal(state.toShell().rooms.find((r) => r.id === 'c-hall').occupants.length, 1);
 });
 
-test('the AFK room reads as away rather than as live', () => {
+test('being in the AFK room is marked, but does not overwrite a declared status', () => {
+    // This used to read the dot straight off the room: standing in the AFK channel WAS
+    // being away. It cannot be, now that a person can say it themselves — the AFK sweep
+    // moves people between rooms on a timer, and letting it drive the dot would mean a
+    // choice somebody made on purpose gets silently undone the moment they go quiet.
+    //
+    // Being in that room is still visible. It is just visible as what it is.
     const state = fresh();
     state.apply({ type: 'joined', channel: channels[0], self: peer('cid-me', 'u-me', 'ghostbyte'), peers: [] });
     state.apply({ type: 'peer_joined', peer: peer('cid-moth', 'u-moth', 'moth', { channelId: 'c-afk' }) });
 
     const moth = state.toShell().people.find((p) => p.username === 'moth');
-    assert.equal(moth.presence, 'away');
-    assert.equal(moth.away, true);
+    assert.equal(moth.away, true, 'the AFK mark still says where they are');
+    assert.equal(moth.roomId, 'c-afk');
+    assert.equal(moth.presence, 'online',
+        'they never said they were away, so the room must not say it for them');
+});
+
+test('a declared status is what the dot shows, wherever the person is standing', () => {
+    const state = fresh();
+    state.apply({ type: 'joined', channel: channels[0], self: peer('cid-me', 'u-me', 'ghostbyte'), peers: [] });
+    state.apply({
+        type: 'peer_joined',
+        peer: peer('cid-kes', 'u-kes', 'kestrel', { status: 'away' }),
+    });
+
+    const kes = state.toShell().people.find((p) => p.username === 'kestrel');
+    assert.equal(kes.presence, 'away');
+    assert.equal(kes.away, false, 'declaring away is not the same as being in the AFK room');
 });
 
 test('moving rooms takes the occupancy with it', () => {
@@ -176,7 +200,7 @@ test('the AFK room does not read as "Away . Away"', () => {
 
     const me = state.toShell().me;
     assert.equal(me.roomName, 'Away');
-    assert.equal(me.status, null, 'the room name already says it');
+    assert.equal(me.activity, null, 'the room name already says it');
 });
 
 test('producers become the marks the member list shows', () => {

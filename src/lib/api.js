@@ -83,6 +83,31 @@ export function createApi({ origin, token = null }) {
             return data;
         },
 
+        /**
+         * A cropped profile picture, raw.
+         *
+         * Its own endpoint rather than /api/uploads: that one is a MODULE, and it sweeps
+         * its directory on a retention timer — an avatar stored there would stop existing
+         * after a month, and everybody's face would quietly become initials again.
+         */
+        async uploadAvatar(blob) {
+            const res = await fetch(origin + '/api/me/avatar', {
+                method: 'POST',
+                headers: { ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) },
+                body: blob,
+                credentials: 'omit',
+                signal: AbortSignal.timeout(60_000),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new ApiError(data.message ?? data.error ?? 'The picture could not be saved.',
+                    { status: res.status });
+            }
+            return data;
+        },
+
+        removeAvatar: () => request('DELETE', '/api/me/avatar'),
+
         /** Auth-gated bytes (uploads) as a blob, for <img> tags and downloads. */
         async fetchBlob(path) {
             const res = await fetch(origin + path, {

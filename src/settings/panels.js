@@ -113,9 +113,39 @@ export function joinedOn(value) {
 
 /* ── panels ───────────────────────────────────────────────────────────────── */
 
-export function profilePanel({ me = {}, features = [] } = {}) {
+/**
+ * Picking a picture, and then which part of it is you.
+ *
+ * The frame is fixed and the picture moves under it, because that is what a hand expects
+ * of a crop tool. The circle is the shape the avatar is everywhere else, so what is framed
+ * here is exactly what appears in the roster — a square preview would be a promise the
+ * rest of the app does not keep.
+ */
+const avatarCropper = ({ busy = false, error = '' } = {}) => `
+  <div class="crop" data-crop hidden>
+    <div class="crop-frame" data-crop-frame>
+      <img class="crop-image" data-crop-image alt="">
+      <div class="crop-ring" aria-hidden="true"></div>
+    </div>
+    <label class="crop-zoom">
+      <span>Zoom</span>
+      <input type="range" data-crop-zoom min="100" max="400" value="100"
+             aria-label="Zoom the picture">
+    </label>
+    <p class="crop-hint">Drag the picture to choose what sits in the circle.</p>
+    ${error ? `<p class="crop-error">${esc(error)}</p>` : ''}
+    <div class="crop-actions">
+      <button type="button" class="btn small" data-crop-cancel>Cancel</button>
+      <button type="button" class="btn small primary" data-crop-save ${busy ? 'disabled' : ''}>
+        ${busy ? 'Saving…' : 'Save picture'}
+      </button>
+    </div>
+  </div>`;
+
+export function profilePanel({ me = {}, features = [], avatarError = '' } = {}) {
     const joined = joinedOn(me.createdAt);
     const hasPersonas = features.includes('module.personas');
+    const canEdit = features.includes('profile');
 
     return `
     <h2 class="panel-title">My Profile</h2>
@@ -145,8 +175,26 @@ export function profilePanel({ me = {}, features = [] } = {}) {
         disabled: true,
     })}
 
-    ${notYet('Profile picture', 'Uploads work, but nothing on the server can attach one to an account yet.')}
-    ${notYet('Status', 'The server has no status field. Presence is shown instead.')}
+    ${canEdit ? `
+    <div class="setting">
+      <span class="setting-text">
+        <span class="setting-label">Profile picture</span>
+        <span class="setting-hint">A PNG, JPEG, GIF or WebP. It is cropped to a circle.</span>
+      </span>
+      <span class="setting-buttons">
+        <button type="button" class="btn small" data-pick-avatar>
+          ${me.avatar ? 'Change' : 'Upload'}
+        </button>
+        ${me.avatar ? '<button type="button" class="btn small danger-btn" data-remove-avatar>Remove</button>' : ''}
+      </span>
+    </div>
+    <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-avatar-file>
+    ${avatarCropper({ error: avatarError })}`
+        : notYet('Profile picture', 'This server has no route to attach one to an account.')}
+
+    <!-- Status is deliberately NOT here. It lives behind your own name in the bottom bar,
+         because a status three clicks into a preferences dialog is one nobody sets and
+         nobody trusts to be current. -->
 
     ${hasPersonas
         ? notYet('Join and leave sounds', 'Sound library not loaded yet.')

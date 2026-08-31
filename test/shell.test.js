@@ -198,7 +198,7 @@ test('every interactive control has an accessible name', () => {
         .filter((tag) => !/aria-label=/.test(tag));
 
     // A button whose visible text IS its name needs no aria-label. Everything else does.
-    const namedByContent = /class="[^"]*\b(room-row|member-row|room-person|server-pick-btn|self-id|reaction)\b/;
+    const namedByContent = /class="[^"]*\b(room-row|member-row|room-person|server-pick-btn|self-id|reaction|self-menu-item|peer-menu-item)\b/;
     const suspicious = unnamed.filter((tag) => !namedByContent.test(tag));
     assert.deepEqual(suspicious, [], 'icon-only buttons must carry aria-label');
 });
@@ -287,4 +287,64 @@ test('the room says why a microphone stopped working, ahead of anything else', a
     assert.match(alsoRecovering.text, /An administrator/);
 
     assert.equal(voiceNotice({ state: 'idle' }).show, false, 'and silent when it is not true');
+});
+
+// ── Status, and a face ───────────────────────────────────────────────────────
+
+test('status lives behind your own name, not in the settings panel', async () => {
+    const { selfBar, selfMenu, STATUS_CHOICES } = await import('../src/room/views/sidebar.js');
+
+    const bar = selfBar({ username: 'kes', displayName: 'Kestrel', status: 'away' });
+    // The identity button opens the menu now; Settings is an entry inside it.
+    assert.match(bar, /data-self-menu/);
+    assert.match(bar, /data-open-settings/);
+    assert.match(bar, /aria-haspopup="menu"/);
+
+    for (const c of STATUS_CHOICES) assert.ok(bar.includes(`data-set-status="${c.value}"`));
+
+    // The one you are on is ticked, and says so to a screen reader rather than only in ink.
+    const menu = selfMenu({ username: 'kes', displayName: 'Kestrel', status: 'away' });
+    assert.match(menu, /data-set-status="away"[^>]*/);
+    assert.ok(/aria-checked="true"[\s\S]*?data-set-status="away"/.test(menu)
+        || /data-set-status="away"[\s\S]*?aria-checked="true"/.test(menu.replace(/\n/g, '')),
+    'the current status is checked');
+
+    const online = selfMenu({ username: 'kes', status: 'online' });
+    assert.match(online, /class="self-menu-item current"[\s\S]*?data-set-status="online"/);
+});
+
+test('the profile panel offers a picture and no longer pretends to offer a status', async () => {
+    const { profilePanel } = await import('../src/settings/panels.js');
+
+    const withProfile = profilePanel({ me: { username: 'kes' }, features: ['profile'] });
+    assert.match(withProfile, /data-pick-avatar/);
+    assert.match(withProfile, /data-crop-frame/);
+    assert.match(withProfile, /data-crop-save/);
+    // Status moved out. A dead "Status — not built yet" row would now be a lie twice over.
+    assert.ok(!/not-yet-what">Status/.test(withProfile));
+
+    // Someone with a picture is offered Remove; someone without is not.
+    assert.ok(!withProfile.includes('data-remove-avatar'));
+    const hasOne = profilePanel({ me: { username: 'kes', avatar: 'x.png' }, features: ['profile'] });
+    assert.match(hasOne, /data-remove-avatar/);
+    assert.match(hasOne, />\s*Change\s*</);
+
+    // Against a server without the routes, the control is not offered at all.
+    const without = profilePanel({ me: { username: 'kes' }, features: [] });
+    assert.ok(!without.includes('data-pick-avatar'));
+    assert.match(without, /no route to attach one/);
+});
+
+test('a face is drawn over the initials, and escaped like everything else', async () => {
+    const { avatar } = await import('../src/room/views/parts.js');
+
+    const plain = avatar({ username: 'kestrel' });
+    assert.ok(!plain.includes('<img'), 'no picture, no element — the initials stand alone');
+
+    const withFace = avatar({ username: 'kestrel', avatarUrl: 'blob:abc' });
+    assert.match(withFace, /<img class="avatar-face" src="blob:abc"/);
+    assert.match(withFace, /KE/, 'the initials stay underneath, so nothing reflows');
+
+    const hostile = avatar({ username: 'kestrel', avatarUrl: '" onerror="alert(1)' });
+    assert.ok(!hostile.includes('onerror="alert'), 'a URL is still a hole to be escaped');
 });

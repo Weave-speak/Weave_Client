@@ -166,12 +166,15 @@ export function selfMenu(me = {}, { open = false } = {}) {
               role="menuitemradio" aria-checked="${c.value === current ? 'true' : 'false'}"
               data-set-status="${esc(c.value)}">
         <span class="status-dot" data-presence="${esc(c.value)}" aria-hidden="true"></span>
-        <span class="self-menu-label">${esc(c.label)}</span>
-        <span class="self-menu-hint">${esc(c.hint)}</span>
+        <span class="self-menu-text">
+          <span class="self-menu-label">${esc(c.label)}</span>
+          <span class="self-menu-hint">${esc(c.hint)}</span>
+        </span>
       </button>`).join('')}
       <div class="self-menu-split" role="separator"></div>
       <button type="button" class="self-menu-item" role="menuitem" data-open-settings>
-        ${icons.gear}<span class="self-menu-label">Settings</span>
+        ${icons.gear}
+        <span class="self-menu-text"><span class="self-menu-label">Settings</span></span>
       </button>
     </div>`;
 }

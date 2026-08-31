@@ -22,6 +22,25 @@ contextBridge.exposeInMainWorld('weaveNative', {
      * Keyed per server: a client that can reach several servers must never carry one
      * server's credentials to another.
      */
+    /**
+     * Whether this machine is being used at all.
+     *
+     * sendSync rather than invoke: the renderer reads this while assembling a heartbeat,
+     * and a promise there would mean the heartbeat either waits on IPC or reports a value
+     * from the previous cycle. One synchronous OS call per 25 seconds is cheaper than
+     * either.
+     */
+    power: {
+        available: true,
+        idleSeconds: () => {
+            try {
+                return ipcRenderer.sendSync('weave:power.idleSeconds');
+            } catch {
+                return null;
+            }
+        },
+    },
+
     tokens: {
         available: true,
         get: (serverId) => ipcRenderer.invoke('weave:tokens.get', String(serverId)),

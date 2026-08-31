@@ -17,6 +17,7 @@ import { parseDeepLink } from './server/deeplink.js';
 import { discover, OUTCOME } from './server/discover.js';
 import { createUpdateBanner } from './updates/banner.js';
 import { createLink } from './net/link.js';
+import { createIdleReporter } from './room/idle.js';
 import { createRoom } from './room/index.js';
 import { displayAddress } from './server/address.js';
 import { $, html, safe } from './ui/dom.js';
@@ -137,10 +138,22 @@ async function enterRoom({ api, user, token, server, autoJoin = true }) {
         }
     } catch { /* offline start: the stored snapshot is the best truth available */ }
 
-    const link = createLink({ origin: server.origin, token, autoJoin });
+    // Reads OS idle time where there is a shell to ask, and reports nothing at all in a
+    // browser. `room` is assigned below and long before the first heartbeat, so the lazy
+    // look-up is what lets the link be built before the room that answers for it.
+    let room = null;
+    const idle = createIdleReporter({
+        platform,
+        isWatchingVideo: () => Boolean(room?.isWatchingVideo?.()),
+    });
+
+    const link = createLink({
+        origin: server.origin, token, autoJoin,
+        readIdleMs: () => idle.current(),
+    });
 
     app.innerHTML = '';
-    const room = createRoom({
+    room = createRoom({
         mount: app,
         api,
         link,

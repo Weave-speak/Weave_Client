@@ -50,3 +50,20 @@ test('the mute button is unclickable exactly while push-to-talk owns the stream'
     assert.equal(muteButtonDisabled({ pushToTalk: false }), false);
     assert.equal(muteButtonDisabled({}), false);
 });
+
+// ── A mute somebody else applied ─────────────────────────────────────────────
+
+test('a server mute outranks every other reason, including push-to-talk being held', () => {
+    // Holding the key is the one thing that reliably OPENS the gate. It must not open this.
+    assert.equal(effectiveMute({ forceMuted: true, pushToTalk: true, held: true }), true);
+    assert.equal(effectiveMute({ forceMuted: true, muted: false, deafened: false }), true);
+    // And it is the only one of the three the person cannot lift.
+    assert.equal(muteButtonDisabled({ forceMuted: true }), true);
+    assert.equal(muteButtonDisabled({ forceMuted: false, pushToTalk: false }), false);
+});
+
+test('lifting a server mute returns the microphone to whatever the person had chosen', () => {
+    assert.equal(effectiveMute({ forceMuted: false, muted: false }), false);
+    assert.equal(effectiveMute({ forceMuted: false, muted: true }), true,
+        'their own mute is still theirs, and survives the administrator lifting theirs');
+});

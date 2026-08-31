@@ -422,3 +422,71 @@ test('an administrator close ends the link with the reason, and never reconnects
         assert.equal(h.FakeSocket.opened, opened, `code ${code} must not reconnect`);
     }
 });
+
+// ── Being kicked ─────────────────────────────────────────────────────────────
+//
+// The kick is the one close code that means "come back", so every assertion here is about
+// the difference between it and the three that mean "do not".
+
+test('a kick reconnects after the cooldown, and comes back standing nowhere', () => {
+    const h = harness();
+    h.goLive({ id: 'great-hall', name: 'The Great Hall' });
+    assert.equal(h.link.channelId, 'great-hall');
+
+    // The frame arrives first, then the close — which is the order the server sends them.
+    h.sock.deliver({ type: 'kicked', by: 'admin', until: 200_000, retryAfterMs: 60_000 });
+    h.sock.dropByServer(4006);
+
+    assert.notEqual(h.link.state, LINK.FAILED, 'a kick is not the end of the session');
+    assert.ok(h.events.some((e) => e.type === 'kicked' && e.by === 'admin'),
+        'the room is told, so it can say what happened instead of spinning');
+
+    // Nothing before the cooldown is up.
+    const openedAfterKick = h.FakeSocket.opened;
+    h.clock.advance(50_000);
+    assert.equal(h.FakeSocket.opened, openedAfterKick, 'no early attempt to be refused');
+
+    h.clock.advance(15_000);
+    assert.equal(h.FakeSocket.opened, openedAfterKick + 1, 'and then exactly one');
+
+    // Back, but NOT into the room we were removed from.
+    h.sock.accept();
+    h.sock.deliver({ type: 'hello', cid: 'CID2' });
+    const join = h.sock.lastOf('join');
+    assert.equal(join.channelId, undefined, 'the remembered room is not re-sent');
+    assert.equal(join.autoJoin, false, 'we arrive signed in and standing nowhere');
+});
+
+test('a rejoin refused during the cooldown waits out what is left of it', () => {
+    const h = harness();
+    h.link.connect();
+    h.sock.accept();
+    h.sock.deliver({ type: 'hello', cid: 'CID1' });
+
+    // What the server sends a client that comes back too early: an error carrying what
+    // remains, then the same close code.
+    h.sock.deliver({
+        type: 'error', code: 'kicked', message: 'You can rejoin in 20s.',
+        detail: { retryAfterMs: 20_000 },
+    });
+    h.sock.dropByServer(4006);
+
+    assert.notEqual(h.link.state, LINK.FAILED, 'a cooldown does pass — giving up would strand them');
+    const opened = h.FakeSocket.opened;
+    h.clock.advance(15_000);
+    assert.equal(h.FakeSocket.opened, opened, 'not before the remaining time');
+    h.clock.advance(10_000);
+    assert.equal(h.FakeSocket.opened, opened + 1);
+});
+
+test('a kick with no cooldown attached still waits rather than hammering', () => {
+    const h = harness();
+    h.goLive();
+    h.sock.dropByServer(4006);
+
+    const opened = h.FakeSocket.opened;
+    h.clock.advance(30_000);
+    assert.equal(h.FakeSocket.opened, opened, 'the fallback minute is a real wait');
+    h.clock.advance(35_000);
+    assert.equal(h.FakeSocket.opened, opened + 1);
+});

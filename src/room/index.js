@@ -17,10 +17,11 @@ import { messageList, typingLine, voiceNoticeMarkup, emptyState, roomGlyph } fro
 import { createRoomState } from './state.js';
 import { WeaveBackground, createMessageNoise } from '../ui/weave-background.js';
 import { createVoice } from '../media/voice.js';
-import { effectiveMute, onPushToTalkChange } from '../media/mute-policy.js';
+import { effectiveMute, onPushToTalkChange, muteButtonDisabled } from '../media/mute-policy.js';
 import { screenShareSettings, cameraConstraints, cameraEncodings } from '../media/presets.js';
 import { createSettings, readPrefs } from '../settings/index.js';
 import { createRoomBrowser } from '../rooms/browser.js';
+import { createPeerActions } from './peer-actions.js';
 import { createModal } from '../ui/modal.js';
 import { platform } from '../platform/index.js';
 import { userHue } from '../ui/hue.js';
@@ -100,7 +101,15 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
     const canReact = features.includes('chat.reactions');
     const canPreview = features.includes('chat.link-previews');
     const canCall = features.includes('dm.calls');
+    // Both are administrator verbs, and both are gated TWICE: on being an administrator,
+    // and on the server actually having the handler. An older server has neither message
+    // type, so offering them would mean a menu item whose only effect is an error frame.
+    const canMovePeople = Boolean(user?.isAdmin) && features.includes('peers.admin-move');
+    const canModeratePeople = Boolean(user?.isAdmin) && features.includes('moderation');
     // The call the user is part of, and where to stand again when it ends.
+    // Right-clicking somebody, and dragging them into a room. Built after the shell is
+    // mounted, because both of its surfaces are appended to it.
+    let peerActions = null;
     let activeCallThreadId = null;
     let preCallChannelId = null;
     let ringModal = null;
@@ -352,12 +361,25 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
     function repaint() {
         const view = state.toShell();
 
-        setHtml('#roomScroll', roomGroups(view.rooms, view.me));
+        // A drag holds the row it started on. Rewriting #roomScroll's innerHTML mid-gesture
+        // destroys that row, and the drop lands on nothing — which is exactly what a
+        // presence change arriving one second into a drag would otherwise cause.
+        if (!peerActions?.dragging) {
+            setHtml('#roomScroll', roomGroups(view.rooms, view.me));
+            // The row the open menu points at was among the ones just replaced.
+            peerActions?.reselect();
+        }
         setHtml('#selfBarSlot', selfBar({ ...view.me, pttOn: Boolean(prefs.pushToTalk) }));
         const railEl = $('.rail', mount);
         if (railEl) railEl.outerHTML = rail({ dms: view.dms, inRoom: !view.dmOpen });
         setHtml('.typing', typingLine(view.typing));
-        setHtml('#voiceNotice', voiceNoticeMarkup(voiceState));
+        setHtml('#voiceNotice', voiceNoticeMarkup({
+            ...voiceState,
+            // Carried on the status rather than held as its own banner: there is one place
+            // the room says something true about your microphone, and two would compete.
+            forceMuted: Boolean(view.me.forceMuted),
+            forceMutedUntil: view.me.forceMutedUntil,
+        }));
         paintConnection({ ...view.connection, ...mediaStats });
         paintRoomHead(view.room);
         paintMediaButtons();
@@ -833,6 +855,43 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             return;
         }
 
+        if (msg.type === 'peer_force_muted') {
+            state.apply(msg);
+            // Only OUR microphone is ours to act on. Somebody else being muted changes a
+            // mark in the roster and nothing about this machine's audio.
+            if (msg.userId === state.raw.me?.id) {
+                const me = state.toShell().me;
+                voice.setMuted(effectiveMute({
+                    pushToTalk: Boolean(prefs.pushToTalk),
+                    held: pttHeld,
+                    muted: me.muted,
+                    deafened: Boolean(me.deafened),
+                    forceMuted: Boolean(me.forceMuted),
+                }));
+            }
+            paint();
+            return;
+        }
+
+        // The acknowledgement of our OWN moderation action. The roster already changed via
+        // the broadcast, so there is nothing to apply — but the menu is gone by now and a
+        // silent success is indistinguishable from a dropped message.
+        if (msg.type === 'serverMuteChanged' || msg.type === 'kickedPeer') return;
+
+        if (msg.type === 'kicked') {
+            // The socket is already closing. Say why, and let the link come back on its
+            // own once the cooldown it was given has passed.
+            voice.stop();
+            voiceState = {
+                state: 'unavailable',
+                message: msg.by
+                    ? `${msg.by} removed you from the room.`
+                    : 'An administrator removed you from the room.',
+            };
+            paint();
+            return;
+        }
+
         if (msg.type === 'moved' || msg.type === 'joined') {
             msgNoise.reset();
             stageFocus = null;
@@ -975,6 +1034,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                 held: pttHeld,
                 muted: state.toShell().me.muted,
                 deafened: Boolean(state.toShell().me.deafened),
+                forceMuted: Boolean(state.toShell().me.forceMuted),
             }));
         } catch (err) {
             // A refused microphone is a completely normal thing for someone to do, and the
@@ -1407,7 +1467,11 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
             const mute = event.target.closest('[data-listen-mute]');
             if (mute) {
+                // Guarded rather than assumed: this listener is on the whole shell, and a
+                // control of the same name outside a tile would otherwise crash the handler
+                // — taking every click after it in this chain down with it.
                 const holder = mute.closest('[data-tile]');
+                if (!holder) return;
                 const [cid, slotName] = holder.dataset.tile.split(':');
                 const audioSlot = slotName === 'screen' ? 'screen-audio' : 'audio';
                 const now = voice.getListen(cid, audioSlot);
@@ -1515,10 +1579,12 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             }
 
             if (event.target.closest('[data-toggle-mic]')) {
-                // Under push-to-talk the key owns the stream; the button is disabled in the
-                // markup, and this guard is the same rule for anything synthesising clicks.
-                if (prefs.pushToTalk) return;
                 const me = state.toShell().me;
+                // Under push-to-talk the key owns the stream, and under a server mute
+                // nothing this person can press owns it. The button is already disabled in
+                // the markup for both; this is the same rule for anything synthesising a
+                // click, and it asks the policy rather than restating it.
+                if (muteButtonDisabled({ pushToTalk: prefs.pushToTalk, forceMuted: me.forceMuted })) return;
                 const next = !me.muted;
                 // Locally first so the button responds immediately, then tell the room. The
                 // server's broadcast is what everyone else sees; this is what we hear.
@@ -1541,6 +1607,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                     held: pttHeld,
                     muted: me.muted,
                     deafened,
+                    forceMuted: Boolean(me.forceMuted),
                 }));
                 link.send('setMute', { muted: deafened || me.muted, deafened });
                 return;
@@ -1665,6 +1732,16 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         });
 
         wirePushToTalk();
+        peerActions = createPeerActions({
+            mount,
+            state,
+            voice,
+            link,
+            canMove: () => canMovePeople,
+            canModerate: () => canModeratePeople,
+            paint,
+        });
+        $('.app-shell', mount)?.toggleAttribute('data-can-move', canMovePeople);
 
         input?.addEventListener('input', updateMention);
         input?.addEventListener('click', updateMention);
@@ -2008,8 +2085,11 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         const setTalking = (talking) => {
             if (!prefs.pushToTalk || pttHeld === talking) return;
             pttHeld = talking;
-            const deafened = Boolean(state.toShell().me.deafened);
-            const muted = effectiveMute({ pushToTalk: true, held: talking, deafened });
+            const me = state.toShell().me;
+            const deafened = Boolean(me.deafened);
+            const muted = effectiveMute({
+                pushToTalk: true, held: talking, deafened, forceMuted: Boolean(me.forceMuted),
+            });
             voice.setMuted(muted);
             link.send('setMute', { muted, deafened });
         };

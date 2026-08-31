@@ -237,3 +237,54 @@ test('a live stream mark on a person is a door with an aim', async () => {
     const plain = personMarks({ username: 'kes', sharing: true });
     assert.ok(!plain.includes('data-watch'));
 });
+
+// ── A mute somebody else applied ─────────────────────────────────────────────
+
+test('an administrator mute is marked apart from a self-mute', async () => {
+    const { personMarks } = await import('../src/room/views/parts.js');
+
+    const own = personMarks({ username: 'kes', muted: true });
+    assert.match(own, /mark-muted/);
+    assert.match(own, /title="Muted"/);
+
+    const forced = personMarks({ username: 'kes', muted: true, forceMuted: true });
+    assert.match(forced, /mark-forced/);
+    assert.match(forced, /Muted by an administrator/);
+    // One mark, not two: they are the same microphone, and stacking them reads as a bug.
+    assert.ok(!forced.includes('mark-muted'), 'the administrator mute replaces the self one');
+});
+
+test('a server-muted person cannot reach their own mute button', async () => {
+    const { selfBar } = await import('../src/room/views/sidebar.js');
+
+    const muted = selfBar({ username: 'kes', displayName: 'Kestrel', forceMuted: true });
+    assert.match(muted, /data-toggle-mic disabled/);
+    assert.match(muted, /An administrator muted you/);
+
+    // And a timed one says when, as a clock time — "for 10 minutes" starts lying the
+    // moment it is rendered and the bar sits there for a while.
+    const timed = selfBar({
+        username: 'kes', displayName: 'Kestrel',
+        forceMuted: true, forceMutedUntil: Date.parse('2026-08-31T19:14:00Z'),
+    });
+    assert.match(timed, /until \d{1,2}:\d{2}/);
+
+    const free = selfBar({ username: 'kes', displayName: 'Kestrel' });
+    assert.ok(!free.includes('data-toggle-mic disabled'), 'nobody else is disabled by this');
+});
+
+test('the room says why a microphone stopped working, ahead of anything else', async () => {
+    const { voiceNotice } = await import('../src/room/views/timeline.js');
+
+    const forced = voiceNotice({ state: 'idle', forceMuted: true });
+    assert.equal(forced.show, true);
+    assert.equal(forced.tone, 'bad');
+    assert.match(forced.text, /An administrator muted you/);
+
+    // Ahead of anything else voice is saying: a person looking for a fault in their own
+    // hardware is owed the actual reason first.
+    const alsoRecovering = voiceNotice({ state: 'recovering', attempt: 2, of: 5, forceMuted: true });
+    assert.match(alsoRecovering.text, /An administrator/);
+
+    assert.equal(voiceNotice({ state: 'idle' }).show, false, 'and silent when it is not true');
+});

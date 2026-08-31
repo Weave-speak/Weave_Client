@@ -113,6 +113,15 @@ export function groupRooms(rooms = []) {
     ].filter(Boolean);
 }
 
+/**
+ * When a timed mute ends, as a clock time rather than a countdown.
+ *
+ * "until 21:14" is still true after the bar has sat there for five minutes; "for 10
+ * minutes" starts lying the moment it is rendered.
+ */
+const untilClock = (until) => new Date(until)
+    .toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+
 /** The bottom bar: who you are, where you are, and the controls you reach for most. */
 export function selfBar(me = {}) {
     const inRoom = Boolean(me.roomName);
@@ -130,7 +139,12 @@ export function selfBar(me = {}) {
       </button>
       <span class="self-rule" aria-hidden="true"></span>
       <span class="self-actions">
-        ${me.pttOn ? `
+        ${me.forceMuted ? `
+        <button type="button" class="round-btn on forced" data-toggle-mic disabled
+                title="An administrator muted you${me.forceMutedUntil ? ` until ${untilClock(me.forceMutedUntil)}` : ''}"
+                aria-label="An administrator has muted your microphone">
+          ${icons.micOff}
+        </button>` : me.pttOn ? `
         <button type="button" class="round-btn ptt" data-toggle-mic disabled
                 title="Push-to-talk is on — hold your key to speak"
                 aria-label="Microphone is controlled by push-to-talk">

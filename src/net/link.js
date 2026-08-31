@@ -58,7 +58,12 @@ const RETRY_CAP_MS = 30_000;
 /** A rate limit means we are already sending too much. Start near the cap. */
 const RATE_LIMIT_BACKOFF_MS = 20_000;
 
-/** Server error codes that no amount of retrying will fix. */
+/**
+ * Server error codes that no amount of retrying will fix.
+ *
+ * `kicked` is deliberately absent: a cooldown DOES pass. Giving up on it would leave the
+ * person staring at a failure screen after the one thing that would fix it had happened.
+ */
 const FATAL = new Set(['protocol_mismatch', 'unauthenticated', 'no_channels', 'forbidden']);
 
 /** Deliberate leave, so the server announces immediately instead of waiting out its grace. */
@@ -74,6 +79,23 @@ const ADMIN_CLOSES = new Map([
     [4004, ['access_revoked', 'Your access to this server was revoked by an administrator.']],
     [4005, ['server_wiped', 'This server was wiped by its administrator. Nothing remains to reconnect to.']],
 ]);
+
+/**
+ * Kicked. Deliberately NOT one of the above.
+ *
+ * Those three mean the session is gone and coming back is pointless. A kick means come
+ * back in a minute: the account is fine, the token still works, and the server is holding
+ * a short cooldown. So this reconnects — after waiting out the cooldown the server named,
+ * and standing NOWHERE, because being put straight back into the room you were removed
+ * from is not what anybody meant by the word.
+ */
+const KICK_CLOSE = 4006;
+
+/** If a kick arrives with no cooldown attached, wait this long rather than hammering. */
+const KICK_FALLBACK_MS = 60_000;
+
+/** Slack on a cooldown, so a second of clock skew is not a wasted refused attempt. */
+const COOLDOWN_MARGIN_MS = 1500;
 
 /**
  * How much may pile up while the link is down.
@@ -186,6 +208,31 @@ export function createLink({
         retryTimer = setTimer(() => { retryTimer = null; open(); }, delay);
     }
 
+    /**
+     * Come back when a cooldown says we may, and not before.
+     *
+     * Deliberately NOT scheduleRetry: that jitters between zero and its base, which is
+     * right for an outage nobody can predict the end of and wrong here, where the server
+     * has named the exact moment. Jittering would come back early, be refused, and turn one
+     * kick into a handful of pointless attempts. The margin covers clock skew between the
+     * two machines.
+     */
+    function scheduleAfterCooldown(ms) {
+        if (!wantOpen) return;
+        const delay = Math.max(1000, Math.round(ms) + COOLDOWN_MARGIN_MS);
+        attempt += 1;
+        setState(LINK.RETRYING, { retryInMs: delay, attempt, force: true });
+        retryTimer = setTimer(() => { retryTimer = null; open(); }, delay);
+    }
+
+    /**
+     * The `kicked` frame, held until onclose.
+     *
+     * It arrives immediately before the close, so recovery cannot read it from the close
+     * event — the reason string is not structured and browsers give nothing else.
+     */
+    let kicked = null;
+
     function giveUp(code, message, detail) {
         wantOpen = false;
         failure = { code, message, detail };
@@ -240,6 +287,18 @@ export function createLink({
                 giveUp(adminClose[0], adminClose[1]);
                 return;
             }
+            if (event?.code === KICK_CLOSE) {
+                const wait = kicked?.retryAfterMs ?? KICK_FALLBACK_MS;
+                // Told, so the room can say what happened rather than showing a bare
+                // reconnect spinner for a minute.
+                handleEvent({ type: 'kicked', ...(kicked ?? {}) });
+                // Standing nowhere on the way back. The room we remember is the room we
+                // were removed from, and re-sending it would undo the kick.
+                nowhere = true;
+                kicked = null;
+                scheduleAfterCooldown(wait);
+                return;
+            }
             // 1008 is the server's policy close, which here means the rate limiter. Coming
             // straight back is precisely what it is asking us not to do.
             scheduleRetry(event?.code === 1008 ? RATE_LIMIT_BACKOFF_MS : undefined);
@@ -263,6 +322,13 @@ export function createLink({
                     // session actually stood when the line dropped.
                     ...(nowhere ? { autoJoin: false } : {}),
                 });
+                return;
+
+            case 'kicked':
+                // Held rather than acted on: the close is already on its way, and acting
+                // here would tear down a socket the server is closing anyway.
+                kicked = { by: msg.by ?? null, until: msg.until ?? null, retryAfterMs: msg.retryAfterMs };
+                handleEvent(msg);
                 return;
 
             case 'joined':
@@ -291,6 +357,9 @@ export function createLink({
                     giveUp(msg.code, msg.message, msg.detail);
                     handleEvent(msg);
                     return;
+                }
+                if (msg.code === 'kicked') {
+                    kicked = { by: null, until: null, retryAfterMs: msg.detail?.retryAfterMs };
                 }
                 if (msg.code === 'rate_limited') {
                     // The close follows immediately; recording it here means the retry that

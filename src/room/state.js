@@ -85,6 +85,10 @@ export function createRoomState({ me = null, server = {} } = {}) {
                 // silent on screen while audibly speaking.
                 cids,
                 muted: Boolean(peer?.muted),
+                // Any connection carrying it is enough: the mute is on the account, so a
+                // frame that has only reached one of their sockets still tells the truth.
+                forceMuted: (byUser.get(user.id)?.cids ?? []).some(
+                    (cid) => state.peers.get(cid)?.forceMuted),
                 away: channel?.kind === 'afk',
                 ...producing(peer),
             };
@@ -229,6 +233,17 @@ export function createRoomState({ me = null, server = {} } = {}) {
                     if (state.selfCid) {
                         const self = state.peers.get(state.selfCid);
                         if (self) Object.assign(self, { muted: msg.muted, deafened: msg.deafened });
+                    }
+                    break;
+
+                // Per USER, not per connection: a server mute is applied to the account,
+                // and somebody signed in twice must not appear muted on one row's worth of
+                // their connections and free on the other.
+                case 'peer_force_muted':
+                    for (const peer of state.peers.values()) {
+                        if (peer.userId !== msg.userId) continue;
+                        peer.forceMuted = msg.forceMuted === true;
+                        peer.forceMutedUntil = msg.forceMuted ? msg.until ?? null : null;
                     }
                     break;
 
@@ -516,6 +531,11 @@ export function createRoomState({ me = null, server = {} } = {}) {
                         : 'Weaving',
                     muted: Boolean(self?.muted),
                     deafened: Boolean(state.peers.get(state.selfCid)?.deafened),
+                    // Read off the roster row rather than off this connection's peer, so
+                    // it is right on a machine that was signed in when the mute landed and
+                    // on one that arrived afterwards.
+                    forceMuted: Boolean(self?.forceMuted),
+                    forceMutedUntil: state.peers.get(state.selfCid)?.forceMutedUntil ?? null,
                 },
                 // Stored records become timeline items here, so the views never have to
                 // know what a database row looks like and day separators are computed once.

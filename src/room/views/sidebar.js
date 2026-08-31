@@ -22,7 +22,12 @@ function occupant(person, me) {
     const isSelf = person.username === me?.username;
     return `
       <li class="room-person${isSelf ? ' is-self' : ''}" data-person="${esc(person.username)}">
-        ${avatar(person, { size: 'sm', presence: false })}
+        ${/* The dot is on here now that it carries information. It was off while presence
+              could only mean "connected" — and everybody listed under a room is connected
+              by definition, so it said nothing. A DECLARED status is the opposite: it is
+              the one thing about somebody standing in a room you cannot infer from the
+              fact that they are standing there. */ ''}
+        ${avatar(person, { size: 'sm' })}
         <span class="person-name">${displayName(person)}${isSelf ? ' (you)' : ''}</span>
         ${personMarks(person)}
       </li>`;
@@ -122,16 +127,67 @@ export function groupRooms(rooms = []) {
 const untilClock = (until) => new Date(until)
     .toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 
+/**
+ * What a person may say about themselves.
+ *
+ * Two, and no more without a reason. Every value here is a promise: a colour in the
+ * roster, a word in a tooltip, and something every other client has to understand. Adding
+ * "Do not disturb" later is a value and a token, not a redesign.
+ *
+ * "Offline" is deliberately absent. It is not a choice — it is what having no connection
+ * looks like — and letting somebody claim it while connected would make the roster lie.
+ */
+export const STATUS_CHOICES = Object.freeze([
+    { value: 'online', label: 'Online', hint: 'Here and available' },
+    { value: 'away', label: 'Away', hint: 'Around, but not really' },
+]);
+
+/**
+ * The panel behind your own name.
+ *
+ * Status sits at the top because it is the thing you came here to change; Settings is
+ * below a rule because it is a different kind of act — one changes what everybody else
+ * sees about you now, the other opens a room full of preferences.
+ *
+ * This is where status lives INSTEAD of in the profile panel. A status buried three
+ * clicks into a settings dialog is one nobody sets, and one nobody trusts to be current.
+ */
+export function selfMenu(me = {}, { open = false } = {}) {
+    const current = me.status ?? 'online';
+    return `
+    <div class="self-menu" role="menu" aria-label="Your status"${open ? '' : ' hidden'}>
+      <p class="self-menu-head">
+        <span class="self-menu-name">${displayName(me)}</span>
+        <span class="self-menu-handle">${esc(me.username ? `@${me.username}` : '')}</span>
+      </p>
+      <div class="self-menu-split" role="separator"></div>
+      ${STATUS_CHOICES.map((c) => `
+      <button type="button" class="self-menu-item${c.value === current ? ' current' : ''}"
+              role="menuitemradio" aria-checked="${c.value === current ? 'true' : 'false'}"
+              data-set-status="${esc(c.value)}">
+        <span class="status-dot" data-presence="${esc(c.value)}" aria-hidden="true"></span>
+        <span class="self-menu-label">${esc(c.label)}</span>
+        <span class="self-menu-hint">${esc(c.hint)}</span>
+      </button>`).join('')}
+      <div class="self-menu-split" role="separator"></div>
+      <button type="button" class="self-menu-item" role="menuitem" data-open-settings>
+        ${icons.gear}<span class="self-menu-label">Settings</span>
+      </button>
+    </div>`;
+}
+
 /** The bottom bar: who you are, where you are, and the controls you reach for most. */
 export function selfBar(me = {}) {
     const inRoom = Boolean(me.roomName);
-    // A null status means the room name says it all on its own.
+    // A null activity means the room name says it all on its own.
     const where = !inRoom ? 'Not in a room'
-        : me.status ? `${me.status} · ${me.roomName}` : me.roomName;
+        : me.activity ? `${me.activity} · ${me.roomName}` : me.roomName;
     return `
     <footer class="self-bar">
-      <button type="button" class="self-id" data-open-settings aria-label="Your profile and preferences">
-        ${avatar(me)}
+      ${selfMenu(me)}
+      <button type="button" class="self-id" data-self-menu aria-haspopup="menu"
+              aria-expanded="false" aria-label="Your status, profile and preferences">
+        ${avatar({ ...me, presence: me.status ?? 'online' })}
         <span class="self-text">
           <span class="self-name">${displayName(me)}</span>
           <span class="self-state">${esc(where)}</span>

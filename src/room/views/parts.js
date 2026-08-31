@@ -27,8 +27,16 @@ export function avatar(person, { size = '', presence = true } = {}) {
     const hue = userHue(person?.username ?? '');
     const cls = ['avatar', size].filter(Boolean).join(' ');
     const state = presence ? ` data-presence="${esc(person?.presence ?? 'offline')}"` : '';
+    // The picture goes INSIDE the initials rather than replacing them, so the coloured
+    // circle is already the right shape and size while the bytes are still arriving and
+    // nothing reflows when they land. `avatarUrl` is resolved by the avatar cache — the
+    // pictures are behind the session, so an <img> pointed straight at the API would be a
+    // broken image with no explanation.
+    const face = person?.avatarUrl
+        ? `<img class="avatar-face" src="${esc(person.avatarUrl)}" alt="">`
+        : '';
     return `<span class="${cls}" style="--av: hsl(${hue}, 55%, 40%)"${state}`
-        + ` aria-hidden="true">${esc(initials(person))}</span>`;
+        + ` aria-hidden="true">${esc(initials(person))}${face}</span>`;
 }
 
 /** The small trailing icons on a person: priority speaker, muted, sharing, on camera. */

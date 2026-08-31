@@ -22,6 +22,7 @@ import { screenShareSettings, cameraConstraints, cameraEncodings } from '../medi
 import { createSettings, readPrefs } from '../settings/index.js';
 import { createRoomBrowser } from '../rooms/browser.js';
 import { createPeerActions } from './peer-actions.js';
+import { createAvatarCache, withAvatars } from './avatars.js';
 import { createModal } from '../ui/modal.js';
 import { platform } from '../platform/index.js';
 import { userHue } from '../ui/hue.js';
@@ -104,6 +105,14 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
     // Both are administrator verbs, and both are gated TWICE: on being an administrator,
     // and on the server actually having the handler. An older server has neither message
     // type, so offering them would mean a menu item whose only effect is an error frame.
+    // A picture and a status. Against an older server the menu still opens — it is where
+    // Settings lives now — but the status rows are not offered, because pressing one
+    // would only produce a 404.
+    const canSetStatus = features.includes('profile');
+    // Avatars are behind the session, so they cannot be an <img src> straight to the API.
+    // The cache fetches each one once and repaints when it lands — until then the initials
+    // stand in, which is why nothing here has a loading state.
+    const avatarCache = createAvatarCache({ api, onResolved: () => paint() });
     const canMovePeople = Boolean(user?.isAdmin) && features.includes('peers.admin-move');
     const canModeratePeople = Boolean(user?.isAdmin) && features.includes('moderation');
     // The call the user is part of, and where to stand again when it ends.
@@ -241,6 +250,14 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         onSignOut: signOut,
         getActiveMicrophone: () => voice.activeMicrophone(),
         checkForUpdates: () => platform.updates.check?.(),
+        // A picture is a fact about the roster, not about the settings dialog. The server
+        // broadcasts it to everybody else; this is what makes it appear HERE without
+        // waiting for our own frame to come back to us.
+        onProfileChange: (next) => {
+            if (next?.avatar) avatarCache.forget(next.avatar);
+            state.setMyAvatar(next?.avatar ?? null);
+            paint();
+        },
     });
 
     /**
@@ -360,6 +377,13 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
     function repaint() {
         const view = state.toShell();
+        // Faces folded in before anything renders. The views are pure functions of state
+        // and must never reach for the network, so a URL only ever reaches them resolved.
+        view.people = withAvatars(view.people, avatarCache);
+        view.me = { ...view.me, avatarUrl: avatarCache.urlFor(view.me.avatar) };
+        for (const room of view.rooms) {
+            if (room.occupants?.length) room.occupants = withAvatars(room.occupants, avatarCache);
+        }
 
         // A drag holds the row it started on. Rewriting #roomScroll's innerHTML mid-gesture
         // destroys that row, and the drop lands on nothing — which is exactly what a
@@ -855,6 +879,16 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             return;
         }
 
+        if (msg.type === 'peer_profile_changed') {
+            state.apply(msg);
+            // A replaced picture keeps the account but changes the id, so the cache is
+            // asked for the new one on the next paint and the old object URL is released.
+            if (msg.avatar) avatarCache.forget(msg.avatar);
+            paint();
+            paintStage();
+            return;
+        }
+
         if (msg.type === 'peer_force_muted') {
             state.apply(msg);
             // Only OUR microphone is ours to act on. Somebody else being muted changes a
@@ -1322,6 +1356,52 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         reactPickEl = pick;
     }
 
+    /* ── your own status ─────────────────────────────────────────────────── */
+
+    /**
+     * Status lives here rather than in the settings panel on purpose.
+     *
+     * A status buried three clicks into a preferences dialog is one nobody sets and
+     * nobody trusts to be current. Behind your own name is where you already look to
+     * find out what you are showing as.
+     */
+    function toggleSelfMenu(open) {
+        const menu = $('.self-menu', mount);
+        const button = $('[data-self-menu]', mount);
+        if (!menu) return;
+        const next = open ?? menu.hidden;
+        menu.hidden = !next;
+        button?.setAttribute('aria-expanded', String(next));
+        if (next) menu.querySelector('button')?.focus({ preventScroll: true });
+    }
+
+    const closeSelfMenu = () => toggleSelfMenu(false);
+
+    /**
+     * Say what you are.
+     *
+     * Painted before the request rather than after it: the dot is a statement about you,
+     * and making it wait on a round trip means the menu appears not to have worked. The
+     * server's broadcast is what everyone ELSE sees, and it reconciles this if it differs.
+     */
+    async function setStatus(status) {
+        closeSelfMenu();
+        if (!canSetStatus || status === state.raw.me?.status) return;
+
+        const previous = state.raw.me?.status ?? 'online';
+        state.setMyStatus(status);
+        paint();
+        try {
+            await api.request('PATCH', '/api/me', { body: { status } });
+        } catch {
+            // Put it back. A dot that says "away" while the server believes otherwise is
+            // worse than one that never changed, because only the person who set it can
+            // see the lie.
+            state.setMyStatus(previous);
+            paint();
+        }
+    }
+
     /* ── what the user does ──────────────────────────────────────────────── */
 
     function wire() {
@@ -1628,7 +1708,19 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                 return;
             }
 
+            if (event.target.closest('[data-self-menu]')) {
+                toggleSelfMenu();
+                return;
+            }
+
+            const pick = event.target.closest('[data-set-status]');
+            if (pick) {
+                setStatus(pick.dataset.setStatus);
+                return;
+            }
+
             if (event.target.closest('[data-open-settings]')) {
+                closeSelfMenu();
                 settings.open(event.target.closest('[data-open-settings]'));
                 return;
             }

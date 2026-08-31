@@ -76,7 +76,16 @@ export function createRoomState({ me = null, server = {} } = {}) {
             const channel = peer ? state.channels.find((c) => c.id === peer.channelId) : null;
             return {
                 ...user,
-                presence: peer ? (channel?.kind === 'afk' ? 'away' : 'live') : 'offline',
+                // The dot is what somebody DECLARED, not where they are standing. Those
+                // were the same thing while "away" could only be inferred from the AFK
+                // room; now that a person can say it themselves, deriving it from the room
+                // would let the AFK sweep silently overwrite a deliberate choice — and
+                // would show somebody who set "Away" as available the moment they spoke.
+                //
+                // Which room they are in is still visible: they are listed under it, and
+                // `away` below still drives the AFK mark.
+                presence: peer ? (peer.status ?? user.status ?? 'online') : 'offline',
+                status: peer?.status ?? user.status ?? 'online',
                 roomId: peer?.channelId ?? null,
                 cid: peer?.cid ?? null,
                 // Every connection this person has, not just the one being displayed.
@@ -151,6 +160,34 @@ export function createRoomState({ me = null, server = {} } = {}) {
 
         setConnection(connection) {
             state.connection = connection;
+            emit();
+        },
+
+        /**
+         * Say what you are, locally and at once.
+         *
+         * Applied before the server is asked, because a status is a statement about
+         * yourself and a control that waits on a round trip reads as one that did not
+         * work. The server's broadcast lands on the same fields and reconciles it.
+         */
+        /** Your own picture, applied everywhere it is read from. */
+        setMyAvatar(avatar) {
+            if (state.me) state.me.avatar = avatar;
+            for (const peer of state.peers.values()) {
+                if (peer.userId === state.me?.id) peer.avatar = avatar;
+            }
+            const mine = state.users.get(state.me?.id);
+            if (mine) mine.avatar = avatar;
+            emit();
+        },
+
+        setMyStatus(status) {
+            if (state.me) state.me.status = status;
+            for (const peer of state.peers.values()) {
+                if (peer.userId === state.me?.id) peer.status = status;
+            }
+            const mine = state.users.get(state.me?.id);
+            if (mine) mine.status = status;
             emit();
         },
 
@@ -235,6 +272,29 @@ export function createRoomState({ me = null, server = {} } = {}) {
                         if (self) Object.assign(self, { muted: msg.muted, deafened: msg.deafened });
                     }
                     break;
+
+                // Somebody changed their picture or their status. Applied to the user
+                // record AND to every live connection they hold: the roster reads the peer
+                // when there is one, and an account signed in twice must not show two
+                // different faces.
+                case 'peer_profile_changed': {
+                    const user = state.users.get(msg.userId);
+                    if (user) {
+                        if (msg.avatar !== undefined) user.avatar = msg.avatar;
+                        if (msg.status !== undefined) user.status = msg.status;
+                        if (msg.displayName !== undefined) user.displayName = msg.displayName;
+                    }
+                    for (const peer of state.peers.values()) {
+                        if (peer.userId !== msg.userId) continue;
+                        if (msg.avatar !== undefined) peer.avatar = msg.avatar;
+                        if (msg.status !== undefined) peer.status = msg.status;
+                    }
+                    if (msg.userId === state.me?.id) {
+                        if (msg.avatar !== undefined) state.me.avatar = msg.avatar;
+                        if (msg.status !== undefined) state.me.status = msg.status;
+                    }
+                    break;
+                }
 
                 // Per USER, not per connection: a server mute is applied to the account,
                 // and somebody signed in twice must not appear muted on one row's worth of
@@ -525,8 +585,14 @@ export function createRoomState({ me = null, server = {} } = {}) {
                     // in a call room — the one kind of room kept off every list.
                     roomName: channel?.name
                         ?? (state.currentChannelId ? 'Private call' : null),
+                    // What you are DOING, which is not the same as what you have declared.
+                    // Named apart from `status` deliberately: the server now has a status
+                    // field a person sets themselves, and one word meaning both "in the
+                    // away room" and "has told everyone they are away" is how the two
+                    // quietly overwrite each other.
+                    //
                     // A room literally called "Away" would otherwise read "Away · Away".
-                    status: channel?.kind === 'afk'
+                    activity: channel?.kind === 'afk'
                         ? (/away|afk/i.test(channel.name) ? null : 'Away')
                         : 'Weaving',
                     muted: Boolean(self?.muted),
@@ -536,6 +602,9 @@ export function createRoomState({ me = null, server = {} } = {}) {
                     // on one that arrived afterwards.
                     forceMuted: Boolean(self?.forceMuted),
                     forceMutedUntil: state.peers.get(state.selfCid)?.forceMutedUntil ?? null,
+                    // Off the roster row rather than off state.me, so a change made on
+                    // another of this account's machines is reflected here too.
+                    status: self?.status ?? state.me?.status ?? 'online',
                 },
                 // Stored records become timeline items here, so the views never have to
                 // know what a database row looks like and day separators are computed once.

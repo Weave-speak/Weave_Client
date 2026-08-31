@@ -440,11 +440,130 @@
 .person-marks .mark-forced { color: var(--bad); }
 .person-marks .mark-share { color: var(--accent-hi); }
 
+/* ── Cropping a profile picture ───────────────────────────────────────────── */
+
+.setting-buttons { display: flex; gap: var(--s-2); align-items: center; flex: none; }
+
+.crop { margin: var(--s-3) 0 var(--s-4); }
+.crop[hidden] { display: none; }
+
+/* The frame is square and the RING is what makes it read as circular. Masking the picture
+   to a circle instead would hide the parts being cropped away, and seeing what you are
+   about to lose is most of what makes a crop tool usable. */
+.crop-frame {
+    position: relative;
+    width: 220px;
+    height: 220px;
+    margin: 0 auto;
+    overflow: hidden;
+    border-radius: var(--r-2);
+    background: var(--surface-1);
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+}
+.crop-frame.dragging { cursor: grabbing; }
+.crop-image {
+    position: absolute;
+    top: 0; left: 0;
+    transform-origin: 0 0;
+    /* The picture is positioned in script, and dragging it as an image is not what the
+       gesture means here. */
+    pointer-events: none;
+    -webkit-user-drag: none;
+}
+/* A shade over everything outside the circle, drawn as one enormous shadow so there is no
+   second element to keep in sync with the frame's size. */
+.crop-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    box-shadow: 0 0 0 9999px rgb(var(--pill-rgb) / 0.62);
+    border: 2px solid var(--accent-hi);
+    pointer-events: none;
+}
+.crop-zoom {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    margin: var(--s-3) auto 0;
+    max-width: 220px;
+    font-size: var(--t-sm);
+    color: var(--ink-faint);
+}
+.crop-zoom input { flex: 1; min-width: 0; }
+.crop-hint { margin: var(--s-2) 0 0; text-align: center; font-size: var(--t-sm); color: var(--ink-faint); }
+.crop-error { margin: var(--s-2) 0 0; text-align: center; font-size: var(--t-sm); color: var(--bad); }
+.crop-actions { display: flex; justify-content: center; gap: var(--s-2); margin-top: var(--s-3); }
+
+/* ── The self menu ────────────────────────────────────────────────────────── */
+
+/* Status and Settings, behind your own name. Absolute within the bar rather than fixed:
+   the bar is the last thing in the sidebar and never scrolls, so there is nothing to
+   escape from — and staying inside it means the menu moves with the bar on a resize. */
+.self-menu {
+    position: absolute;
+    left: var(--s-3);
+    right: var(--s-3);
+    bottom: calc(100% - var(--s-2));
+    padding: var(--s-2);
+    background: var(--surface-4);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    box-shadow: var(--shadow-2);
+    z-index: var(--z-menu);
+    animation: pop-in var(--dur-fast) var(--ease);
+}
+.self-menu[hidden] { display: none; }
+.self-menu-head { margin: 0; padding: var(--s-1) var(--s-2) var(--s-2); min-width: 0; }
+.self-menu-name { display: block; font-weight: 640; color: var(--ink); }
+.self-menu-handle { display: block; font-size: var(--t-xs); color: var(--ink-faint); }
+.self-menu-split { height: 1px; margin: var(--s-1) var(--s-2); background: var(--line-soft); }
+.self-menu-item {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: var(--s-1) var(--s-2);
+    width: 100%;
+    padding: var(--s-2);
+    border-radius: var(--r-2);
+    text-align: left;
+    color: var(--ink-dim);
+}
+.self-menu-item:hover, .self-menu-item:focus-visible { background: var(--surface-2); color: var(--ink); }
+.self-menu-item.current { color: var(--ink); }
+/* The tick, drawn rather than shipped as an icon: it is one glyph and it only ever means
+   "this is the one you are on". */
+.self-menu-item.current::after {
+    content: "\2713";
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+    color: var(--accent-hi);
+}
+.self-menu-item svg { width: 15px; height: 15px; }
+.self-menu-label { font-size: var(--t-base); }
+.self-menu-hint { grid-column: 2; font-size: var(--t-xs); color: var(--ink-ghost); }
+
+/* The same dot the avatar wears, as a standalone element for the menu rows. Driven by the
+   same data-presence attribute so a colour is never defined twice. */
+.status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--presence-off);
+    flex: none;
+}
+.status-dot[data-presence="live"], .status-dot[data-presence="online"] { background: var(--presence-live); }
+.status-dot[data-presence="idle"], .status-dot[data-presence="away"] { background: var(--presence-idle); }
+.status-dot[data-presence="dnd"] { background: var(--presence-busy); }
+
 /* ── Self bar ─────────────────────────────────────────────────────────────── */
 
 /* Identity above, controls below, a quiet three-quarter rule between them: the bar is
    the room's cockpit now that camera and screen live here too. */
 .self-bar {
+    position: relative;
     display: flex;
     flex-direction: column;
     align-items: stretch;
@@ -1226,6 +1345,16 @@
     font-weight: 700;
     flex: none;
     user-select: none;
+}
+/* Laid over the initials rather than instead of them: the circle is already the right
+   size and colour, so a face arriving costs no reflow and a missing one is not a hole. */
+.avatar-face {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
 }
 .avatar.sm { width: var(--avatar-sm); height: var(--avatar-sm); font-size: var(--t-xs); }
 .avatar.lg { width: var(--avatar-lg); height: var(--avatar-lg); font-size: var(--t-base); }

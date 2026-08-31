@@ -10,6 +10,7 @@
 // else.
 
 import { createModal } from '../ui/modal.js';
+import { createAvatarPicker } from './avatar-picker.js';
 import { settingsFor } from '../server/store.js';
 import { $, $$ } from '../ui/dom.js';
 import { VERSION } from '../platform/index.js';
@@ -68,7 +69,10 @@ export function readPrefs(serverId) {
 
 export function createSettings({
     getActiveMicrophone = null,
-    checkForUpdates = null, api, server, me: signedInAs, features = [], onPrefsChange = () => {}, onSignOut = () => {} }) {
+    checkForUpdates = null, api, server, me: signedInAs, features = [], onPrefsChange = () => {}, onSignOut = () => {},
+    // A new picture changes the roster for everybody, so the room repaints rather
+    // than the settings dialog quietly knowing something the rest of the app does not.
+    onProfileChange = () => {} }) {
     const store = settingsFor(server.id);
     let me = signedInAs;
     let current = 'profile';
@@ -78,6 +82,10 @@ export function createSettings({
     let invite = null;
     let inviteBusy = false;
     let inviteError = null;
+    // The cropper's own state. Held here rather than in the picker so a panel redraw
+    // reproduces the same screen instead of losing a half-framed picture.
+    let avatarError = '';
+    let picker = null;
 
     // The admin console's working state. Data is fetched when its panel is opened and
     // refetched after every action, so the table always shows what the server just did.
@@ -96,7 +104,7 @@ export function createSettings({
 
     function panelBody() {
         switch (current) {
-            case 'profile': return profilePanel({ me, prefs, features });
+            case 'profile': return profilePanel({ me, prefs, features, avatarError });
             case 'voice': return voicePanel({ prefs, devices, cameras, features });
             case 'sessions': return sessionsPanel({ version: VERSION });
             case 'appearance': return appearancePanel({ prefs });
@@ -375,9 +383,78 @@ export function createSettings({
         });
     }
 
+    /**
+     * Choosing a picture.
+     *
+     * The picker owns the frame and the arithmetic; this owns the buttons and what
+     * happens after a save. Rebuilt on every panel render because the elements it talks
+     * to are replaced wholesale by renderPanel().
+     */
+    function wireAvatar() {
+        const panel = $('#settingsPanel', modal.element);
+        const file = $('[data-avatar-file]', panel);
+        if (!file) return;
+
+        picker = createAvatarPicker({
+            root: panel,
+            api,
+            onSaved: (result) => {
+                avatarError = '';
+                me = { ...me, avatar: result.avatar ?? result.user?.avatar ?? null };
+                onProfileChange(me);
+                renderPanel();
+            },
+            onError: (message) => {
+                avatarError = message;
+                renderPanel();
+            },
+        });
+
+        $('[data-pick-avatar]', panel)?.addEventListener('click', () => {
+            avatarError = '';
+            // Cleared first, so choosing the SAME file twice still fires a change event.
+            file.value = '';
+            file.click();
+        });
+
+        file.addEventListener('change', () => {
+            const chosen = file.files?.[0];
+            if (chosen) picker.open(chosen);
+        });
+
+        $('[data-crop-frame]', panel)?.addEventListener('pointerdown', (event) => {
+            event.preventDefault();
+            picker.beginDrag(event);
+        });
+
+        $('[data-crop-zoom]', panel)?.addEventListener('input', (event) => {
+            picker.setZoom(Number(event.target.value));
+        });
+
+        $('[data-crop-cancel]', panel)?.addEventListener('click', () => {
+            picker.close();
+            avatarError = '';
+        });
+
+        $('[data-crop-save]', panel)?.addEventListener('click', () => picker.save());
+
+        $('[data-remove-avatar]', panel)?.addEventListener('click', async () => {
+            try {
+                await api.removeAvatar();
+                me = { ...me, avatar: null };
+                onProfileChange(me);
+                avatarError = '';
+            } catch (err) {
+                avatarError = err?.message ?? 'The picture could not be removed.';
+            }
+            renderPanel();
+        });
+    }
+
     function wirePanel() {
         paintActiveMic();
         wireAdminPanel();
+        wireAvatar();
         $$('[data-setting]', modal.element).forEach((input) => {
             input.addEventListener('change', async () => {
                 const value = input.type === 'checkbox' ? input.checked : input.value;

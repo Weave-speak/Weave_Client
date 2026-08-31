@@ -4,6 +4,31 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.49] - 2026-08-31
+
+### Changed
+- **Being moved to the away room now depends on whether you are at your computer.** The
+  desktop app reports how long your keyboard and mouse have gone untouched — across every
+  application, not just Weave — and the server uses that instead of guessing from whether
+  you have been talking. Working quietly in another window no longer looks like having left.
+
+  Talking still counts. Whichever happened more recently — speaking, or touching your
+  machine — is what you are judged on, because either one means you are there.
+
+  Watching somebody's screen share inside Weave counts as being present too, however long
+  you go without touching anything. A video playing in a different application still cannot
+  be seen: to the operating system that looks the same as an empty chair, so the timeout is
+  what protects you there.
+
+  Nothing here reaches a server older than **0.1.21** — those carry on measuring microphone
+  silence exactly as before — and nothing is reported at all when Weave is running in a
+  browser, because a web page cannot see input to other windows.
+
+### Fixed
+- The status panel behind your own name was laid out wrongly: "Online" and "Away" appeared
+  on a line of their own beneath their dot, with the tick stranded off to the right. The dot,
+  the label and the tick now sit on one line as intended, with the description underneath.
+
 ## [0.1.48] - 2026-08-31
 
 ### Added

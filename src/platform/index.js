@@ -143,6 +143,13 @@ const browserPlatform = {
     /** Browsers do not tell a page whether it is online in any trustworthy way, but this
      *  is still better than nothing for an obviously-offline machine. */
     isOnline: () => navigator.onLine !== false,
+
+    /**
+     * Whether the machine is being used. A browser cannot see input to other windows, and
+     * there is no approximation worth making — so this reports nothing and the server
+     * keeps using the signal it already had.
+     */
+    power: { available: false, idleSeconds: null },
 };
 
 const desktopPlatform = {
@@ -180,6 +187,12 @@ const desktopPlatform = {
     diagnostics: (typeof window !== 'undefined' && window.weaveNative?.diagnostics)
         ? { available: true, ...window.weaveNative.diagnostics }
         : { available: false, async read() { return null; }, async openFolder() {} },
+
+    // Absent when the desktop UI is run in a plain browser during development, which is a
+    // supported thing to do — so this degrades to the browser answer rather than throwing.
+    power: (typeof window !== 'undefined' && window.weaveNative?.power)
+        ? { available: true, ...window.weaveNative.power }
+        : { available: false, idleSeconds: null },
 };
 
 export const platform = isDesktop ? desktopPlatform : browserPlatform;

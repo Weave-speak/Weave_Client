@@ -17,7 +17,7 @@
 // what that server sends back. Treating the window as a general-purpose browser would mean
 // a hostile server could navigate it somewhere and inherit whatever the page can do.
 
-import { app, BrowserWindow, ipcMain, shell, safeStorage, nativeTheme, protocol, net, desktopCapturer } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, safeStorage, nativeTheme, protocol, net, desktopCapturer, powerMonitor } from 'electron';
 import crypto from 'node:crypto';
 // Both of these are CommonJS. A named import from CJS depends on Node's module lexer
 // spotting the export in compiled output, which is not something to rely on in a process
@@ -436,6 +436,28 @@ function registerBridge() {
         const map = await readSecrets('credentials.dat');
         delete map[serverId];
         return writeSecrets('credentials.dat', map);
+    });
+
+    /**
+     * Seconds since the last keyboard or mouse input, ANYWHERE on this machine.
+     *
+     * This is the signal the away feature always wanted and could never have from a
+     * browser. It counts input to every application, which is the point: somebody writing
+     * code in another window is at their desk, and the old measure — silence on their
+     * microphone — called that person absent.
+     *
+     * Synchronous on purpose. It is read once per heartbeat, it is a single OS call, and
+     * making it a promise would mean the ping either waits for it or races it.
+     */
+    ipcMain.on('weave:power.idleSeconds', (event) => {
+        try {
+            event.returnValue = powerMonitor.getSystemIdleTime();
+        } catch {
+            // Not every platform implements it. Saying "I cannot tell you" is correct and
+            // leaves the server on its older signal, where reporting 0 would pin this
+            // person permanently active.
+            event.returnValue = null;
+        }
     });
 
     ipcMain.handle('weave:update.state', () => updateState);

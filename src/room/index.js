@@ -2278,6 +2278,24 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
     return {
         start,
         get state() { return state; },
+
+        /**
+         * Whether this person is watching a stream right now.
+         *
+         * The one form of "present but not touching anything" Weave can actually see. OS
+         * idle time cannot tell an empty chair from somebody an hour into a screen share,
+         * and for a video playing in another application nothing can — but when the stream
+         * is being consumed HERE, we know.
+         *
+         * A focused tile rather than merely a visible one: a thumbnail nobody is looking at
+         * is not evidence of anything. The visibility check keeps a minimised window from
+         * claiming attention it does not have.
+         */
+        isWatchingVideo() {
+            if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return false;
+            return Boolean(stageFocus);
+        },
+
         destroy() {
             document.removeEventListener('fullscreenchange', onFullscreenChange);
             clearInterval(syncTimer);

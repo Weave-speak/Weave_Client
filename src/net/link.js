@@ -111,6 +111,9 @@ export function createLink({
     token,
     channelId = null,
     autoJoin = true,
+    // Milliseconds since this person last touched their machine, or null where that cannot
+    // be known. Injected rather than read here so the link stays free of platform details.
+    readIdleMs = () => null,
     onEvent = () => {},
     onState = () => {},
     // Injected in tests. Nothing else about the logic changes.
@@ -180,7 +183,15 @@ export function createLink({
         }
         lastPingAt = now();
         outstandingPings += 1;
-        raw('ping', { t: lastPingAt });
+        // How long this machine has been untouched rides the heartbeat rather than
+        // travelling on a timer of its own: it is already the one message that arrives on
+        // a schedule over a provably healthy socket, and a second timer would report on a
+        // connection that may not be carrying anything.
+        //
+        // Omitted entirely when the answer is unknown. A browser cannot see OS input, and
+        // sending 0 would claim permanent activity rather than admitting ignorance.
+        const idleMs = readIdleMs();
+        raw('ping', { t: lastPingAt, ...(idleMs === null ? {} : { idleMs }) });
         if (outstandingPings > 1) setState(LINK.DEGRADED);
         pingTimer = setTimer(beat, PING_INTERVAL_MS);
     }

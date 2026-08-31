@@ -519,13 +519,17 @@
 .self-menu-name { display: block; font-weight: 640; color: var(--ink); }
 .self-menu-handle { display: block; font-size: var(--t-xs); color: var(--ink-faint); }
 .self-menu-split { height: 1px; margin: var(--s-1) var(--s-2); background: var(--line-soft); }
+/* A flex row rather than a grid. The grid version had the tick and the label both placed
+   in column 2, so they collided and the label was pushed onto its own line under the dot —
+   which is what a hand-placed grid item does the moment a row gains a third thing. Here the
+   dot, the text and the tick are simply three items in a row, and the text block stacks its
+   own two lines. Same shape as .setting-text elsewhere in this file. */
 .self-menu-item {
-    display: grid;
-    grid-template-columns: auto 1fr;
+    display: flex;
     align-items: center;
-    gap: var(--s-1) var(--s-2);
+    gap: var(--s-2);
     width: 100%;
-    padding: var(--s-2);
+    padding: var(--s-2) var(--s-2);
     border-radius: var(--r-2);
     text-align: left;
     color: var(--ink-dim);
@@ -533,23 +537,33 @@
 .self-menu-item:hover, .self-menu-item:focus-visible { background: var(--surface-2); color: var(--ink); }
 .self-menu-item.current { color: var(--ink); }
 /* The tick, drawn rather than shipped as an icon: it is one glyph and it only ever means
-   "this is the one you are on". */
+   "this is the one you are on". Last in the row, so it needs no placement at all. */
 .self-menu-item.current::after {
     content: "\2713";
-    grid-column: 2;
-    grid-row: 1;
-    justify-self: end;
+    margin-left: auto;
     color: var(--accent-hi);
+    font-size: var(--t-sm);
 }
-.self-menu-item svg { width: 15px; height: 15px; }
-.self-menu-label { font-size: var(--t-base); }
-.self-menu-hint { grid-column: 2; font-size: var(--t-xs); color: var(--ink-ghost); }
+.self-menu-item svg { width: 15px; height: 15px; flex: none; }
+.self-menu-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.self-menu-label { font-size: var(--t-base); line-height: 1.25; }
+.self-menu-hint {
+    font-size: var(--t-xs);
+    line-height: 1.25;
+    color: var(--ink-ghost);
+    /* One line. A wrapped hint makes the two status rows different heights, which reads as
+       a layout bug rather than as one of them having more to say. */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 
 /* The same dot the avatar wears, as a standalone element for the menu rows. Driven by the
    same data-presence attribute so a colour is never defined twice. */
 .status-dot {
     width: 10px;
     height: 10px;
+    flex: none;
     border-radius: 50%;
     background: var(--presence-off);
     flex: none;

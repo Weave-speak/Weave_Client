@@ -490,3 +490,52 @@ test('a kick with no cooldown attached still waits rather than hammering', () =>
     h.clock.advance(35_000);
     assert.equal(h.FakeSocket.opened, opened + 1);
 });
+
+// ── Reporting whether anyone is at the machine ───────────────────────────────
+
+test('the heartbeat carries idle time, and omits it when there is none to give', () => {
+    let idle = null;
+    const h = harness();
+    // The reporter is injected, so the link never learns what a platform is.
+    const link = createLink({
+        origin: 'weave.example.com',
+        token: 'tok',
+        WebSocketImpl: h.FakeSocket,
+        now: h.clock.now,
+        setTimer: h.clock.setTimer,
+        clearTimer: h.clock.clearTimer,
+        random: () => 1,
+        readIdleMs: () => idle,
+        onState: () => {},
+        onEvent: () => {},
+    });
+
+    link.connect();
+    const sock = h.FakeSocket.last;
+    sock.accept();
+    sock.deliver({ type: 'hello', cid: 'CID1' });
+    sock.deliver({ type: 'joined', channel: { id: 'hall' }, self: {}, peers: [] });
+
+    // Answering each beat, or the link gives up on an unresponsive server after two and
+    // stops sending — which would make the later assertions read a stale ping.
+    const beat = () => {
+        h.clock.advance(30_000);
+        const sent = sock.lastOf('ping');
+        sock.deliver({ type: 'pong', t: sent.t });
+        return sent;
+    };
+
+    // A browser: the key is absent entirely rather than sent as 0, which the server reads
+    // as "cannot tell" rather than as a claim of activity.
+    const quiet = beat();
+    assert.ok(quiet, 'a heartbeat went out');
+    assert.equal('idleMs' in quiet, false, 'no claim is made where none can be');
+
+    // The desktop shell: the figure rides along.
+    idle = 42_000;
+    assert.equal(beat().idleMs, 42_000);
+
+    // Zero is a real answer — somebody just moved the mouse — and must still be sent.
+    idle = 0;
+    assert.equal(beat().idleMs, 0);
+});

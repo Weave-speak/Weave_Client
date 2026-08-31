@@ -6,6 +6,8 @@
 //
 //   - `muted` is a person's standing choice: "do not transmit until I say otherwise".
 //   - Push-to-talk is a GATE on the stream: closed by default, open only while held.
+//   - `forceMuted` is somebody ELSE's decision, and outranks both. It is the one state
+//     here that no key press and no button can lift.
 //
 // While push-to-talk is on, the key is the only mute control — the mute button is
 // disabled, because offering two controls over one stream is how they end up fighting.
@@ -17,7 +19,13 @@
  *
  * @returns {boolean} true when the microphone must NOT transmit.
  */
-export function effectiveMute({ pushToTalk = false, held = false, muted = false, deafened = false } = {}) {
+export function effectiveMute({
+    pushToTalk = false, held = false, muted = false, deafened = false, forceMuted = false,
+} = {}) {
+    // First, and above even deafen, because it is the only one of these that is not this
+    // person's decision to make. The server pauses their producer regardless; agreeing
+    // with it here is what keeps the button, the mark and the RTP saying the same thing.
+    if (forceMuted) return true;
     if (deafened) return true;             // deafened always implies not transmitting
     if (pushToTalk) return !held;          // the gate: closed unless the key is down
     return muted;                          // otherwise the standing choice stands
@@ -39,5 +47,12 @@ export function onPushToTalkChange({ turnedOn, deafened = false }) {
     return { held: false, muted: deafened };
 }
 
-/** Whether the mute button is usable at all. Under push-to-talk the key owns the stream. */
-export const muteButtonDisabled = (prefs = {}) => Boolean(prefs.pushToTalk);
+/**
+ * Whether the mute button is usable at all.
+ *
+ * Under push-to-talk the key owns the stream. Under a server mute nothing this person can
+ * press owns it — leaving the button live would offer them a control that does nothing,
+ * which reads as the app being broken rather than as them being muted.
+ */
+export const muteButtonDisabled = (prefs = {}) =>
+    Boolean(prefs.pushToTalk) || Boolean(prefs.forceMuted);

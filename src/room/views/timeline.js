@@ -211,6 +211,10 @@ export function typingLine(names = []) {
       <span>${who} ${verb} typing…</span>`;
 }
 
+/** The wall-clock time an expiry lands at, in whatever the reader's locale calls it. */
+const clockOf = (until) => new Date(until)
+    .toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+
 /**
  * What voice is doing, when that is worth saying.
  *
@@ -218,6 +222,20 @@ export function typingLine(names = []) {
  * noise is what teaches people not to read the place real problems appear.
  */
 export function voiceNotice(status = {}) {
+    // Ahead of the switch, because it is true regardless of what voice is otherwise doing
+    // and it is the only one of these the person cannot act on. Somebody whose microphone
+    // has been paused by somebody else is owed the reason before they go looking for a
+    // fault in their own hardware.
+    if (status.forceMuted) {
+        return {
+            show: true,
+            tone: 'bad',
+            text: status.forceMutedUntil
+                ? `An administrator muted you until ${clockOf(status.forceMutedUntil)}.`
+                : 'An administrator muted you. Only an administrator can lift it.',
+        };
+    }
+
     switch (status.state) {
         case 'no-mic':
             return { show: true, tone: 'warn', text: status.message ?? 'Microphone unavailable.' };

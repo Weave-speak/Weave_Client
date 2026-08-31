@@ -50,7 +50,14 @@ export function personMarks(person = {}) {
             : `<span class="mark-share" title="On camera">${icons.camera}</span>`);
     }
     if (person.away) marks.push(`<span title="Away">${icons.afk}</span>`);
-    if (person.muted) marks.push(`<span class="mark-muted" title="Muted">${icons.micOff}</span>`);
+    // Kept apart from a self-mute, and checked first so it is the one that shows. They
+    // look identical to the person reading the roster otherwise, and the difference —
+    // "chose not to speak" against "was not allowed to" — is the whole point of it.
+    if (person.forceMuted) {
+        marks.push(`<span class="mark-forced" title="Muted by an administrator">${icons.micOff}</span>`);
+    } else if (person.muted) {
+        marks.push(`<span class="mark-muted" title="Muted">${icons.micOff}</span>`);
+    }
     if (person.dnd) marks.push(`<span class="mark-muted" title="Do not disturb">${icons.speakerOff}</span>`);
     return marks.length ? `<span class="person-marks">${marks.join('')}</span>` : '';
 }

@@ -448,3 +448,64 @@ test('leaving stands you nowhere but keeps what you were reading', () => {
     const hall = view.rooms.find((r) => r.id === 'c-hall');
     assert.deepEqual(hall.occupants, [], 'the room forgot you');
 });
+
+// ── A mute somebody else applied ─────────────────────────────────────────────
+
+test('a server mute lands on the account, not on one of its connections', () => {
+    const state = fresh();
+    state.apply({
+        type: 'joined',
+        channel: channels[0],
+        self: peer('cid-me', 'u-me', 'ghostbyte'),
+        // Kestrel is signed in twice, which is the case this frame has to get right.
+        peers: [peer('cid-k1', 'u-kes', 'kestrel'), peer('cid-k2', 'u-kes', 'kestrel')],
+    });
+
+    state.apply({ type: 'peer_force_muted', userId: 'u-kes', forceMuted: true, until: 5_000 });
+
+    const kes = state.people.find((p) => p.username === 'kestrel');
+    assert.equal(kes.forceMuted, true);
+    for (const cid of ['cid-k1', 'cid-k2']) {
+        assert.equal(state.raw.peers.get(cid).forceMuted, true,
+            'every connection, or they stay audible on the other machine');
+    }
+
+    // Nobody else is touched by it.
+    assert.equal(state.people.find((p) => p.username === 'ghostbyte').forceMuted, false);
+
+    state.apply({ type: 'peer_force_muted', userId: 'u-kes', forceMuted: false });
+    assert.equal(state.people.find((p) => p.username === 'kestrel').forceMuted, false);
+    assert.equal(state.raw.peers.get('cid-k2').forceMutedUntil, null);
+});
+
+test('your own server mute reaches the self bar, and is not the same as self-mute', () => {
+    const state = fresh();
+    state.apply({
+        type: 'joined',
+        channel: channels[0],
+        self: peer('cid-me', 'u-me', 'ghostbyte'),
+        peers: [],
+    });
+
+    assert.equal(state.toShell().me.forceMuted, false);
+    state.apply({ type: 'peer_force_muted', userId: 'u-me', forceMuted: true, until: 9_000 });
+
+    const me = state.toShell().me;
+    assert.equal(me.forceMuted, true);
+    assert.equal(me.forceMutedUntil, 9_000);
+    assert.equal(me.muted, false, 'their own mute is a separate fact and was never set');
+});
+
+test('a joined frame carries a standing mute, so a reconnect is not a way out of one', () => {
+    const state = fresh();
+    state.apply({
+        type: 'joined',
+        channel: channels[0],
+        // What the server sends somebody who was already muted when they connected.
+        self: peer('cid-me', 'u-me', 'ghostbyte', { forceMuted: true, forceMutedUntil: 7_000 }),
+        peers: [],
+    });
+
+    assert.equal(state.toShell().me.forceMuted, true);
+    assert.equal(state.toShell().me.forceMutedUntil, 7_000);
+});

@@ -63,19 +63,50 @@ test('a SQLite datetime is read as UTC, not as local time', () => {
     assert.equal(joinedOn('2026-08-23T23:30:00Z'), joinedOn('2026-08-23T23:30:00.000Z'));
 });
 
-test('the profile panel is honest about what it cannot change', () => {
+test('the profile panel shows who you are without offering controls that do nothing', () => {
     const markup = profilePanel({ me: ME, prefs: {}, features: [] });
 
     assert.match(markup, /Ghostbyte/);
     assert.match(markup, /@ghostbyte/);
     assert.match(markup, /joined/);
 
-    // The display name field exists because the design has it, but it is disabled and says
-    // why rather than accepting a change that would silently go nowhere.
-    assert.match(markup, /id="displayName"[^>]*disabled/);
-    assert.match(markup, /no route to change it/);
-    assert.match(markup, /Profile picture/);
-    assert.match(markup, /Status/);
+    // The display name used to sit here as a disabled input explaining that the server had
+    // no route to change one — a control whose only function was to refuse. The name is on
+    // the card above, where it is a fact rather than an invitation to try.
+    assert.ok(!markup.includes('id="displayName"'), 'no box that cannot be typed in');
+    assert.ok(!markup.includes('no route to change it'));
+
+    // Status is not here either: it lives behind your own name in the bottom bar, because
+    // one buried in a preferences dialog is one nobody sets and nobody trusts.
+    assert.ok(!/not-yet-what">Status/.test(markup));
+});
+
+test('the profile picture is offered only where the server can store one', () => {
+    const withIt = profilePanel({ me: ME, features: ['profile'] });
+    assert.match(withIt, /Profile picture/);
+    assert.match(withIt, /data-pick-avatar/);
+
+    const without = profilePanel({ me: ME, features: [] });
+    assert.ok(!without.includes('data-pick-avatar'), 'no button that would only 404');
+    assert.match(without, /no route to attach one/);
+});
+
+test('a picture already chosen is rendered, not just referenced', () => {
+    // The bug this covers: the panel was handed `avatar` (an id) but never `avatarUrl`,
+    // so it drew initials for ever while the same person appeared correctly in the room.
+    const withFace = profilePanel({
+        me: { ...ME, avatar: 'abc.webp', avatarUrl: 'blob:xyz' },
+        features: ['profile'],
+    });
+    assert.match(withFace, /<img class="avatar-face" src="blob:xyz"/);
+    assert.match(withFace, /data-remove-avatar/, 'and can be taken off again');
+
+    // An id with no resolved URL yet falls back to initials rather than a broken image.
+    const stillLoading = profilePanel({
+        me: { ...ME, avatar: 'abc.webp', avatarUrl: null },
+        features: ['profile'],
+    });
+    assert.ok(!stillLoading.includes('<img class="avatar-face"'));
 });
 
 test('a disabled module is named as the reason, not hidden', () => {

@@ -72,7 +72,11 @@ export function createSettings({
     checkForUpdates = null, api, server, me: signedInAs, features = [], onPrefsChange = () => {}, onSignOut = () => {},
     // A new picture changes the roster for everybody, so the room repaints rather
     // than the settings dialog quietly knowing something the rest of the app does not.
-    onProfileChange = () => {} }) {
+    onProfileChange = () => {},
+    // Avatars live behind the session, so an <img> cannot fetch one on its own. The room
+    // owns the cache that turns an id into something renderable; without it this panel
+    // could only ever draw initials — which is exactly what it did.
+    avatars = null }) {
     const store = settingsFor(server.id);
     let me = signedInAs;
     let current = 'profile';
@@ -104,7 +108,10 @@ export function createSettings({
 
     function panelBody() {
         switch (current) {
-            case 'profile': return profilePanel({ me, prefs, features, avatarError });
+            case 'profile': return profilePanel({
+                me: { ...me, avatarUrl: avatars?.urlFor(me.avatar) ?? null },
+                prefs, features, avatarError,
+            });
             case 'voice': return voicePanel({ prefs, devices, cameras, features });
             case 'sessions': return sessionsPanel({ version: VERSION });
             case 'appearance': return appearancePanel({ prefs });
@@ -669,5 +676,19 @@ export function createSettings({
         },
 
         close: () => modal.close(),
+
+        /**
+         * Redraw if this is open and showing the profile.
+         *
+         * Called when an avatar finishes downloading. The room repaints itself on the same
+         * event; this panel is a separate piece of DOM and would otherwise sit on initials
+         * until something else happened to re-render it.
+         */
+        refreshProfile() {
+            if (!modal.isOpen) return;
+            if (current !== 'profile') return;
+            if (!$('#settingsPanel', modal.element)) return;
+            renderPanel();
+        },
     };
 }

@@ -84,12 +84,6 @@ const notYet = (what, why) => `
     <span class="not-yet-why">${esc(why)}</span>
   </div>`;
 
-const field = ({ id, label, value, hint, disabled = false }) => `
-  <div class="field">
-    <label for="${esc(id)}">${esc(label)}</label>
-    <input id="${esc(id)}" name="${esc(id)}" value="${esc(value ?? '')}" ${disabled ? 'disabled' : ''}>
-    ${hint ? `<div class="field-help">${esc(hint)}</div>` : ''}
-  </div>`;
 
 /**
  * A date a person would recognise, or nothing at all if the server did not send one.
@@ -142,6 +136,14 @@ const avatarCropper = ({ busy = false, error = '' } = {}) => `
     </div>
   </div>`;
 
+/*
+ * There is deliberately no Display Name field here.
+ *
+ * It existed as a disabled box explaining that the server had no route to change one, which
+ * is a control that exists only to say no. The name is already on the card above, where it
+ * is a fact rather than an invitation. If changing it ever becomes possible, the field comes
+ * back as a working one.
+ */
 export function profilePanel({ me = {}, features = [], avatarError = '' } = {}) {
     const joined = joinedOn(me.createdAt);
     const hasPersonas = features.includes('module.personas');
@@ -166,14 +168,6 @@ export function profilePanel({ me = {}, features = [], avatarError = '' } = {}) 
         </div>
       </div>
     </div>
-
-    ${field({
-        id: 'displayName',
-        label: 'Display Name',
-        value: me.displayName ?? '',
-        hint: 'Editing this needs a server update — the server has no route to change it yet.',
-        disabled: true,
-    })}
 
     ${canEdit ? `
     <div class="setting">

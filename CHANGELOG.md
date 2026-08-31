@@ -4,6 +4,26 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.50] - 2026-08-31
+
+### Fixed
+- **The zoom slider did nothing when cropping a profile picture.** It moved, and the
+  picture stayed exactly where it was. Zoom was being measured against the image's own
+  pixels rather than against the size of the crop circle, so on anything as large as a
+  photograph every position of the slider asked for more than the maximum and landed on the
+  same one. It now means what it looks like it means: at the left the picture fills the
+  circle, and it grows smoothly to four times that at the right.
+
+- **Your new picture did not appear on the Settings → My Profile card.** It showed up
+  everywhere else — the room list, the bottom bar — while the one screen you chose it on
+  carried on showing your initials. It now appears there too, both straight after saving
+  and when you next open Settings.
+
+### Removed
+- The Display Name box in Settings → My Profile. It could not be typed into and existed
+  only to explain that changing your name is not possible yet; your name is already on the
+  card above it. If it becomes changeable, the field returns as one that works.
+
 ## [0.1.49] - 2026-08-31
 
 ### Changed

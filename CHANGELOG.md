@@ -4,6 +4,38 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.47] - 2026-08-31
+
+### Added
+- **Right-click somebody in a room.** Until now a person in the sidebar was text: the pointer
+  turned into a cursor for selecting words, dragging across the list highlighted names, and
+  there was nothing you could do with any of it. A right-click now opens a menu with the two
+  controls you actually want — mute them just for you, and set how loudly you hear them.
+  Neither leaves your machine. Nobody else is affected and nobody is told.
+
+  Per-person volume already existed, but only reached the person you were watching on the
+  video stage. It now reaches anybody in the room, whether they are on camera or not.
+
+- **For administrators, two more entries below a divider.** Server mute silences somebody in
+  a way they cannot undo — five minutes, an hour, or until you lift it — and Kick disconnects
+  them and holds the door for a minute. Kick asks twice before it does anything, because a
+  menu that opens under your pointer is a bad place to keep a one-click ejection.
+
+- **Drag somebody into another room.** Administrators can pick a person up from the sidebar
+  and drop them in a different voice room. Only rooms you can stand in light up as you pass
+  over them, so a text strand is never offered as somewhere to put a person.
+
+### Changed
+- Being server-muted says so. Your microphone button goes dark with the reason and, when it
+  is a timed mute, the time it ends; the room says the same thing above the composer. Before,
+  a muted person had a button that looked live and did nothing — which reads as a broken app
+  rather than as a moderation decision. Somebody else's forced mute is marked differently to
+  their own in the sidebar, because choosing not to speak and not being allowed to are not
+  the same fact.
+
+- Being kicked shows what happened and comes back on its own once the minute is up, standing
+  in no room rather than dropping you back into the one you were removed from.
+
 ## [0.1.46] - 2026-08-30
 
 ### Fixed

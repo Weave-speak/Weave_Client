@@ -205,6 +205,52 @@ export function rate(prev, cur) {
 }
 
 /**
+ * The viewer's RENDER pipeline, which lives on the <video> element — NOT in getStats().
+ *
+ * getStats knows what was decoded; it does not know what the GPU managed to PAINT, and those
+ * are different numbers the moment a stream is upscaled. A 720p decode filling a 4K fullscreen
+ * display is all render cost and no decode cost — which is exactly the "fine until I went
+ * fullscreen" report. getVideoPlaybackQuality() is where dropped RENDERED frames surface, and
+ * the fullscreen flag and the upscale ratio are the context that explains them.
+ */
+export function pickRender(raw) {
+    if (!raw) return null;
+    const dispW = num(raw.displayWidth); const dispH = num(raw.displayHeight);
+    const vidW = num(raw.videoWidth); const vidH = num(raw.videoHeight);
+    return {
+        at: num(raw.at),
+        fullscreen: Boolean(raw.fullscreen),
+        displayWidth: dispW,
+        displayHeight: dispH,
+        videoWidth: vidW,
+        videoHeight: vidH,
+        // How much bigger the picture is drawn than it was encoded. Above 1 is upscaling,
+        // which is where fullscreen render cost comes from.
+        upscale: (vidW && vidH && dispW && dispH) ? Math.round(((dispW * dispH) / (vidW * vidH)) * 100) / 100 : null,
+        totalRenderedFrames: num(raw.totalVideoFrames),
+        droppedRenderedFrames: num(raw.droppedVideoFrames),
+    };
+}
+
+/** Per-second render deltas between two samples: how many frames the display failed to paint. */
+export function renderRate(prev, cur) {
+    if (!prev || !cur) return null;
+    const dt = (num(cur.at) - num(prev.at)) / 1000;
+    if (!(dt > 0)) return null;
+    const per = (a, b) => (a != null && b != null ? (a - b) / dt : null);
+    const dropPS = per(cur.droppedRenderedFrames, prev.droppedRenderedFrames);
+    const totPS = per(cur.totalRenderedFrames, prev.totalRenderedFrames);
+    return {
+        seconds: Math.round(dt * 1000) / 1000,
+        droppedPerSec: dropPS != null ? Math.round(dropPS * 10) / 10 : null,
+        renderedFps: (totPS != null && dropPS != null) ? Math.round(totPS - dropPS)
+            : (totPS != null ? Math.round(totPS) : null),
+        // Of the frames handled this window, the share the display could not paint.
+        droppedPct: (totPS != null && dropPS != null && totPS > 0) ? Math.round((dropPS / totPS) * 100) : null,
+    };
+}
+
+/**
  * The first opinion: given a picked side, its transport, its rate deltas, and (optionally)
  * the Pi's own load stamped in server-side, name the most likely culprit.
  *
@@ -213,7 +259,7 @@ export function rate(prev, cur) {
  * first. `pi` is only reachable when the server has stamped the report — a client cannot see
  * the media worker's CPU — so a Pi verdict is only ever offered when that stamp is present.
  */
-export function classify({ role, send = null, recv = null, transport = null, rates = null, pi = null } = {}) {
+export function classify({ role, send = null, recv = null, transport = null, rates = null, render = null, renderRates = null, pi = null } = {}) {
     const reasons = [];
     let verdict = 'inconclusive';
 
@@ -246,10 +292,17 @@ export function classify({ role, send = null, recv = null, transport = null, rat
         const dropping = (rates?.framesDroppedGained ?? 0) > 1;
         const badPicture = freezing || dropping;
         const decodeSlow = (rates?.decodeMsPerFrame ?? null) != null && rates.decodeMsPerFrame > FRAME_TIME_HIGH_MS;
+        // Frames the DISPLAY failed to paint — distinct from decode/network drops. A few is
+        // normal; a steady stream of them, especially upscaled to fullscreen, is the GPU, and
+        // it is invisible to every getStats number above it. This is the fullscreen case.
+        const renderDropped = (renderRates?.droppedPerSec ?? 0) > 1 || (renderRates?.droppedPct ?? 0) >= 5;
 
         if (badPicture && lossy) {
             verdict = 'viewer-downlink';
             reasons.push(`freezing with packet loss (${Math.round(rates.packetsLostGained)} pkt/s) — the viewer's connection is dropping data`);
+        } else if (renderDropped && !lossy) {
+            verdict = 'viewer-render';
+            reasons.push(`the display is dropping ${renderRates?.droppedPerSec ?? '?'} rendered frame(s)/s${render?.fullscreen ? ` in fullscreen (upscaled ${render.upscale ?? '?'}×)` : ''} while packets arrive cleanly — the viewer's GPU/render, not the link, the decoder, or the stream`);
         } else if (badPicture && decodeSlow) {
             verdict = 'viewer-decode';
             reasons.push(`dropping frames while packets arrive cleanly (${rates.decodeMsPerFrame} ms/frame to decode) — the viewer's machine cannot decode this fast enough`);
@@ -294,10 +347,15 @@ export function classify({ role, send = null, recv = null, transport = null, rat
  * getStats() and the reading of settings, this turns the results into the object that gets
  * posted. `prev` is the previous sample's picked side, for the rate deltas.
  */
-export function buildStreamSample({ role, sendStats = null, recvStats = null, transportStats = null, prev = null } = {}) {
+export function buildStreamSample({
+    role, sendStats = null, recvStats = null, transportStats = null, renderStats = null,
+    prev = null, prevRender = null,
+} = {}) {
     const send = role === 'streamer' ? pickSend(sendStats) : null;
     const recv = role === 'viewer' ? pickRecv(recvStats) : null;
     const transport = pickTransport(transportStats);
+    const render = role === 'viewer' ? pickRender(renderStats) : null;
     const rates = rate(prev, role === 'streamer' ? send : recv);
-    return { role, send, recv, transport, rates };
+    const renderRates = renderRate(prevRender, render);
+    return { role, send, recv, render, transport, rates, renderRates };
 }

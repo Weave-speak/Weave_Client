@@ -228,7 +228,7 @@ const choose = ({ id, label, hint, value, options }) => `
     </select>
   </div>`;
 
-export function voicePanel({ prefs = {}, devices = [], cameras = [], features = [] } = {}) {
+export function voicePanel({ prefs = {}, devices = [], cameras = [], outputs = [], features = [] } = {}) {
     const hasAfk = features.includes('module.afk');
     return `
     <h2 class="panel-title">Voice &amp; Audio</h2>
@@ -246,6 +246,18 @@ export function voicePanel({ prefs = {}, devices = [], cameras = [], features = 
              <span class="setting-note" id="activeMic">Checking which device is live…</span>
            </div>`
         : notYet('Input device', 'Device names are only readable once microphone access has been granted.')}
+
+    ${outputs.length
+        ? `<div class="field">
+             <label for="audioOutput">Output device</label>
+             <select id="audioOutput" data-setting="audioOutput">
+               <option value="" ${prefs.audioOutput ? '' : 'selected'}>System default</option>
+               ${outputs.map((d) => `<option value="${esc(d.deviceId)}"
+                    ${d.deviceId === prefs.audioOutput ? 'selected' : ''}>${esc(d.label || 'Output')}</option>`).join('')}
+             </select>
+             <span class="setting-note">Where the room's voices play. Point this at your headset, away from anything you capture for a stream, so viewers never hear themselves through your share.</span>
+           </div>`
+        : notYet('Output device', 'Device names are only readable once microphone access has been granted.')}
 
     ${toggle({
         id: 'pushToTalk',

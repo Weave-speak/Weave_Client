@@ -100,6 +100,9 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
     // and nothing at all when the stage holds no video. The webcam is deliberately not
     // sampled — a frozen face is nobody's emergency, and the report is about screen shares.
     const streamDiagTimer = setInterval(() => {
+        // Only testers can report, so only testers need the rolling history sampled. For
+        // everyone else this timer is a no-op — no getStats, no buffer, nothing.
+        if (!user?.isTester) return;
         for (const key of videoStreams.keys()) {
             const [cid, slotName] = key.split(':');
             if (slotName !== 'screen') continue;
@@ -212,6 +215,29 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
 
     const voice = createVoice({
         link,
+        // Which speakers/headset the room's voices play out of; '' is the system default.
+        getAudioOutput: () => prefs.audioOutput,
+        // Render-side truth for a watched video, read off the stage's own <video> element:
+        // whether it is fullscreen, how far it is being upscaled, and how many frames the
+        // display is failing to paint. None of this is in getStats, and it is the half that
+        // explains "fine until fullscreen". Null when the element is not on the stage.
+        getRenderStats(cid, slot) {
+            const holder = mount.querySelector(`[data-tile="${cid}:${slot}"]`);
+            const video = holder?.querySelector('video');
+            if (!video) return null;
+            const q = video.getVideoPlaybackQuality?.();
+            const rect = video.getBoundingClientRect();
+            return {
+                at: Date.now(),
+                fullscreen: document.fullscreenElement === holder,
+                displayWidth: rect.width,
+                displayHeight: rect.height,
+                videoWidth: video.videoWidth,
+                videoHeight: video.videoHeight,
+                totalVideoFrames: q?.totalVideoFrames ?? null,
+                droppedVideoFrames: q?.droppedVideoFrames ?? null,
+            };
+        },
         onVideo({ cid, slot, stream }) {
             const key = tileKey(cid, slot);
             // Our own tile appearing or vanishing is also the sidebar icon's truth.
@@ -348,6 +374,9 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         } else {
             voice.applyAudioConstraints().catch(() => {});
         }
+        // The output device applies live too, with no capture to rebuild — just a resink of
+        // the context and the playing elements.
+        if (changedKey === 'audioOutput') voice.setAudioOutput(prefs.audioOutput ?? '');
         voice.applyChainSettings();
 
         // Flipping push-to-talk changes who owns the microphone, in both directions.
@@ -627,7 +656,7 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         }
 
         lastStageSignature = signature;
-        slot.innerHTML = stageView({ tiles, focus: stageFocus, heightPx: stageHeightPx });
+        slot.innerHTML = stageView({ tiles, focus: stageFocus, heightPx: stageHeightPx, canReport: Boolean(user?.isTester) });
         attachStreams(slot);
         paintMediaButtons();
     }

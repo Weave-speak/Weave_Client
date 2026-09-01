@@ -42,6 +42,7 @@ export const DEFAULTS = {
     autoGainControl: true,
     staticBackground: false,
     micDevice: '',
+    audioOutput: '',
     afkExempt: false,
     // The mic chain. `noiseGate` defaults off because a gate the user did not ask for is
     // indistinguishable from a broken microphone; 64 is mid-slider, ~-55 dBFS.
@@ -85,6 +86,7 @@ export function createSettings({
     let prefs = readPrefs(server.id);
     let devices = [];
     let cameras = [];
+    let outputs = [];
     let invite = null;
     let inviteBusy = false;
     let inviteError = null;
@@ -114,7 +116,7 @@ export function createSettings({
                 me: { ...me, avatarUrl: avatars?.urlFor(me.avatar) ?? null },
                 prefs, features, avatarError,
             });
-            case 'voice': return voicePanel({ prefs, devices, cameras, features });
+            case 'voice': return voicePanel({ prefs, devices, cameras, outputs, features });
             case 'sessions': return sessionsPanel({ version: VERSION });
             case 'appearance': return appearancePanel({ prefs });
             case 'invites': return invitesPanel({
@@ -310,6 +312,27 @@ export function createSettings({
             armThen(`remove:${id}`, () => adminAct(
                 () => api.request('DELETE', `/api/admin/members/${id}`),
             ));
+        }));
+        // Granting admin is one deliberate click; removing it arms first, because demoting
+        // someone (or yourself — the server refuses that outright) is the consequential half.
+        $$('[data-admin-promote]', el).forEach((b) => b.addEventListener('click', () => {
+            adminAct(() => api.request('POST', `/api/admin/members/${b.dataset.adminPromote}/admin`, {
+                body: { isAdmin: true },
+            }), 'They are an administrator now.');
+        }));
+        $$('[data-admin-demote]', el).forEach((b) => b.addEventListener('click', () => {
+            const id = b.dataset.adminDemote;
+            armThen(`demote:${id}`, () => adminAct(
+                () => api.request('POST', `/api/admin/members/${id}/admin`, { body: { isAdmin: false } }),
+            ));
+        }));
+        // Tester is low-stakes either way — it only shows or hides the stream-quality tools —
+        // so both directions are a single click. The button carries the state to move to.
+        $$('[data-admin-tester]', el).forEach((b) => b.addEventListener('click', () => {
+            const on = b.dataset.testerNext === '1';
+            adminAct(() => api.request('POST', `/api/admin/members/${b.dataset.adminTester}/tester`, {
+                body: { isTester: on },
+            }), on ? 'They can see the stream-quality tools now.' : 'Stream-quality tools removed.');
         }));
 
         // -- channels --
@@ -645,6 +668,7 @@ export function createSettings({
             const all = await navigator.mediaDevices.enumerateDevices();
             devices = all.filter((d) => d.kind === 'audioinput' && d.label);
             cameras = all.filter((d) => d.kind === 'videoinput' && d.label);
+            outputs = all.filter((d) => d.kind === 'audiooutput' && d.label);
         } catch {
             devices = [];
         }

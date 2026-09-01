@@ -62,12 +62,17 @@ function userRow(m, { editing, armedKey }) {
       </span>
       <span class="adm-flags">
         ${m.isAdmin ? '<span class="badge admin">Admin</span>' : ''}
+        ${m.isTester ? '<span class="badge tester">Tester</span>' : ''}
         ${m.banned ? '<span class="badge banned">Banned</span>' : ''}
         ${m.mustReset ? '<span class="badge reset">Reset pending</span>' : ''}
       </span>
       <span class="adm-actions">
         ${editing ? '' : `
         <button type="button" class="btn small" data-admin-edit="${esc(m.id)}">Rename</button>
+        ${m.isAdmin
+        ? armable(`data-admin-demote="${esc(m.id)}"`, 'Remove admin', 'Remove admin?', { armed: armed('demote') })
+        : `<button type="button" class="btn small" data-admin-promote="${esc(m.id)}">Make admin</button>`}
+        <button type="button" class="btn small" data-admin-tester="${esc(m.id)}" data-tester-next="${m.isTester ? '0' : '1'}">${m.isTester ? 'Remove tester' : 'Make tester'}</button>
         ${armable(`data-admin-reset="${esc(m.id)}"`, 'Reset password', 'Kick to login now?', { armed: armed('reset') })}
         ${m.banned
         ? `<button type="button" class="btn small" data-admin-unban="${esc(m.id)}">Unban</button>`

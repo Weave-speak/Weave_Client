@@ -36,13 +36,15 @@ const identityChip = (t) => `
 const initialsOf = (name) => String(name ?? '?').trim().slice(0, 2).toUpperCase();
 
 /** The focused stream's floating pill: listen controls, fullscreen, the way out. */
-const streamPill = (t) => `
+const streamPill = (t, canReport = false) => `
   <span class="stream-pill">
+    ${canReport ? `
+    <span class="pill-report-label" aria-hidden="true">Stream quality</span>
     <button type="button" class="pill-btn pill-report good" data-report-good
-            title="This stream looks good — send a report" aria-label="Report this stream looks good">${icons.thumbUp}<span>Good</span></button>
+            title="Report stream quality: good" aria-label="Report this stream's quality as good">${icons.thumbUp}<span>Good</span></button>
     <button type="button" class="pill-btn pill-report bad" data-report-bad
-            title="This stream looks bad — send a report" aria-label="Report this stream looks bad">${icons.thumbDown}<span>Bad</span></button>
-    <span class="pill-sep" aria-hidden="true"></span>
+            title="Report stream quality: bad" aria-label="Report this stream's quality as bad">${icons.thumbDown}<span>Bad</span></button>
+    <span class="pill-sep" aria-hidden="true"></span>` : ''}
     ${t.self || !t.audio ? '' : `
     <button type="button" class="pill-btn" data-listen-mute
             title="${t.audio.muted ? 'Unmute for you' : 'Mute for you'}"
@@ -82,7 +84,7 @@ const watchButton = (t) => `
     <button type="button" class="watch-btn" data-watch-tile="${esc(t.key)}"
             aria-label="Watch ${esc(t.label)}">${icons.expand}<span>Watch</span></button>`;
 
-const tile = (t, focusKey) => {
+const tile = (t, focusKey, canReport = false) => {
     const focused = t.key === focusKey;
     return `
   <div class="tile${focused ? ' focused' : ''}${t.self ? ' self' : ''}${t.live ? '' : ' idle'}"
@@ -91,7 +93,7 @@ const tile = (t, focusKey) => {
     ${t.live ? `<video autoplay playsinline ${t.self ? 'muted' : ''}></video>` : placeholder(t)}
     ${focused ? `
     <span class="live-badge"><i aria-hidden="true"></i>LIVE · ${esc(t.label)}</span>
-    ${streamPill(t)}` : `
+    ${streamPill(t, canReport)}` : `
     ${t.slot === 'screen' ? '<span class="live-badge small"><i aria-hidden="true"></i>LIVE</span>' : ''}
     ${identityChip(t)}
     ${watchButton(t)}`}
@@ -105,7 +107,7 @@ export const STRIP_VISIBLE = 4;
  * The stage. Empty tiles array renders nothing at all — the room looks exactly as it
  * always did until the first camera or screen arrives.
  */
-export function stageView({ tiles = [], focus = null, heightPx = null } = {}) {
+export function stageView({ tiles = [], focus = null, heightPx = null, canReport = false } = {}) {
     if (!tiles.length) return '';
     const ordered = orderTiles(tiles);
     const focusKey = ordered.some((t) => t.key === focus) ? focus : null;
@@ -114,18 +116,18 @@ export function stageView({ tiles = [], focus = null, heightPx = null } = {}) {
     return `
     <section class="stage${focusKey ? ' has-focus' : ''}" aria-label="Live video"${heightPx ? ` style="height: ${Math.round(heightPx)}px"` : ''}>
       ${focusKey ? `
-      <div class="stage-main">${tile(ordered.find((t) => t.key === focusKey), focusKey)}</div>
+      <div class="stage-main">${tile(ordered.find((t) => t.key === focusKey), focusKey, canReport)}</div>
       ${thumbs.length ? `
       <div class="strip-shell${thumbs.length > STRIP_VISIBLE ? ' scrollable' : ''}">
         ${thumbs.length > STRIP_VISIBLE ? `
         <button type="button" class="strip-nav" data-strip-nav="-1" aria-label="Earlier streams">‹</button>` : ''}
-        <div class="stage-strip">${thumbs.map((t) => tile(t, focusKey)).join('')}</div>
+        <div class="stage-strip">${thumbs.map((t) => tile(t, focusKey, canReport)).join('')}</div>
         ${thumbs.length > STRIP_VISIBLE ? `
         <button type="button" class="strip-nav" data-strip-nav="1" aria-label="More streams">›</button>` : ''}
       </div>` : ''}
       ` : `
       <div class="stage-grid" data-count="${Math.min(ordered.length, 9)}">
-        ${ordered.map((t) => tile(t, focusKey)).join('')}
+        ${ordered.map((t) => tile(t, focusKey, canReport)).join('')}
       </div>`}
     </section>
     ${focusKey ? `

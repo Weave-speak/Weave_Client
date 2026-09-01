@@ -107,6 +107,22 @@ export function createVoice({
     canRestartIce = () => false,
     /** The stage's feed: called with { cid, slot, stream } and stream null on teardown. */
     onVideo = () => {},
+    /**
+     * The chosen audio OUTPUT device id, '' for the system default. Read fresh per apply so a
+     * change in Settings reaches a call already up. This is the other half of picking a
+     * microphone: it decides which speakers or headset the room's voices play out of — and
+     * it is what keeps Weave's own audio OUT of a game-capture on a machine that splits its
+     * outputs, so a viewer stops hearing themselves returned through the share.
+     */
+    getAudioOutput = () => '',
+    /**
+     * Viewer-side RENDER stats for one on-stage video: fullscreen, displayed size, and the
+     * element's getVideoPlaybackQuality(). Supplied by the room, because the <video> elements
+     * live in the stage's DOM, not here — this layer owns packets, the stage owns pixels.
+     * Null when there is nothing to read. See media/stream-report.js for why render matters
+     * separately from decode: fullscreen upscaling is a GPU cost getStats cannot see.
+     */
+    getRenderStats = () => null,
 } = {}) {
     let device = null;
     let sendTransport = null;
@@ -202,6 +218,10 @@ export function createVoice({
     let audioContext = null;
     let levelTimer = null;
     let micMeter = null;
+    // The output device the room's voices play out of, '' for the system default. Applied to
+    // the AudioContext (which is where the sound actually leaves, when Web Audio is carrying
+    // it) and to every consumer's <audio> element (the fallback path). See setAudioOutput.
+    let audioOutputId = '';
 
     /** Hidden host for the audio elements. They must be in the document to play. */
     let sink = null;
@@ -418,6 +438,8 @@ export function createVoice({
                 // stream has to be told. See applyListen.
                 reapplyListening();
             };
+            // A context created after the output device was chosen must adopt it too.
+            applyAudioOutput();
         }
         return audioContext;
     }
@@ -425,6 +447,27 @@ export function createVoice({
     /** Best effort, and safe to call on any tick or gesture: resume() on a live context is a no-op. */
     function resumeAudioContext() {
         if (audioContext?.state === 'suspended') audioContext.resume().catch(() => {});
+    }
+
+    /**
+     * Route the room's playback to the chosen output device.
+     *
+     * Two things carry sound, so both are pointed at the device: the AudioContext, which is
+     * where a consumer's gain path actually leaves (the normal case, when Web Audio is
+     * available), and each consumer's <audio> element, the fallback when it is not. Best
+     * effort throughout — setSinkId can reject (a device unplugged mid-call, or an engine
+     * without the API) and a failed reroute must never take the audio down with it. An empty
+     * id is the system default, which is what clearing the setting restores.
+     */
+    function setSink(target) {
+        try {
+            const p = target?.setSinkId?.(audioOutputId);
+            if (p && typeof p.catch === 'function') p.catch(() => {});
+        } catch { /* older engine, or a sink that vanished; the default keeps playing */ }
+    }
+    function applyAudioOutput() {
+        setSink(audioContext);
+        for (const entry of consumers.values()) if (entry.audio) setSink(entry.audio);
     }
 
     async function openMicrophone() {
@@ -1025,6 +1068,9 @@ export function createVoice({
         audio.autoplay = true;
         audio.srcObject = stream;
         audioSink().append(audio);
+        // Point this element at the chosen output device too, for the fallback path where
+        // the element carries the sound rather than the AudioContext.
+        setSink(audio);
 
         // Only now, with somewhere for the packets to go. The server starts every consumer
         // paused precisely so this ordering is possible.
@@ -1091,7 +1137,7 @@ export function createVoice({
      */
     async function sampleStream({ role, cid, slot }) {
         const key = `${role}:${cid}:${slot}`;
-        const ring = streamRings.get(key) ?? { samples: [], lastPicked: null };
+        const ring = streamRings.get(key) ?? { samples: [], lastPicked: null, lastRender: null };
         streamRings.set(key, ring);
         try {
             let sample = null;
@@ -1113,8 +1159,13 @@ export function createVoice({
                     entry.consumer.getStats().catch(() => null),
                     recvTransport.getStats().catch(() => null),
                 ]);
-                sample = buildStreamSample({ role, recvStats, transportStats, prev: ring.lastPicked });
+                const renderStats = getRenderStats(cid, slot);
+                sample = buildStreamSample({
+                    role, recvStats, transportStats, renderStats,
+                    prev: ring.lastPicked, prevRender: ring.lastRender,
+                });
                 ring.lastPicked = sample.recv;
+                ring.lastRender = sample.render;
             }
             if (!sample) return null;
             sample.t = Date.now();
@@ -1283,6 +1334,9 @@ export function createVoice({
             if (!device.loaded) {
                 await device.load({ routerRtpCapabilities: rtpCapabilities });
             }
+            // Adopt the saved output device before any voice arrives, so the context and the
+            // first consumer's element are created already pointing at the right speakers.
+            audioOutputId = getAudioOutput() || '';
             startLevels();
             onChange({ state: 'ready', canSend: device.canProduce('audio') });
         },
@@ -1543,6 +1597,12 @@ export function createVoice({
             } catch {
                 return null;
             }
+        },
+
+        /** Route the room's playback to a chosen output device ('' = system default). */
+        setAudioOutput(deviceId) {
+            audioOutputId = deviceId || '';
+            applyAudioOutput();
         },
 
         /**

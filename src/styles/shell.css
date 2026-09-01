@@ -889,6 +889,7 @@
 .pill-stop:hover { background: rgb(var(--bad-rgb) / 0.28); }
 /* The stream-quality report pair: a thumb and a word, like Stop watching. Good leans on the
    accent, Bad on the warning colour, so the two read at a glance without a legend. */
+.pill-report-label { display: inline-flex; align-items: center; padding: 0 2px 0 6px; color: var(--on-accent); font-size: var(--t-sm); font-weight: 600; opacity: 0.75; white-space: nowrap; }
 .pill-report { gap: 6px; padding: 0 10px; }
 .pill-report.good:hover { background: rgb(var(--accent-rgb) / 0.32); }
 .pill-report.bad:hover { background: rgb(var(--bad-rgb) / 0.28); }
@@ -1124,6 +1125,7 @@
     text-transform: uppercase;
 }
 .badge.admin { background: rgb(var(--gold-rgb) / 0.18); color: var(--gold); }
+.badge.tester { background: rgb(var(--accent-rgb) / 0.18); color: var(--accent); }
 
 /* ── System events ────────────────────────────────────────────────────────── */
 

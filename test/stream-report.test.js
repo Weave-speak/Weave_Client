@@ -11,7 +11,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-    pickSend, pickRecv, rate, classify, buildStreamSample,
+    pickSend, pickRecv, rate, classify, buildStreamSample, pickRender,
     RTT_HIGH_S,
 } from '../src/media/stream-report.js';
 
@@ -236,4 +236,53 @@ test('buildStreamSample wires the right picker to the role and diffs against pre
     assert.equal(sample.recv, null, 'a streamer sample carries no receive side');
     assert.equal(sample.rates.bitrateKbps, 800);
     assert.equal(sample.rates.encodeMsPerFrame, 30);
+});
+
+/* ── render / fullscreen ─────────────────────────────────────────────────── */
+
+test('dropped RENDERED frames with a clean link are the viewer\'s GPU, not the stream', () => {
+    // The fullscreen case, and the whole reason render is captured separately: packets and
+    // decode are fine, but the display cannot paint a small decode blown up to a big screen.
+    // getStats alone would call this clean and miss it entirely.
+    const { verdict, reasons } = classify({
+        role: 'viewer', recv: {}, transport: { rttMs: 25 },
+        rates: { freezesGained: 0, packetsLostGained: 0, framesDroppedGained: 0, decodeMsPerFrame: 3 },
+        render: { fullscreen: true, upscale: 4 },
+        renderRates: { droppedPerSec: 12, droppedPct: 30 },
+    });
+    assert.equal(verdict, 'viewer-render');
+    assert.match(reasons[0], /fullscreen/);
+});
+
+test('render drops do NOT mask real packet loss', () => {
+    // A struggling GPU must never hide a dropping link — the link is the answer when both fail.
+    const { verdict } = classify({
+        role: 'viewer', recv: {}, transport: { rttMs: 25 },
+        rates: { freezesGained: 2, packetsLostGained: 30 },
+        render: { fullscreen: true }, renderRates: { droppedPerSec: 20, droppedPct: 40 },
+    });
+    assert.equal(verdict, 'viewer-downlink');
+});
+
+test('a few render drops are tolerated — a healthy viewer stays clean', () => {
+    const { verdict } = classify({
+        role: 'viewer', recv: {}, transport: { rttMs: 25 },
+        rates: { freezesGained: 0, packetsLostGained: 0, framesDroppedGained: 0, decodeMsPerFrame: 3 },
+        render: { fullscreen: false }, renderRates: { droppedPerSec: 0.2, droppedPct: 1 },
+    });
+    assert.equal(verdict, 'viewer-clean');
+});
+
+test('buildStreamSample carries render, and renderRate diffs painted vs dropped', () => {
+    const prevRender = pickRender({ at: 9000, fullscreen: true, displayWidth: 3840, displayHeight: 2160, videoWidth: 1280, videoHeight: 720, totalVideoFrames: 300, droppedVideoFrames: 10 });
+    const s = buildStreamSample({
+        role: 'viewer',
+        recvStats: [{ type: 'inbound-rtp', kind: 'video', timestamp: 10_000, framesDecoded: 60, bytesReceived: 1 }],
+        renderStats: { at: 10_000, fullscreen: true, displayWidth: 3840, displayHeight: 2160, videoWidth: 1280, videoHeight: 720, totalVideoFrames: 360, droppedVideoFrames: 40 },
+        prevRender,
+    });
+    assert.equal(s.render.fullscreen, true);
+    assert.equal(s.render.upscale, 9, '3840x2160 over 1280x720 is 9x the pixels');
+    assert.equal(s.renderRates.droppedPerSec, 30, '30 dropped in one second');
+    assert.equal(s.renderRates.droppedPct, 50, '30 of 60 new frames dropped');
 });

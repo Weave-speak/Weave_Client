@@ -4,6 +4,27 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.53] - 2026-09-01
+
+### Added
+- **Choose your audio output device**, in Settings → Voice & Audio, right beside the input
+  device. Weave's own playback can now be pointed at a particular headset or speakers — which
+  is what keeps the room's voices out of a game capture on a machine that splits its audio, so
+  a viewer stops hearing their own voice returned through your share.
+
+### Changed
+- **The stream Good/Bad buttons are now for testers, and say what they are.** They are
+  labelled as stream quality and shown only to accounts marked as testers, granted from user
+  management. A report also now includes what the DISPLAY is doing — dropped painted frames,
+  fullscreen, how far the picture is upscaled — not just the network and the decoder, so a
+  share that only falls apart in fullscreen is recognised as the render cost it is instead of
+  reading as clean.
+
+### Fixed
+- **Administrators can be added from user management again.** The control to promote — and
+  demote — an account was missing, so the only way to make an admin had been the command line.
+  It is a button now, alongside the new tester grant.
+
 ## [0.1.52] - 2026-09-01
 
 ### Added

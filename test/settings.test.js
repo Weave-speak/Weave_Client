@@ -144,6 +144,15 @@ test('audio switches default to on, matching what the microphone already does', 
     }
 });
 
+test('sound optimisation is offered and starts off', () => {
+    // Off because it changes how somebody already sounds, and nobody asked for that. The
+    // three browser flags above it are a different case — those have always been on.
+    const markup = voicePanel({ prefs: {} });
+    assert.match(markup, /data-setting="voiceOptimize"/);
+    assert.ok(!/data-setting="voiceOptimize"\s*checked/.test(markup), 'opt in, not out');
+    assert.match(voicePanel({ prefs: { voiceOptimize: true } }), /data-setting="voiceOptimize"\s*checked/);
+});
+
 test('an explicit false is respected rather than treated as unset', () => {
     const markup = voicePanel({ prefs: { noiseSuppression: false } });
     assert.ok(!/data-setting="noiseSuppression"\s*checked/.test(markup));

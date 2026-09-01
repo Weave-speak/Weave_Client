@@ -4,6 +4,48 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.51] - 2026-09-01
+
+### Fixed
+- **Voices stuttered and dropped to barely audible, and never quite for the same person.**
+  The microphone was asking Opus to suppress its own silence — DTX — which stops sending
+  during whatever the encoder judges to be a gap and clips the front of the next word
+  coming back out of one. That is what the stutter was. It has been on since long before
+  anyone started reporting this, which is why it never lined up with any particular
+  release, and it hurts worst on exactly the connections that were already struggling.
+
+  It is off now, and it costs nothing to lose: the noise gate already decides when you are
+  not talking, against a threshold you can see and set, so DTX was doing a job nothing
+  needed done. Your microphone is also announced to the encoder as speech rather than left
+  to be guessed at, and kept full-band instead of being allowed to quietly narrow.
+
+  Four releases in a row once tried to improve this path by reasoning about it and each
+  made something worse, so none of this is reasoned either: it is what the Weave web app
+  sends, which is the thing people compare us to when they say voice is better over there.
+  A server new enough to carry voice at 96 kb/s helps further still, since a browser left
+  to itself settles around 32 kb/s; against an older one the fixes above stand on their own.
+
+### Added
+- **Sound optimisation**, in Settings → Voice & Audio, off unless you turn it on. It evens
+  out a loud voice so nobody blasts the room, and cuts the low rumble and hum that cheap
+  microphones pick up and then spend bitrate carrying. Off, your voice takes exactly the
+  path it always has. It applies the moment you switch it, mid-sentence and without a gap.
+
+### Changed
+- **You can turn somebody up as well as down.** The volume slider on a person, and the one
+  on a stream, now reach 200% instead of stopping at 100% — which is as far as the browser
+  would let an audio element go, so quiet talkers had no fix at all. Incoming sound is
+  routed through the same audio engine the meters already use to get past that ceiling,
+  and falls back to the old path by itself if that engine is ever unavailable.
+
+- The noise gate no longer flickers on the end of a sentence. It opened and closed on one
+  number, so a voice trailing off and resting on the line chattered it several times a
+  second; it now takes a slightly quieter level to close than it did to open.
+
+- A microphone that goes silent because the browser suspended our audio engine — the window
+  going to the background, the system moving audio focus elsewhere — is noticed and
+  restarted, rather than staying silent while everything reports success.
+
 ## [0.1.50] - 2026-08-31
 
 ### Fixed

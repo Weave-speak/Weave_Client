@@ -32,7 +32,7 @@ export const MUTE_DURATIONS = Object.freeze([
 const volumeRow = (listen) => `
   <div class="peer-menu-volume">
     ${icons.speaker}
-    <input type="range" data-peer-volume min="0" max="100"
+    <input type="range" data-peer-volume min="0" max="200"
            value="${Math.round((listen.volume ?? 1) * 100)}"
            aria-label="How loudly you hear them">
   </div>`;

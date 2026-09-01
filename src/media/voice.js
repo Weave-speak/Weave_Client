@@ -33,6 +33,7 @@
 import { Device } from 'mediasoup-client';
 import { createMicChain, sensitivityToDb, gainToLinear } from './chain.js';
 import { micCodecOptions, screenAudioCodecOptions } from './audio-options.js';
+import { listenOutput, MAX_LISTEN_GAIN } from './listen-policy.js';
 import { bestFitFramerate } from './presets.js';
 import { createStallDetector, readFlow } from './stall.js';
 
@@ -74,6 +75,9 @@ const REPLY_TIMEOUT_MS = 12_000;
 /** How often the level meter samples. Fast enough to look live, slow enough to be free. */
 const LEVEL_INTERVAL_MS = 100;
 
+/** How long a healthy mic chain goes unquestioned before it is measured again. */
+const CHAIN_RECHECK_MS = 15_000;
+
 export function createVoice({
     link,
     onChange = () => {},
@@ -109,6 +113,7 @@ export function createVoice({
 
     let micStream = null;
     let micChain = null;
+    let chainRecheck = null;
     let micProducer = null;
     let camStream = null;
     let camProducer = null;
@@ -161,19 +166,26 @@ export function createVoice({
     // button promises not to happen.
     let deafened = false;
 
-    /**
-     * What one stream should sound like right now.
-     *
-     * Deafen beats every per-stream choice while it is on, and turning it off RESTORES
-     * those choices rather than blanket-unmuting — somebody you had individually muted
-     * stays muted, which is what you would expect and what a simpler implementation
-     * would quietly get wrong.
-     */
-    function applyListen(audio, key) {
+    /** Carry out what listen-policy.js decided for one stream. */
+    function applyListen(entry, key) {
+        const audio = entry?.audio;
         if (!audio) return;
-        const pref = audioPrefs.get(key) ?? { muted: false, volume: 1 };
-        audio.muted = deafened || Boolean(pref.muted);
-        audio.volume = Math.max(0, Math.min(1, pref.volume ?? 1));
+        const out = listenOutput({
+            deafened,
+            pref: audioPrefs.get(key) ?? { muted: false, volume: 1 },
+            hasGain: Boolean(entry.gain),
+            contextRunning: audioContext?.state === 'running',
+        });
+        if (out.gain !== null) entry.gain.gain.value = out.gain;
+        audio.muted = out.elementMuted;
+        audio.volume = out.elementVolume;
+    }
+
+    /** Re-decide every stream's output. Cheap, and idempotent by construction. */
+    function reapplyListening() {
+        for (const entry of consumers.values()) {
+            if (entry.kind === 'audio') applyListen(entry, `${entry.cid}:${entry.slot}`);
+        }
     }
     const waiters = new Set();
     const levels = new Map();      // cid -> 0..1
@@ -377,10 +389,33 @@ export function createVoice({
      * clock, so it cannot produce the mismatch above.
      */
     function ensureAudioContext() {
-        audioContext ??= new (window.AudioContext ?? window.webkitAudioContext)({
-            latencyHint: 'interactive',
-        });
+        if (!audioContext) {
+            audioContext = new (window.AudioContext ?? window.webkitAudioContext)({
+                latencyHint: 'interactive',
+            });
+            // A SUSPENDED CONTEXT IS SILENT AUDIO THAT REPORTS SUCCESS. The chain's
+            // worklet simply stops being called, so the producer's track goes to
+            // silence with no error anywhere and no way back on its own. A browser
+            // suspends for reasons that have nothing to do with us — the autoplay
+            // policy, the window going to the background, the OS moving audio focus —
+            // so this needs a way back that does not involve the person noticing and
+            // rejoining. Saying so out loud costs one line and is the difference
+            // between diagnosing "wired correctly and nobody can hear anything" and
+            // staring at healthy signalling.
+            audioContext.onstatechange = () => {
+                console.warn(`[weave] audio context ${audioContext?.state}`);
+                resumeAudioContext();
+                // Which of the two outputs is live depends on this state, so every
+                // stream has to be told. See applyListen.
+                reapplyListening();
+            };
+        }
         return audioContext;
+    }
+
+    /** Best effort, and safe to call on any tick or gesture: resume() on a live context is a no-op. */
+    function resumeAudioContext() {
+        if (audioContext?.state === 'suspended') audioContext.resume().catch(() => {});
     }
 
     async function openMicrophone() {
@@ -409,6 +444,7 @@ export function createVoice({
             gain: gainToLinear(settings.micGain),
             gateEnabled: Boolean(settings.noiseGate),
             gateThresholdDb: sensitivityToDb(settings.gateSensitivity),
+            optimize: Boolean(settings.voiceOptimize),
             onTelemetry: onMicTelemetry,
         });
         return micChain.track;
@@ -511,6 +547,11 @@ export function createVoice({
         start() {
             if (this.timer || !running) return;
             this.timer = setInterval(() => {
+                // A context that suspended while nothing was listening for the event —
+                // and Chromium does not always fire one — is a microphone sending
+                // silence. Two seconds is a short enough gap that nobody finishes a
+                // sentence into it.
+                resumeAudioContext();
                 assess('send').catch(() => {});
                 assess('recv').catch(() => {});
             }, WATCHDOG_MS);
@@ -612,6 +653,13 @@ export function createVoice({
         const track = existing ?? await openMicrophone();
         micMeter ??= meterFor(micStream, 'self');
 
+        // Tell the encoder this is speech. It matters most for the track the CHAIN
+        // produces: that is a synthetic MediaStreamDestination track, so there is no
+        // device behind it for an engine to infer anything from, and without the hint
+        // Opus is tuned for whatever it guesses. Wrapped because not every engine
+        // implements the property, and a missing hint is not worth losing a call over.
+        try { track.contentHint = 'speech'; } catch { /* older engine; the hint is optional */ }
+
         micProducer = await sendTransport.produce({
             track,
             appData: { slot: SLOTS.AUDIO },
@@ -645,8 +693,13 @@ export function createVoice({
      * Compares the chain's output level against the raw device over ~700ms. Quiet raw
      * proves nothing (the person may simply not be talking), so the check re-arms on a
      * timer until the raw track is audibly live at least once.
+     *
+     * A HEALTHY VERDICT RE-ARMS TOO, but only while the gate is off — see below. The
+     * chain can die long after it started working (a suspended context, a worklet that
+     * throws on some later block), and one check at produce time cannot see that.
      */
     function verifyChainCarries() {
+        if (chainRecheck) { clearTimeout(chainRecheck); chainRecheck = null; }
         const chain = micChain;
         if (!chain?.processed || !micProducer) return;
         const outMeter = meterFor(new MediaStream([chain.track]), 'chain-verify');
@@ -664,16 +717,36 @@ export function createVoice({
 
             if (rawPeak < 0.02) { rawPeak = 0; outPeak = 0; samples = 0; return; }   // nothing said yet
             cleanup();
-            if (outPeak < 0.002) {
-                // The graph is dead. The device track is alive and already granted —
-                // swap it into the live producer; the room never hears the difference,
-                // because until now it heard nothing at all.
-                const [raw] = micStream?.getAudioTracks() ?? [];
-                if (raw) micProducer.replaceTrack({ track: raw }).catch(() => {});
-                chain.stop();
-                if (micChain === chain) micChain = null;
-                console.warn('[weave] mic chain produced silence on this engine; raw track restored');
+            if (outPeak >= 0.002) {
+                // Healthy. Look again in a while, because "working at produce time" is not
+                // the same claim as "working" — but ONLY with the gate off.
+                //
+                // With the gate ON, a closed gate is loud raw against silent output, which
+                // is indistinguishable from a dead graph by this measurement. Somebody
+                // speaking quietly, just under their own threshold, would trip it: the
+                // chain would be torn out and their gate and input gain would vanish
+                // mid-call with nothing said about it. The one-shot check at produce time
+                // has always had that hole; re-arming would walk into it every 15 seconds
+                // instead of once. So the re-arm is limited to the case where silence has
+                // only one explanation.
+                if (!getChainSettings().noiseGate) {
+                    chainRecheck = setTimeout(() => {
+                        chainRecheck = null;
+                        if (micChain === chain && micProducer) verifyChainCarries();
+                    }, CHAIN_RECHECK_MS);
+                    chainRecheck.unref?.();
+                }
+                return;
             }
+
+            // The graph is dead. The device track is alive and already granted — swap it
+            // into the live producer; the room never hears the difference, because until
+            // now it heard nothing at all.
+            const [raw] = micStream?.getAudioTracks() ?? [];
+            if (raw) micProducer.replaceTrack({ track: raw }).catch(() => {});
+            chain.stop();
+            if (micChain === chain) micChain = null;
+            console.warn('[weave] mic chain produced silence on this engine; raw track restored');
         }, 100);
         const cleanup = () => { clearInterval(timer); outMeter.stop(); };
     }
@@ -948,15 +1021,20 @@ export function createVoice({
         // paused precisely so this ordering is possible.
         link.send('resumeConsumer', { consumerId: consumer.id });
 
+        // The volume path that can go above 1.0. Null if Web Audio refuses, and the
+        // element carries the sound by itself in that case — see applyListen.
+        const output = outputFor(stream);
+
         // A speaking meter belongs to a VOICE. Shared system audio is sound, not speech,
         // and metering it would put a talking ring on someone whose game made a noise.
         const meter = slot === SLOTS.AUDIO ? meterFor(stream, cid) : null;
-        consumers.set(consumer.id, { consumer, cid, slot, kind: 'audio', audio, meter });
+        const entry = { consumer, cid, slot, kind: 'audio', audio, meter, ...output };
+        consumers.set(consumer.id, entry);
 
         // Always applied, never only-when-a-preference-exists: a stream that arrives
         // WHILE deafened has no preference of its own and must still be silent. Somebody
         // joining and talking is exactly when the old code would have let sound through.
-        applyListen(audio, `${cid}:${slot}`);
+        applyListen(entry, `${cid}:${slot}`);
 
         // Playback can be refused when nothing on the page has been interacted with yet.
         // It is worth knowing about rather than silently having no sound.
@@ -971,6 +1049,8 @@ export function createVoice({
         if (entry.kind === 'video') {
             onVideo({ cid: entry.cid, slot: entry.slot, stream: null });
         } else {
+            try { entry.source?.disconnect(); } catch { /* context closing */ }
+            try { entry.gain?.disconnect(); } catch { /* context closing */ }
             entry.audio.srcObject = null;
             entry.audio.remove();
             entry.meter?.stop();
@@ -982,6 +1062,35 @@ export function createVoice({
     function dropConsumersOf(cid, slot = null) {
         for (const [id, entry] of consumers) {
             if (entry.cid === cid && (slot === null || entry.slot === slot)) dropConsumer(id);
+        }
+    }
+
+    /* ── listening ───────────────────────────────────────────────────────── */
+
+    /**
+     * A volume path for one incoming stream that is not capped at unity.
+     *
+     * `HTMLMediaElement.volume` may not exceed 1.0 — that is the spec, not a browser
+     * quirk — so the per-person slider could only ever turn somebody DOWN. Half of
+     * "I can barely hear them" is that there was no way to turn them up.
+     *
+     * Returns null rather than throwing if Web Audio is unavailable, and the caller falls
+     * back to the element. Nothing here is allowed to cost somebody the ability to hear
+     * the room.
+     */
+    function outputFor(stream) {
+        try {
+            const context = ensureAudioContext();
+            const source = context.createMediaStreamSource(stream);
+            const gain = context.createGain();
+            // Silent until applyListen decides otherwise — which happens immediately, and
+            // knows about deafen. Starting at 1 would let a stream arriving while deafened
+            // be heard for a frame.
+            gain.gain.value = 0;
+            source.connect(gain).connect(context.destination);
+            return { source, gain };
+        } catch {
+            return null;
         }
     }
 
@@ -1050,6 +1159,7 @@ export function createVoice({
     function teardownMedia() {
         // Everything the detectors know describes a path that is about to stop existing.
         watchdog.stop();
+        if (chainRecheck) { clearTimeout(chainRecheck); chainRecheck = null; }
         for (const id of [...consumers.keys()]) dropConsumer(id);
 
         try { micProducer?.close(); } catch { /* already closed */ }
@@ -1116,10 +1226,10 @@ export function createVoice({
             const key = `${cid}:${slot}`;
             const pref = { ...(audioPrefs.get(key) ?? { muted: false, volume: 1 }) };
             if (muted !== undefined) pref.muted = Boolean(muted);
-            if (volume !== undefined) pref.volume = Math.max(0, Math.min(1, Number(volume)));
+            if (volume !== undefined) pref.volume = Math.max(0, Math.min(MAX_LISTEN_GAIN, Number(volume)));
             audioPrefs.set(key, pref);
             for (const entry of consumers.values()) {
-                if (entry.cid === cid && entry.slot === slot) applyListen(entry.audio, key);
+                if (entry.cid === cid && entry.slot === slot) applyListen(entry, key);
             }
             return pref;
         },
@@ -1132,9 +1242,7 @@ export function createVoice({
             const next = Boolean(on);
             if (next === deafened) return deafened;
             deafened = next;
-            for (const entry of consumers.values()) {
-                if (entry.kind === 'audio') applyListen(entry.audio, `${entry.cid}:${entry.slot}`);
-            }
+            reapplyListening();
             return deafened;
         },
 
@@ -1155,6 +1263,7 @@ export function createVoice({
             micStream = null;
             micChain?.stop();
             micChain = null;
+            if (chainRecheck) { clearTimeout(chainRecheck); chainRecheck = null; }
             micMeter?.stop();
             micMeter = null;
             onChange({ state: 'live', talking: false });
@@ -1214,6 +1323,7 @@ export function createVoice({
             micChain.setGain(gainToLinear(settings.micGain));
             micChain.setGate(Boolean(settings.noiseGate));
             micChain.setThresholdDb(sensitivityToDb(settings.gateSensitivity));
+            micChain.setOptimize(Boolean(settings.voiceOptimize));
             return true;
         },
 

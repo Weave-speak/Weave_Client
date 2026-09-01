@@ -183,6 +183,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             micGain: Number(prefs.micGain ?? 100),
             noiseGate: Boolean(prefs.noiseGate),
             gateSensitivity: Number(prefs.gateSensitivity ?? 64),
+            voiceOptimize: Boolean(prefs.voiceOptimize),
         }),
         onMicTelemetry(data) {
             try { window.dispatchEvent(new CustomEvent('weave:mic-level', { detail: data })); } catch { /* no DOM */ }

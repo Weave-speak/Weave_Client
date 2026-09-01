@@ -1,59 +1,75 @@
 // What we ask Opus for, per slot.
 //
-// These live apart from voice.js because they are decisions, not plumbing — and because
+// These live apart from voice.js because they are decisions, not plumbing -- and because
 // the history behind them is worth keeping where the next person will read it.
 //
-// EVERYTHING HERE IS BACK TO WHAT 0.1.40 DID, deliberately. Four releases in a row tried
-// to improve this and each one made something worse: a 48 kHz graph against a 44.1 kHz
-// microphone (crackling), Opus retransmission on a long link (fast-forwarded audio), and
-// then a general "it sounds worse" that no single hypothesis explained. That last one is
-// the signal that matters — when reasoning has been wrong three times, the next move is
-// to go back to the version people were happy with, not to reason a fourth time.
+// THE HISTORY: 0.1.41 through 0.1.44 each tried to improve this path by reasoning about
+// it, and each fixed the previous mistake while introducing another -- a 48 kHz graph
+// against a 44.1 kHz microphone (crackling), a 10 ms capture buffer (popping), Opus
+// retransmission over an intercontinental link (fast-forwarded speech). 0.1.45 reverted
+// the lot on the grounds that three wrong explanations in a row is evidence that reasoning
+// about this path without listening to it does not work.
 //
-// The bitrate is the one change genuinely worth having, and it is now a SERVER setting
-// (WEAVE_OPUS_BITRATE) that ships off. Turning it on is one environment variable and a
-// restart, which makes it an A/B test somebody can actually run and listen to, rather
-// than a guess baked into a release.
-//
-// All of that is about the MICROPHONE. A screen's system audio is a different slot with a
-// different answer, and it does pin its bitrate here — see screenAudioCodecOptions for why
-// the router is the wrong place to say it.
+// That grounds this change rather than contradicting it. What is below is not a fifth
+// theory: it is what the Weave web app sends, which is the client people compare us to
+// when they say voice sounds better over there, and which has been in production for
+// months with the same SFU and the same codec. Copying a thing that demonstrably works is
+// a different act from deducing what ought to work.
 
 /**
  * The microphone.
  *
+ * DTX OFF is the change that matters. Discontinuous transmission stops sending during what
+ * the encoder judges to be silence, and its re-entry clips the front of the next word --
+ * heard as stuttering, and worse the more a link is already struggling. It was on for every
+ * version that has been described as stuttering. The noise gate already decides when not to
+ * transmit, and it does so with a threshold the person can see and set, so DTX is doing a
+ * job nothing needs done.
+ *
  * FEC on: a packet reconstructed from the next one matters more to a conversation than
- * bitrate does, and it costs no round trip, so it helps a distant caller as much as a
- * near one. DTX on: this is what shipped for every version people described as sounding
- * fine.
+ * bitrate does, and it costs no round trip, so it helps a distant caller as much as a near
+ * one. Mono, explicitly: a microphone is one sound source, and stereo would double the
+ * bitrate to encode a phase difference nobody wants in a voice mix.
+ *
+ * opusMaxPlaybackRate keeps Opus full-band. This is the one line here with a standing
+ * argument against it -- pinning fullband stops Opus narrowing its own bandwidth when a
+ * link tightens, which is a thing it is good at -- and it is therefore the FIRST thing to
+ * remove if a listening test says this release sounds worse. It is here because the web
+ * app pins it too.
  *
  * NOT set here, each for a reason learned the hard way:
  *   opusNack             -- retransmission costs a full round trip, so the receiver holds
  *                           its jitter buffer open and then plays fast to catch up. That
  *                           is what made callers from another continent sound
- *                           fast-forwarded. mediasoup-client strips it unless asked; let
- *                           it strip.
- *   opusMaxAverageBitrate -- the server decides, so it can be changed without a release.
- *   opusMaxPlaybackRate   -- pinning fullband stops Opus narrowing its own bandwidth when
- *                           the link tightens, which is a thing it is good at.
+ *                           fast-forwarded in 0.1.43. mediasoup-client strips it unless
+ *                           asked; let it strip.
+ *   opusMaxAverageBitrate -- the SERVER decides, and now actually does: WEAVE_OPUS_BITRATE
+ *                           defaults to 96000 rather than shipping unset. Router parameters
+ *                           are what configure a browser's encoder, so setting it there
+ *                           raises the quality of every client including ones too old to
+ *                           ask, and leaves an operator one restart away from a different
+ *                           number. Naming it here as well would only take that back.
+ *                           Against an older server this simply falls back to whatever the
+ *                           browser picks, which is where we were.
  */
 export function micCodecOptions() {
-    return { opusDtx: true, opusFec: true };
+    return {
+        opusStereo: false,
+        opusFec: true,
+        opusDtx: false,
+        opusMaxPlaybackRate: 48000,
+    };
 }
 
 /**
  * A screen's system audio: music, games and film, not speech.
  *
- * Stereo, and no DTX — silence suppression makes music gap and pump.
+ * Stereo, and no DTX -- silence suppression makes music gap and pump.
  *
- * The bitrate is PINNED HERE, and only here, which is a deliberate exception to the rule the
- * header sets out. The rule is right for the microphone and wrong for this slot, for two
- * reasons. The server's value is a floor for every producer, so raising it on the router to
- * suit shared music drags the microphone up with it for nothing — the two slots have to be
- * able to disagree. And the server knob ships OFF, so "the server decides" has in practice
- * meant Chromium's own fallback of roughly 32 kb/s: below the floor where stereo Opus is
- * listenable on music at all, and split across two channels at that. Game and film audio
- * arriving as a smeared mono blur is the whole of it.
+ * The bitrate is PINNED HERE, which is a deliberate exception to the rule above. The rule is
+ * right for the microphone and wrong for this slot: the server has one value to give both,
+ * so raising it on the router to suit shared music would drag every microphone up with it
+ * for nothing. The two slots have to be able to disagree.
  *
  * 256 kb/s is Opus's own recommended ceiling for stereo music and costs a fraction of the
  * multi-megabit video it travels beside. It is not a guess in the way the reverted ones were:
@@ -62,7 +78,7 @@ export function micCodecOptions() {
  *
  * Note that echo cancellation on the capture (see presets.js) still downmixes to mono, so
  * opusStereo is asking for something the source cannot yet give. It stays because it costs
- * nothing and is correct the moment per-application capture makes real stereo possible — and
+ * nothing and is correct the moment per-application capture makes real stereo possible -- and
  * because at 256 kb/s the flag no longer has a starved budget to halve.
  */
 export function screenAudioCodecOptions() {

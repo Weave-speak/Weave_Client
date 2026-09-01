@@ -45,7 +45,7 @@ const streamPill = (t) => `
             aria-label="${t.audio.muted ? 'Unmute this stream for you' : 'Mute this stream for you'}">
       ${t.audio.muted ? icons.speakerOff : icons.speaker}
     </button>
-    <input type="range" class="pill-volume" data-listen-volume min="0" max="100"
+    <input type="range" class="pill-volume" data-listen-volume min="0" max="200"
            value="${Math.round((t.audio.volume ?? 1) * 100)}"
            aria-label="Volume of this stream, for you only">
     <span class="pill-sep" aria-hidden="true"></span>`}

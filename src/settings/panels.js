@@ -302,6 +302,13 @@ export function voicePanel({ prefs = {}, devices = [], cameras = [], features = 
     </div>
 
     ${toggle({
+        id: 'voiceOptimize',
+        label: 'Sound optimisation',
+        hint: 'Evens out a loud voice so nobody blasts the room, and cuts the low rumble and hum cheap microphones pick up. Off leaves your voice exactly as your microphone hears it.',
+        checked: Boolean(prefs.voiceOptimize),
+    })}
+
+    ${toggle({
         id: 'noiseSuppression',
         label: 'Noise suppression',
         hint: 'Removes keyboard clatter and fan hum before it reaches the server.',

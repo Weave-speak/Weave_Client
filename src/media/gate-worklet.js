@@ -7,12 +7,18 @@
 //   - HOLD before closing (~180ms). Speech is full of tiny gaps; closing inside them
 //     turns a sentence into morse code.
 //   - CLOSE slow (~120ms ramp). A hard cut at the end of a word is audible as a click.
+//   - HYSTERESIS. Opening and closing on the same number means a trailing syllable
+//     sitting on the line chatters the gate open and shut several times a second. The
+//     bar to STAY open is 85% of the bar to open in the first place.
 //
 // The threshold arrives as a parameter in dBFS (-100 quiet .. 0 loud) so the UI's
 // sensitivity slider maps directly. Level telemetry posts back ~15 times a second for
 // the settings meter — cheap, and only while someone is looking is it even rendered.
 
 /* global AudioWorkletProcessor, registerProcessor, sampleRate, currentFrame */
+
+/** How far the level may fall below the threshold before the gate is allowed to close. */
+const GATE_HYSTERESIS = 0.85;
 
 class NoiseGate extends AudioWorkletProcessor {
     static get parameterDescriptors() {
@@ -54,13 +60,19 @@ class NoiseGate extends AudioWorkletProcessor {
         const openStep = sampleFrames / (sampleRate * 0.005);
         const closeStep = sampleFrames / (sampleRate * 0.12);
 
+        // Two bars, not one: crossing `threshold` opens the gate, and it takes falling
+        // below 85% of that to let it close again once the hold has run out. Without the
+        // second bar a voice resting exactly on the line — which is what the end of a
+        // sentence does — flickers the gate several times a second.
+        const closeThreshold = threshold * GATE_HYSTERESIS;
+
         let target = 1;
         if (enabled) {
             if (this.envelope >= threshold) {
                 this.holdUntil = currentFrame + holdFrames;
                 target = 1;
             } else {
-                target = currentFrame < this.holdUntil ? 1 : 0;
+                target = (currentFrame < this.holdUntil || this.envelope >= closeThreshold) ? 1 : 0;
             }
         }
         this.gain = target > this.gain

@@ -48,6 +48,8 @@ export const DEFAULTS = {
     micGain: 100,
     noiseGate: false,
     gateSensitivity: 64,
+    // Tone shaping, off because it changes how somebody already sounds. Opt in.
+    voiceOptimize: false,
     // Camera and screen share. These are the ones people actually noticed reverting.
     camDevice: '',
     camRes: '720',

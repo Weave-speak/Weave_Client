@@ -181,6 +181,20 @@ const desktopPlatform = {
     share: (typeof window !== 'undefined' && window.weaveNative?.share)
         ? { available: true, ...window.weaveNative.share }
         : { available: false, onPick() {}, answer() {} },
+
+    // Process-isolated screen-share audio. Present only with the Electron bridge; in a plain
+    // browser (dev) it reports unavailable, and the media layer falls back to loopback. THIS
+    // line is what makes the capture reachable at all — without it platform.processAudio is
+    // undefined and the sidecar is never asked to run.
+    processAudio: (typeof window !== 'undefined' && window.weaveNative?.processAudio)
+        ? window.weaveNative.processAudio
+        : {
+            available: false,
+            async start() { return { ok: false, reason: 'unsupported' }; },
+            stop() {},
+            onData() { return () => {}; },
+            onEnd() { return () => {}; },
+        },
     links: (typeof window !== 'undefined' && window.weaveNative?.links)
         ? { available: true, ...window.weaveNative.links }
         : { available: false, onDeepLink() {} },

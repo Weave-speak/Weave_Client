@@ -4,6 +4,18 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.57] - 2026-09-01
+
+### Fixed
+- **The process-isolated share audio from 0.1.56 was never actually used.** The capture shipped,
+  but the renderer could not reach it — the desktop shell exposed the capability while the
+  platform adapter the app reads never surfaced it — so every share silently fell back to the
+  whole-desktop mix and the echo persisted. It is wired now, and a fall-back is logged rather
+  than silent. Confirmed against a live game: a shared window carries only that program's audio.
+- **Your own screen no longer plays back at you by default.** A self screen tile is a placeholder
+  with a Watch button now — you are not subscribed to your own share unless you ask to be, and it
+  returns to a placeholder when the share ends. Your own camera stays a live mirror, as before.
+
 ## [0.1.56] - 2026-09-01
 
 ### Fixed

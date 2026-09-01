@@ -14,6 +14,13 @@ import { platform } from '../platform/index.js';
 // Bundled beside the app, exactly like the mic gate worklet; Vite turns this into a real URL.
 const WORKLET_URL = new URL('./pcm-source-worklet.js', import.meta.url);
 
+// Renderer failures here are otherwise invisible — they land in the devtools console, not the
+// main log — which is exactly how a silent fall-back to loopback hid for a whole release. This
+// puts the decision in the file the operator actually reads.
+const note = (level, msg) => {
+    try { globalThis.window?.weaveNative?.log?.(level, `[process-audio] ${msg}`); } catch { /* no bridge */ }
+};
+
 export function processAudioAvailable() {
     return Boolean(platform.processAudio?.available);
 }
@@ -35,15 +42,19 @@ export async function captureProcessAudio(sourceId) {
     let ended = false;
     const offEnd = pa.onEnd(id, () => { ended = true; });
 
-    const started = await pa.start({ id, sourceId }).catch(() => null);
-    if (!started?.ok || ended) { offEnd?.(); try { pa.stop(id); } catch { /* nothing to stop */ } return null; }
+    const started = await pa.start({ id, sourceId }).catch((e) => { note('error', `start threw: ${e}`); return null; });
+    if (!started?.ok || ended) {
+        note('warn', `start refused (${started?.reason ?? (ended ? 'ended-immediately' : 'no-result')}); using loopback`);
+        offEnd?.(); try { pa.stop(id); } catch { /* nothing to stop */ } return null;
+    }
 
     // 48 kHz to match the sidecar exactly — no resampling, so the interleave stays honest.
     let ctx;
     try {
         ctx = new AudioContext({ sampleRate: 48000 });
         await ctx.audioWorklet.addModule(WORKLET_URL);
-    } catch {
+    } catch (err) {
+        note('error', `audio graph failed: ${err}; using loopback`);
         offEnd?.(); try { pa.stop(id); } catch { /* */ } try { await ctx?.close?.(); } catch { /* */ }
         return null;
     }
@@ -94,6 +105,10 @@ export async function captureProcessAudio(sourceId) {
 
     // If the sidecar died between start and here, do not hand back a track that will only ever
     // carry silence — let the caller fall back to loopback instead.
-    if (ended || !track) { stop(); return null; }
+    if (ended || !track) {
+        note('warn', `no usable track (${ended ? 'sidecar ended' : 'no track'}); using loopback`);
+        stop(); return null;
+    }
+    note('info', `capturing via ${started.mode ?? '?'} for ${sourceId}`);
     return { track, stop };
 }

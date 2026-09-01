@@ -203,6 +203,10 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
 
     // key `${cid}:${slot}` -> MediaStream. 'self' is our own preview.
     const videoStreams = new Map();
+    // Your OWN screen tiles you have opted to view. Empty by default: there is no reason to be
+    // subscribed to your own share, so a self screen shows as a placeholder with a Watch button
+    // until you choose to look. (Your own camera stays a live mirror — that one people expect.)
+    const watchingSelf = new Set();
     // The source most recently chosen in the share picker, so the isolated-audio capture knows
     // which window/screen to follow. Recorded at pick time because the pick happens INSIDE the
     // getDisplayMedia call that voice.enableScreen makes, and voice reads it straight after.
@@ -260,6 +264,9 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             if (cid === 'self' && link.cid) state.markOwnProducer(link.cid, slot, Boolean(stream));
             if (!stream) {
                 videoStreams.delete(key);
+                // A share that ended forgets you were viewing it, so the next one starts as a
+                // placeholder rather than snapping straight to a live self-view.
+                watchingSelf.delete(key);
                 if (stageFocus === key) stageFocus = null;
             } else {
                 videoStreams.set(key, stream);
@@ -607,12 +614,16 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         const me = state.raw.me;
         const tiles = [];
 
-        // Your own streams: always live (they are local tracks, they cost nothing).
+        // Your own streams. A camera is a live mirror; a SCREEN is opt-in — a placeholder with a
+        // Watch button until you choose to view it, because you are not subscribed to your own
+        // share by default.
         for (const [key, stream] of videoStreams) {
             const [cid, slotName] = key.split(':');
             if (cid !== 'self') continue;
+            const watched = slotName !== 'screen' || watchingSelf.has(key);
             tiles.push({
-                key, cid, slot: slotName, label: 'You', self: true, live: true, stream,
+                key, cid, slot: slotName, label: 'You', self: true,
+                live: watched, stream: watched ? stream : null,
                 chipName: me?.username ?? 'You',
             });
         }
@@ -731,7 +742,9 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             voice.setWatching(prevCid, prevSlot, false);
         }
         if (key.startsWith('self:')) {
-            // Your own preview is already local and live; focus is immediate.
+            // Your own preview is local. Viewing your SCREEN is opt-in, so choosing to focus it
+            // is also choosing to watch it; a camera is already a live mirror. Focus is immediate.
+            if (key.endsWith(':screen')) watchingSelf.add(key);
             stageFocus = key;
             pendingFocus = null;
         } else {
@@ -1701,6 +1714,9 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
                     snapshotTile(key);
                     const [cid, slot] = key.split(':');
                     voice.setWatching(cid, slot, false);
+                } else if (key) {
+                    // Stopping your OWN screen returns it to a placeholder — unsubscribed again.
+                    watchingSelf.delete(key);
                 }
                 paintStage();
                 return;

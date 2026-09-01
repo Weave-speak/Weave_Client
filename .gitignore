@@ -15,3 +15,8 @@ Thumbs.db
 # Packaging output. The installer is published to GitHub Releases, not committed.
 release/
 build/*.bmp
+
+# The process-audio capture sidecar is compiled during packaging (npm run build:native), not
+# committed — the release machine has the C++ toolchain, and a binary does not belong in git.
+native/audio-capture/weave-audio-capture.exe
+native/audio-capture/*.obj

@@ -22,6 +22,14 @@ files:
 
 asar: true
 
+# The process-audio capture sidecar (Windows). Built by `npm run build:native` before
+# packaging (the pack/release scripts do this) and dropped into the app's resources directory,
+# where the main process spawns it from via process.resourcesPath. It is deliberately NOT in
+# the asar: it is a standalone executable, not code the renderer imports.
+extraResources:
+  - from: native/audio-capture/weave-audio-capture.exe
+    to: weave-audio-capture.exe
+
 win:
   target:
     - target: nsis

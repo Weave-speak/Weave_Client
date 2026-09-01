@@ -95,6 +95,36 @@ contextBridge.exposeInMainWorld('weaveNative', {
         },
     },
 
+    /**
+     * Process-isolated audio for a screen share.
+     *
+     * The default share captures the system's whole output mix, which contains Weave's own
+     * playback — the call — so a viewer hears themselves. This streams the audio of ONE
+     * process instead (WASAPI process loopback in a sidecar), so the call is simply not in it.
+     * Windows only; the renderer checks `available` and falls back to loopback elsewhere.
+     */
+    processAudio: {
+        available: process.platform === 'win32',
+        /** Begin capture for a picked source. `id` scopes the data/end channels below. */
+        start: (opts) => ipcRenderer.invoke('weave:pcapture.start', opts),
+        /** Stop and reap the sidecar. */
+        stop: (id) => ipcRenderer.send('weave:pcapture.stop', String(id)),
+        /** Raw interleaved float32 PCM chunks (48k/2ch). Returns an unsubscribe. */
+        onData: (id, cb) => {
+            const ch = `weave:pcapture.data:${String(id)}`;
+            const wrapped = (_e, buf) => cb(buf);
+            ipcRenderer.on(ch, wrapped);
+            return () => ipcRenderer.removeListener(ch, wrapped);
+        },
+        /** The sidecar ended (clean stop, crash, or refusal). Fires once. */
+        onEnd: (id, cb) => {
+            const ch = `weave:pcapture.end:${String(id)}`;
+            const wrapped = (_e, info) => cb(info ?? {});
+            ipcRenderer.once(ch, wrapped);
+            return () => ipcRenderer.removeListener(ch, wrapped);
+        },
+    },
+
     links: {
         available: true,
         onDeepLink: (cb) => {

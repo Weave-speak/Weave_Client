@@ -20,6 +20,7 @@ import { createVoice } from '../media/voice.js';
 import { effectiveMute, onPushToTalkChange, muteButtonDisabled } from '../media/mute-policy.js';
 import { screenShareSettings, cameraConstraints, cameraEncodings } from '../media/presets.js';
 import { classify } from '../media/stream-report.js';
+import { captureProcessAudio } from '../media/process-audio.js';
 import { createSettings, readPrefs } from '../settings/index.js';
 import { createRoomBrowser } from '../rooms/browser.js';
 import { createPeerActions } from './peer-actions.js';
@@ -202,6 +203,10 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
 
     // key `${cid}:${slot}` -> MediaStream. 'self' is our own preview.
     const videoStreams = new Map();
+    // The source most recently chosen in the share picker, so the isolated-audio capture knows
+    // which window/screen to follow. Recorded at pick time because the pick happens INSIDE the
+    // getDisplayMedia call that voice.enableScreen makes, and voice reads it straight after.
+    let lastShareSource = null;
     let stageFocus = null;
     // The user's own stream/chat split, in pixels, once they have dragged the divider.
     // Null means the CSS default share.
@@ -243,6 +248,12 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
                 droppedVideoFrames: q?.droppedVideoFrames ?? null,
             };
         },
+        // Only when the user asked to share audio, and only for the source they picked: capture
+        // that program's audio in isolation so Weave's own call is not in it. Returns null on
+        // any failure, and voice falls back to the loopback track.
+        getIsolatedShareAudio: () => (lastShareSource?.audio && lastShareSource?.id
+            ? captureProcessAudio(lastShareSource.id)
+            : Promise.resolve(null)),
         onVideo({ cid, slot, stream }) {
             const key = tileKey(cid, slot);
             // Our own tile appearing or vanishing is also the sidebar icon's truth.
@@ -2280,10 +2291,9 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             const source = event.target.closest('[data-share-source]');
             if (source) {
                 answered = true;
-                platform.share.answer(nonce, {
-                    id: source.dataset.shareSource,
-                    audio: modal.element.querySelector('#shareAudio')?.checked ?? true,
-                });
+                const wantAudio = modal.element.querySelector('#shareAudio')?.checked ?? true;
+                lastShareSource = { id: source.dataset.shareSource, audio: wantAudio };
+                platform.share.answer(nonce, { id: source.dataset.shareSource, audio: wantAudio });
                 modal.close();
                 return;
             }

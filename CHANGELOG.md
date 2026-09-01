@@ -4,6 +4,17 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.56] - 2026-09-01
+
+### Fixed
+- **A screen share no longer sends your own call back to viewers.** The shared audio was the
+  system's entire output mix, which includes Weave's own playback — so a viewer heard their own
+  voice returned through your share. On Windows, Weave now captures the audio of the shared
+  program itself (WASAPI process loopback in a small bundled sidecar): a shared **window**
+  carries only that program's sound, a shared **screen** carries the desktop minus Weave's own
+  audio. Either way the call is not in it. Where the capture is unavailable it falls back to the
+  old system-audio behaviour, so a share is never lost to it.
+
 ## [0.1.55] - 2026-09-01
 
 ### Changed

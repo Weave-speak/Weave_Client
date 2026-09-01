@@ -123,6 +123,13 @@ export function createVoice({
      * separately from decode: fullscreen upscaling is a GPU cost getStats cannot see.
      */
     getRenderStats = () => null,
+    /**
+     * Capture only the shared program's audio for a screen share, returning { track, stop } or
+     * null. The room provides this because it knows which source was picked; voice uses the
+     * returned track as screen-audio instead of the system-loopback track, which is what keeps
+     * Weave's own call out of the share. Null means "use loopback", the safe fallback.
+     */
+    getIsolatedShareAudio = async () => null,
 } = {}) {
     let device = null;
     let sendTransport = null;
@@ -138,6 +145,10 @@ export function createVoice({
     let screenStream = null;
     let screenProducer = null;
     let screenAudioProducer = null;
+    // The process-isolated audio pipeline behind screenAudioProducer, when one is in use:
+    // { track, stop }. Its stop() reaps the capture sidecar and its graph, so it has to be
+    // torn down everywhere the screen-audio producer is.
+    let screenAudioIsolation = null;
     let screenWanted = false;
     let screenFpsTimer = null;
     let screenFpsApplied = null;
@@ -981,20 +992,34 @@ export function createVoice({
         applyDegradationPreference(screenProducer, getScreenContentHint());
         watchScreenFramerate();
 
-        const [sysAudio] = screenStream.getAudioTracks();
-        if (sysAudio) {
+        // The default share audio is the system's whole output mix, which contains Weave's own
+        // call — a viewer hears themselves returned through the share. Prefer a process-isolated
+        // track carrying ONLY the shared program's audio; the loopback track is the fallback.
+        const [loopbackAudio] = screenStream.getAudioTracks();
+        let shareAudio = loopbackAudio ?? null;
+        if (loopbackAudio) {
+            const iso = await getIsolatedShareAudio().catch(() => null);
+            if (iso?.track) {
+                screenAudioIsolation = iso;
+                shareAudio = iso.track;
+                // The loopback capture is replaced, not carried alongside — stop it so it is
+                // not also feeding the share.
+                try { loopbackAudio.stop(); } catch { /* the isolated track stands in */ }
+            }
+        }
+        if (shareAudio) {
             // 'music' is the counterpart to the capture constraints: it tells the engine
             // not to apply the speech-shaped processing that makes shared audio pump.
-            try { sysAudio.contentHint = 'music'; } catch { /* advisory only */ }
+            try { shareAudio.contentHint = 'music'; } catch { /* advisory only */ }
             screenAudioProducer = await sendTransport.produce({
-                track: sysAudio,
+                track: shareAudio,
                 appData: { slot: SLOTS.SCREEN_AUDIO },
                 codecOptions: screenAudioCodecOptions(),
             });
         }
 
         onVideo({ cid: 'self', slot: SLOTS.SCREEN, stream: screenStream });
-        onChange({ state: 'live', screen: true, screenAudio: Boolean(sysAudio) });
+        onChange({ state: 'live', screen: true, screenAudio: Boolean(screenAudioProducer) });
         return screenProducer;
     }
 
@@ -1008,6 +1033,8 @@ export function createVoice({
         }
         screenProducer = null;
         screenAudioProducer = null;
+        try { screenAudioIsolation?.stop(); } catch { /* already gone */ }
+        screenAudioIsolation = null;
         for (const track of screenStream?.getTracks() ?? []) track.stop();
         screenStream = null;
         onVideo({ cid: 'self', slot: SLOTS.SCREEN, stream: null });
@@ -1295,6 +1322,8 @@ export function createVoice({
         screenProducer = null;
         try { screenAudioProducer?.close(); } catch { /* already closed */ }
         screenAudioProducer = null;
+        try { screenAudioIsolation?.stop(); } catch { /* already gone */ }
+        screenAudioIsolation = null;
         stopScreenFramerateWatch();
         for (const track of camStream?.getTracks() ?? []) track.stop();
         camStream = null;
@@ -1701,6 +1730,8 @@ export function createVoice({
                 screenProducer = null;
                 try { screenAudioProducer?.close(); } catch { /* already closed */ }
                 screenAudioProducer = null;
+                try { screenAudioIsolation?.stop(); } catch { /* already gone */ }
+                screenAudioIsolation = null;
                 stopScreenFramerateWatch();
                 try { sendTransport?.close(); } catch { /* already closed */ }
                 try { recvTransport?.close(); } catch { /* already closed */ }

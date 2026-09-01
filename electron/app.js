@@ -29,6 +29,7 @@ import log from 'electron-log/main';
 
 const { autoUpdater } = electronUpdater;
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import { join, dirname, normalize, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -522,6 +523,55 @@ function registerBridge() {
     ipcMain.on('weave:log', (_e, level, message, meta) => {
         const fn = log[level] ?? log.info;
         fn.call(log, message, meta ?? '');
+    });
+
+    // ── process-isolated screen-share audio (Windows) ──────────────────────────
+    // Spawn the capture sidecar and stream its PCM to the renderer. A WINDOW share captures
+    // that window's process tree; a SCREEN share (or an id we cannot parse) captures the whole
+    // desktop EXCEPT Weave's own process — either way the call is not in what gets shared.
+    const captures = new Map();
+    const captureExe = () => (isDev
+        ? join(here, '..', 'native', 'audio-capture', 'weave-audio-capture.exe')
+        : join(process.resourcesPath, 'weave-audio-capture.exe'));
+
+    ipcMain.handle('weave:pcapture.start', (event, opts) => {
+        if (process.platform !== 'win32') return { ok: false, reason: 'unsupported' };
+        const id = String(opts?.id ?? '');
+        const sourceId = String(opts?.sourceId ?? '');
+        if (!id) return { ok: false, reason: 'no_id' };
+
+        const m = /^window:(\d+):/.exec(sourceId);
+        const args = m ? ['--include-hwnd', m[1]] : ['--exclude', String(process.pid)];
+
+        let child;
+        try {
+            child = spawn(captureExe(), args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+        } catch (err) {
+            log.warn({ evt: 'pcapture.spawn_failed', err: String(err) }, 'Could not start audio capture');
+            return { ok: false, reason: 'spawn_failed' };
+        }
+        captures.set(id, child);
+
+        const wc = event.sender;
+        child.stdout.on('data', (buf) => { if (!wc.isDestroyed()) wc.send(`weave:pcapture.data:${id}`, buf); });
+        child.stderr.on('data', (buf) => log.info({ evt: 'pcapture.sidecar' }, String(buf).trim()));
+        const end = (info) => {
+            if (captures.get(id) === child) captures.delete(id);
+            if (!wc.isDestroyed()) wc.send(`weave:pcapture.end:${id}`, info);
+        };
+        child.on('error', (err) => { log.warn({ evt: 'pcapture.error', err: String(err) }); end({ error: String(err) }); });
+        child.on('exit', (code) => end({ code }));
+        return { ok: true, mode: m ? 'include' : 'exclude' };
+    });
+
+    ipcMain.on('weave:pcapture.stop', (_e, id) => {
+        const child = captures.get(String(id));
+        if (!child) return;
+        captures.delete(String(id));
+        // Closing stdin is the sidecar's cue to stop (it peeks for a broken pipe); kill is the
+        // belt to that brace.
+        try { child.stdin.end(); } catch { /* already gone */ }
+        try { child.kill(); } catch { /* already gone */ }
     });
 }
 

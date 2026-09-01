@@ -16,12 +16,65 @@
 // options the web app uses for the same feature: a codec option is negotiated once at
 // produce() time, so changing one costs a closed producer and a gap in the conversation.
 
-/** Map the settings slider (0–100) onto a gate threshold in dBFS. */
+// ── the one number ───────────────────────────────────────────────────────────
+//
+// THE METER AND THE GATE MUST BE THE SAME MEASUREMENT. They were not, in three separate
+// ways at once, and together they made the gate impossible to set:
+//
+//   1. The meter was tapped on the RAW microphone while the gate reads the signal AFTER
+//      the input gain. So turning the gain down did change what the gate heard and the bar
+//      never moved — the one control that is supposed to make the threshold legible was
+//      reporting a different signal from the one being judged.
+//   2. The meter reported RMS x4 — about 12 dB hot — against a threshold in true dBFS.
+//      Ordinary room noise at -45 dBFS drew a bar at 96% of full scale, so there was
+//      almost no usable travel left to put the line in.
+//   3. The meter measured RMS and the gate measured PEAK. The gap between those depends on
+//      the signal (~5 dB for steady noise, ~12 dB for speech), so the line meant something
+//      different depending on what was making the sound.
+//
+// Now there is one definition, used by all three: PEAK level, in true dBFS, measured at
+// the gate's own input. "Drag the line to just above where the bar rests" is a true
+// instruction rather than an approximation.
+
+/** Quietest and loudest thresholds the sensitivity slider can ask for, in dBFS. */
+export const GATE_FLOOR_DB = -80;
+export const GATE_CEILING_DB = -20;
+
+/**
+ * Map the settings slider (0–100) onto a gate threshold in dBFS.
+ *
+ * The range used to be -100 to -30, and the top was the real problem: -30 dBFS is BELOW
+ * the peak level of ordinary room noise on a hot microphone, so at any setting on the
+ * slider the gate simply never closed. Measured: broadband noise at -30.7 dBFS RMS stayed
+ * open at 100 out of 100. A gate whose maximum cannot reject a fan is not a gate.
+ *
+ * -20 dBFS at the top will hold against a loud room; -80 at the bottom is below anything a
+ * microphone picks up in a quiet one, which is the "never close" end. Linear in dB, which
+ * is how ears and meters both think.
+ */
 export function sensitivityToDb(value) {
     const v = Math.max(0, Math.min(100, Number(value) || 0));
-    // 0 = -100dB (gate never closes on anything audible), 100 = -30dB (only loud speech
-    // passes). Linear in dB, which is how ears and meters both think.
-    return -100 + (v * 0.7);
+    return GATE_FLOOR_DB + (v * ((GATE_CEILING_DB - GATE_FLOOR_DB) / 100));
+}
+
+/**
+ * Map a measured level in dBFS onto the meter's 0–100 width.
+ *
+ * The exact inverse of sensitivityToDb, and exported so the settings panel cannot drift
+ * from it. It drifting is not hypothetical: the panel carried its own copy of this
+ * arithmetic against a scale the gate had never used.
+ */
+export function dbToMeterPercent(db) {
+    const value = Number(db);
+    if (!Number.isFinite(value)) return 0;
+    const pct = ((value - GATE_FLOOR_DB) / (GATE_CEILING_DB - GATE_FLOOR_DB)) * 100;
+    return Math.max(0, Math.min(100, pct));
+}
+
+/** A linear level (0–1) as dBFS, with a floor rather than -Infinity for silence. */
+export function levelToDb(level) {
+    const value = Number(level);
+    return value > 0 ? Math.max(GATE_FLOOR_DB, 20 * Math.log10(value)) : GATE_FLOOR_DB;
 }
 
 /** Map a gain slider (0–200, 100 = unity) onto the GainNode value. */
@@ -134,7 +187,7 @@ export async function createMicChain(context, micStream, {
     workletUrl,
     gain = 1,
     gateEnabled = false,
-    gateThresholdDb = -55,
+    gateThresholdDb = -40,
     optimize = false,
     onTelemetry = () => {},
 } = {}) {
@@ -144,6 +197,9 @@ export async function createMicChain(context, micStream, {
         processed: false,
         optimized: false,
         setGain() {}, setGate() {}, setThresholdDb() {}, setOptimize() {},
+        // Null rather than 0: "no reading" and "silence" are different answers, and the
+        // caller meters the raw track itself when there is no chain to ask.
+        readLevel() { return null; },
         stop() {},
     };
     if (!context || !rawTrack) return fallback;
@@ -222,16 +278,28 @@ export async function createMicChain(context, micStream, {
          * two previous attempts at this feature elsewhere both failed on the second half.
          * Off, the graph is the original two nodes exactly.
          */
+        // THE METER TAP. Deliberately on whichever node feeds the gate, so it reads the
+        // exact signal the gate judges — after the input gain, and after the shaping when
+        // that is on. Upstream of the cut rather than downstream, so the bar keeps showing
+        // the live microphone while the gate is closed and the gate can be seen to reopen.
+        const meter = context.createAnalyser();
+        meter.fftSize = 1024;
+        const meterBuffer = new Float32Array(meter.fftSize);
+
         let shaped = false;
         function wire(on) {
             if (on && !shaping) shaping = buildShaping();
+            // disconnect() drops ALL of a node's outputs, the meter tap included, so every
+            // branch below has to reattach it.
             try { gainNode.disconnect(); } catch { /* nothing attached yet */ }
             if (shaping) { try { shaping.trim.disconnect(); } catch { /* idem */ } }
             if (on) {
                 gainNode.connect(shaping.highpass);
                 shaping.trim.connect(gate);
+                shaping.trim.connect(meter);
             } else {
                 gainNode.connect(gate);
+                gainNode.connect(meter);
             }
             shaped = on;
         }
@@ -246,6 +314,22 @@ export async function createMicChain(context, micStream, {
             track,
             processed: true,
             get optimized() { return shaped; },
+            /**
+             * The level the gate is judging, right now, as a linear peak 0–1.
+             *
+             * PEAK, not RMS, because that is what the gate's own envelope follows. The two
+             * differ by about 5 dB on steady noise and 12 on speech, which is exactly how
+             * a meter and a threshold end up disagreeing about the same sound.
+             */
+            readLevel() {
+                meter.getFloatTimeDomainData(meterBuffer);
+                let peak = 0;
+                for (const sample of meterBuffer) {
+                    const magnitude = sample < 0 ? -sample : sample;
+                    if (magnitude > peak) peak = magnitude;
+                }
+                return peak;
+            },
             setGain(linear) {
                 // A short ramp: a gain step lands as a click without one.
                 gainNode.gain.setTargetAtTime(Math.max(0, Math.min(2, linear)), context.currentTime, 0.03);
@@ -266,6 +350,7 @@ export async function createMicChain(context, micStream, {
                 try { shaping?.highpass.disconnect(); } catch { /* closing */ }
                 try { shaping?.compressor.disconnect(); } catch { /* closing */ }
                 try { shaping?.trim.disconnect(); } catch { /* closing */ }
+                try { meter.disconnect(); } catch { /* closing */ }
                 try { gate.disconnect(); } catch { /* closing */ }
                 try { gate.port.onmessage = null; } catch { /* closing */ }
             },

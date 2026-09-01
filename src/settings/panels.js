@@ -300,8 +300,9 @@ export function voicePanel({ prefs = {}, devices = [], cameras = [], outputs = [
       <div class="setting-text">
         <span class="setting-label">Sensitivity
           <span class="slider-value" data-value-for="gateSensitivity">${esc(prefs.gateSensitivity ?? 64)}</span></span>
-        <span class="setting-hint">One bar, two facts: the fill is your microphone, the line is the gate.
-          Drag the line to sit just above where the fill rests while you are silent.</span>
+        <span class="setting-hint">One bar, two facts: the fill is your microphone as the gate hears
+          it — after your input gain — and the line is where it opens. Sit quietly, then drag the line
+          to just above where the fill settles.</span>
         <span class="mic-meter is-control">
           <i class="mic-meter-fill" id="micMeterFill"></i>
           <i class="mic-meter-mark" id="micThreshMark" style="left: ${esc(prefs.gateSensitivity ?? 64)}%"></i>

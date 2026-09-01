@@ -4,17 +4,46 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-    sensitivityToDb, gainToLinear, createMicChain,
+    sensitivityToDb, dbToMeterPercent, levelToDb, gainToLinear, createMicChain,
+    GATE_FLOOR_DB, GATE_CEILING_DB,
     COMPRESSOR, FALLBACK_COMPRESSOR_TRIM, REFERENCE_AMPLITUDE, measureCompressorTrim,
 } from '../src/media/chain.js';
 
 test('sensitivity maps linearly in decibels, clamped at both ends', () => {
-    assert.equal(sensitivityToDb(0), -100, 'zero never gates anything audible');
-    assert.equal(sensitivityToDb(100), -30, 'full only passes loud speech');
-    assert.equal(sensitivityToDb(50), -65);
-    assert.equal(sensitivityToDb(-5), -100);
-    assert.equal(sensitivityToDb(500), -30);
-    assert.equal(sensitivityToDb('nonsense'), -100, 'garbage reads as the safe end');
+    assert.equal(sensitivityToDb(0), GATE_FLOOR_DB, 'zero never gates anything audible');
+    assert.equal(sensitivityToDb(100), GATE_CEILING_DB, 'full only passes loud speech');
+    assert.equal(sensitivityToDb(50), -50);
+    assert.equal(sensitivityToDb(-5), GATE_FLOOR_DB);
+    assert.equal(sensitivityToDb(500), GATE_CEILING_DB);
+    assert.equal(sensitivityToDb('nonsense'), GATE_FLOOR_DB, 'garbage reads as the safe end');
+});
+
+test('the gate can reject the noise a real room actually makes', () => {
+    // The old ceiling was -30 dBFS, and that was the whole bug behind "the gate is too
+    // sensitive": measured, broadband noise at -30.7 dBFS RMS peaks around -26, so at 100
+    // out of 100 on the slider the gate still never closed. A gate whose maximum cannot
+    // reject a fan is not a gate.
+    assert.ok(sensitivityToDb(100) >= -20, 'the top must clear ordinary room noise');
+    assert.ok(sensitivityToDb(0) <= -80, 'and the bottom must still mean "never close"');
+});
+
+test('the meter scale is exactly the inverse of the threshold scale', () => {
+    // These were two separate pieces of arithmetic over two different ranges, which is how
+    // the bar and the line came to describe different sounds. Round-tripping every slider
+    // position is the assertion that they are now one scale.
+    for (let slider = 0; slider <= 100; slider += 5) {
+        assert.equal(Math.round(dbToMeterPercent(sensitivityToDb(slider))), slider);
+    }
+    assert.equal(dbToMeterPercent(GATE_FLOOR_DB - 20), 0, 'quieter than the floor pins at empty');
+    assert.equal(dbToMeterPercent(GATE_CEILING_DB + 20), 100, 'louder than the ceiling pins at full');
+    assert.equal(dbToMeterPercent(undefined), 0, 'and nothing readable draws nothing');
+});
+
+test('silence reads as the floor rather than negative infinity', () => {
+    assert.equal(levelToDb(0), GATE_FLOOR_DB);
+    assert.equal(levelToDb(1), 0, 'full scale is 0 dBFS');
+    assert.equal(Math.round(levelToDb(0.1)), -20);
+    assert.equal(levelToDb('nonsense'), GATE_FLOOR_DB);
 });
 
 test('gain is unity at 100 and clamped to double', () => {
@@ -71,6 +100,11 @@ function shimContext() {
         createDynamicsCompressor: () => make('compressor', {
             threshold: param(0), knee: param(0), ratio: param(0), attack: param(0), release: param(0),
         }),
+        createAnalyser: () => make('analyser', {
+            fftSize: 0,
+            // A steady 0.5 so readLevel() has something to find a peak in.
+            getFloatTimeDomainData(buf) { buf.fill(0.5); },
+        }),
         createMediaStreamDestination: () => make('destination', {
             stream: { getAudioTracks: () => [{ kind: 'audio', id: 'processed' }] },
         }),
@@ -88,6 +122,7 @@ function shimContext() {
 }
 
 const gateOf = (ctx) => ctx.nodes.find((n) => n.kind === 'gate');
+const meterOf = (ctx) => ctx.nodes.find((n) => n.kind === 'analyser');
 const inputGainOf = (ctx) => ctx.nodes.find((n) => n.kind === 'gain');
 const feeds = (from, to) => Boolean(from && to && from.out.has(to));
 
@@ -100,6 +135,35 @@ test('shaping off is the plain two-node graph, and building it costs nothing', a
     assert.ok(feeds(inputGainOf(ctx), gateOf(ctx)), 'gain goes straight to the gate');
     assert.equal(ctx.nodes.some((n) => n.kind === 'compressor'), false,
         'somebody who never turns it on never gets the nodes');
+});
+
+test('the meter reads whatever the gate reads, in both wirings', async () => {
+    // THE BUG THIS EXISTS FOR: the meter used to be tapped on the raw microphone while the
+    // gate judged the signal after the input gain. Turning the gain down moved the gate and
+    // never moved the bar, so the threshold line was drawn against a sound nobody was
+    // gating. Whatever feeds the gate must also feed the meter — in both wirings, because
+    // disconnect() drops every output a node has and it would be easy to reattach one path
+    // and forget the other.
+    const ctx = shimContext();
+    const chain = await createMicChain(ctx, { getAudioTracks: () => [{ id: 'raw' }] }, { workletUrl: 'x' });
+    const gate = gateOf(ctx);
+    const meter = meterOf(ctx);
+
+    const inputGain = inputGainOf(ctx);
+    assert.ok(feeds(inputGain, gate) && feeds(inputGain, meter), 'plain: one source, both taps');
+
+    chain.setOptimize(true);
+    const trim = ctx.nodes.filter((n) => n.kind === 'gain').at(-1);
+    assert.ok(feeds(trim, gate) && feeds(trim, meter), 'shaped: still one source, both taps');
+    assert.equal(feeds(inputGain, meter), false, 'and the old tap is gone, not left doubled');
+
+    chain.setOptimize(false);
+    assert.ok(feeds(inputGain, gate) && feeds(inputGain, meter), 'and back again');
+    assert.equal(feeds(trim, meter), false);
+
+    // The reading itself is a peak, matching the gate's own envelope rather than the RMS
+    // the meter used to report about 12 dB hot.
+    assert.equal(chain.readLevel(), 0.5);
 });
 
 test('turning shaping on splices the filter stage in, and off takes it back out', async () => {

@@ -23,7 +23,7 @@ const GATE_HYSTERESIS = 0.85;
 class NoiseGate extends AudioWorkletProcessor {
     static get parameterDescriptors() {
         return [
-            { name: 'thresholdDb', defaultValue: -55, minValue: -100, maxValue: 0 },
+            { name: 'thresholdDb', defaultValue: -40, minValue: -100, maxValue: 0 },
             { name: 'enabled', defaultValue: 0, minValue: 0, maxValue: 1 },
         ];
     }

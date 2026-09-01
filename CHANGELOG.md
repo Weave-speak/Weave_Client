@@ -4,6 +4,37 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.58] - 2026-09-01
+
+### Fixed
+- **The noise gate could not be set, and at its most aggressive it still let a noisy room
+  through.** Three faults on one control, which is why it felt like the gate simply ignored
+  you:
+
+  The meter was reading your **raw microphone** while the gate judged the signal *after*
+  your input gain. So turning the input gain down genuinely did change what the gate heard,
+  and the bar never moved a pixel — the one control meant to make the threshold legible was
+  showing a different sound from the one being gated. The meter is now tapped at the gate's
+  own input, so it follows the gain slider: measured, halving the input gain moves the bar
+  down by exactly the ten points that six decibels should.
+
+  The meter also read about **12 dB hot**, from a display curve that was never in the
+  threshold's arithmetic. Ordinary room noise drew a bar at 96% of full scale, leaving
+  almost nowhere to put the line. And the bar measured an average where the gate measured
+  peaks, so the line meant something different for a fan than for a voice. Both are gone:
+  the bar, the line and the gate are now one measurement — peak level, in real decibels,
+  at the point the gate reads.
+
+  Lastly the sensitivity slider **topped out below ordinary room noise**. Its maximum was
+  −30 dBFS, and a fan on a hot microphone peaks louder than that, so there was no setting
+  at which the gate would ever close — measured, noise at −26 dBFS stayed open at 100 out
+  of 100. The range is now −80 to −20 dBFS. The same noise now closes the gate three points
+  above where the bar rests, which is what "drag the line to just above where it settles"
+  was always supposed to mean.
+
+  If you had the gate switched on, **check your sensitivity setting** — the numbers on the
+  slider mean something different now, and yours has not been converted.
+
 ## [0.1.57] - 2026-09-01
 
 ### Fixed

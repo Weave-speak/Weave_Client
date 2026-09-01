@@ -31,7 +31,7 @@
 //     but never plays.
 
 import { Device } from 'mediasoup-client';
-import { createMicChain, sensitivityToDb, gainToLinear } from './chain.js';
+import { createMicChain, sensitivityToDb, gainToLinear, levelToDb } from './chain.js';
 import { micCodecOptions, screenAudioCodecOptions } from './audio-options.js';
 import { listenOutput, MAX_LISTEN_GAIN } from './listen-policy.js';
 import { bestFitFramerate } from './presets.js';
@@ -1292,15 +1292,21 @@ export function createVoice({
             for (const entry of consumers.values()) {
                 if (entry.meter) levels.set(entry.cid, entry.meter.read());
             }
-            if (micMeter) {
-                const level = muted ? 0 : micMeter.read();
+            // The settings meter runs on THIS path rather than on the worklet's own
+            // telemetry, because the analyser provably reads on every engine we have met
+            // and the worklet's messages have not.
+            //
+            // It reads the CHAIN wherever there is one: the gate judges the signal after
+            // the input gain, so a meter on the raw device shows a different sound from
+            // the one being gated, and the threshold line drawn against it means nothing.
+            // Falling back to the raw device is right in the other case and not a
+            // compromise — when the chain failed to build there is no gain being applied
+            // either, so the device IS what gets sent.
+            const chainLevel = micChain?.processed ? micChain.readLevel() : null;
+            if (chainLevel !== null || micMeter) {
+                const level = muted ? 0 : (chainLevel ?? micMeter.read());
                 levels.set('self', level);
-                // The settings meter runs on THIS path — the analyser provably reads
-                // every engine we have met, where worklet telemetry has not.
-                onMicTelemetry({
-                    level,
-                    db: level > 0 ? Math.max(-100, 20 * Math.log10(level)) : -100,
-                });
+                onMicTelemetry({ level, db: levelToDb(level) });
             }
             onLevels(new Map(levels));
         }, LEVEL_INTERVAL_MS);

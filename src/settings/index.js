@@ -15,6 +15,7 @@ import { settingsFor } from '../server/store.js';
 import { $, $$ } from '../ui/dom.js';
 import { VERSION } from '../platform/index.js';
 import { DEFAULT_STREAM_PRESET } from '../media/presets.js';
+import { dbToMeterPercent } from '../media/chain.js';
 import {
     adminUsersPanel, adminChannelsPanel, adminServerPanel, adminDangerPanel,
 } from './admin.js';
@@ -45,7 +46,8 @@ export const DEFAULTS = {
     audioOutput: '',
     afkExempt: false,
     // The mic chain. `noiseGate` defaults off because a gate the user did not ask for is
-    // indistinguishable from a broken microphone; 64 is mid-slider, ~-55 dBFS.
+    // indistinguishable from a broken microphone; 64 on the sensitivity scale is -41.6 dBFS,
+    // which sits above a quiet room and below speech.
     micGain: 100,
     noiseGate: false,
     gateSensitivity: 64,
@@ -519,8 +521,11 @@ export function createSettings({
         if (fill) {
             const onLevel = (event) => {
                 const { db } = event.detail ?? {};
-                // The meter axis matches the sensitivity slider: -100dB at 0, -30dB at 100.
-                const pct = Math.max(0, Math.min(100, ((db ?? -100) + 100) / 0.7));
+                // The meter axis IS the sensitivity slider's axis — same function, imported
+                // rather than reimplemented. This panel used to carry its own copy of the
+                // arithmetic, against a scale the gate had never used, and the bar and the
+                // line therefore described different sounds.
+                const pct = dbToMeterPercent(db);
                 fill.style.width = `${pct}%`;
                 // Open/closed is computed HERE, against the same slider the user drags —
                 // the bar crossing the line and the state flipping are one fact twice.

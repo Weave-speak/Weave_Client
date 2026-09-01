@@ -4,6 +4,20 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.54] - 2026-09-01
+
+### Fixed
+- **A streamer no longer receives their own stream**, matching the server: there is no reason
+  to consume audio you are already sending, and doing so was a feedback loop that fed a share
+  back into the capture it came from.
+- **User management keeps names visible.** The admin and tester tags could push a name out of
+  its row; the row wraps now, and the name always has room.
+
+### Changed
+- **A tester or admin grant takes effect without signing out.** When your roles change while
+  you are signed in, the client updates in place — so the stream-quality buttons appear the
+  moment you are made a tester, rather than on your next launch.
+
 ## [0.1.53] - 2026-09-01
 
 ### Added

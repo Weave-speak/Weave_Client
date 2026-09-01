@@ -981,6 +981,19 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             return;
         }
 
+        if (msg.type === 'roles_changed') {
+            // An admin granted or removed our tester/admin flag while we are signed in. The
+            // room's `user` is a snapshot taken at sign-in, so without this the stream-quality
+            // buttons would stay hidden (or lingering) until the next launch. Update the
+            // snapshot in place and repaint the stage, which is what gates the buttons.
+            if (user) {
+                if (typeof msg.isTester === 'boolean') user.isTester = msg.isTester;
+                if (typeof msg.isAdmin === 'boolean') user.isAdmin = msg.isAdmin;
+            }
+            paintStage();
+            return;
+        }
+
         if (msg.type === 'peer_profile_changed') {
             state.apply(msg);
             // A replaced picture keeps the account but changes the id, so the cache is

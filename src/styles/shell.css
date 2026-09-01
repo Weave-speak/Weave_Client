@@ -2281,6 +2281,10 @@
     display: flex;
     align-items: center;
     gap: var(--s-3);
+    /* Wrap rather than squeeze: when the badges and actions cannot fit beside the name, they
+       drop to the next line instead of crushing the identity out of the row. */
+    flex-wrap: wrap;
+    row-gap: var(--s-2);
     padding: var(--s-2) var(--s-3);
     border-bottom: 1px solid var(--line-soft);
     min-height: 52px;
@@ -2292,8 +2296,10 @@
     display: flex;
     align-items: center;
     gap: var(--s-3);
-    min-width: 0;
-    flex: 1;
+    /* Never below a readable width: the name may ellipsize, but it is always THERE. Badges
+       and actions wrap under it rather than pushing it to nothing. */
+    min-width: 160px;
+    flex: 1 1 220px;
 }
 .adm-names { display: flex; flex-direction: column; min-width: 0; }
 .adm-display {

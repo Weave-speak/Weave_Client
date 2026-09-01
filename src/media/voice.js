@@ -1028,6 +1028,10 @@ export function createVoice({
 
     async function consume(cid, slot) {
         if (!device?.loaded) return null;
+        // Never consume our OWN producer. Hearing your own shared audio back is a feedback
+        // loop; the server refuses it too, but there is no reason to even ask. link.cid is
+        // this peer's own id, so a stray self-announcement never turns into a self-consumer.
+        if (cid && cid === link.cid) return null;
         // A LIVE duplicate. The guard used to test only for the presence of a map entry,
         // so a consumer that had died — its transport closed, or the server closing it
         // without a frame we understood — blocked its own replacement for ever. That is

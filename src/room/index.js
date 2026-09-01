@@ -19,6 +19,7 @@ import { WeaveBackground, createMessageNoise } from '../ui/weave-background.js';
 import { createVoice } from '../media/voice.js';
 import { effectiveMute, onPushToTalkChange, muteButtonDisabled } from '../media/mute-policy.js';
 import { screenShareSettings, cameraConstraints, cameraEncodings } from '../media/presets.js';
+import { classify } from '../media/stream-report.js';
 import { createSettings, readPrefs } from '../settings/index.js';
 import { createRoomBrowser } from '../rooms/browser.js';
 import { createPeerActions } from './peer-actions.js';
@@ -58,7 +59,7 @@ const SPEAKING_HOLD_MS = 450;
 /** How long to wait for an animation frame before painting anyway. */
 const PAINT_FLOOR_MS = 100;
 
-export function createRoom({ mount, api, link, user, server, features = [], onSignedOut }) {
+export function createRoom({ mount, api, link, user, server, features = [], reportStream = () => Promise.resolve(false), onSignedOut }) {
     const state = createRoomState({
         me: user,
         server: { name: server?.lastSeen?.name ?? server?.label ?? 'Weave' },
@@ -92,6 +93,67 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             paintConnection({ ...state.raw.connection, ...mediaStats });
         }
     }, 5_000);
+
+    // While a screen is on the stage — yours or one you are watching — keep a short rolling
+    // history of its quality, so a Good/Bad click carries the run-up to a freeze rather than
+    // only the calm after it. Cheap: one getStats per active screen every couple of seconds,
+    // and nothing at all when the stage holds no video. The webcam is deliberately not
+    // sampled — a frozen face is nobody's emergency, and the report is about screen shares.
+    const streamDiagTimer = setInterval(() => {
+        for (const key of videoStreams.keys()) {
+            const [cid, slotName] = key.split(':');
+            if (slotName !== 'screen') continue;
+            voice.sampleStream({ role: cid === 'self' ? 'streamer' : 'viewer', cid, slot: slotName })
+                .catch(() => {});
+        }
+    }, 2_000);
+
+    /**
+     * Turn a Good/Bad click into a report. The clicked tile names the stream (`cid:slot`),
+     * which says whether this client is the STREAMER of it (self) or a VIEWER — and therefore
+     * which half of the metrics it holds. A client-side verdict is computed now with no Pi
+     * stamp; the server re-decides with the media-core load only it can see. Both Good and Bad
+     * are sent: a baseline is what a bad sample is compared against.
+     */
+    function reportStreamQuality(bad, holder, clicked) {
+        const [cid, slotName] = holder.dataset.tile.split(':');
+        const self = cid === 'self';
+        const role = self ? 'streamer' : 'viewer';
+        const { samples, latest } = voice.streamReport({ role, cid, slot: slotName });
+        const verdict = latest ? classify({ ...latest, pi: null })
+            : { verdict: 'no-samples', reasons: ['no samples were captured before the click'] };
+        const peer = self ? null : [...state.raw.peers.values()].find((p) => p.cid === cid) ?? null;
+
+        reportStream(bad ? 'stream-bad' : 'stream-good', {
+            v: 1,
+            at: new Date().toISOString(),
+            role,
+            slot: slotName,
+            reporter: state.raw.me?.username ?? null,
+            subject: self ? (state.raw.me?.username ?? null) : (peer?.displayName || peer?.username || cid),
+            channel: state.raw.currentChannelId ?? null,
+            preset: prefs.streamPreset ?? null,
+            prefer: prefs.streamPrefer ?? null,
+            verdict: verdict.verdict,
+            reasons: verdict.reasons,
+            samples,
+        })
+            .then((ok) => flashReport(holder, clicked, Boolean(ok)))
+            .catch(() => flashReport(holder, clicked, false));
+    }
+
+    /** Momentary feedback on the buttons: a click that vanishes without a trace reads as broken. */
+    function flashReport(holder, clicked, ok) {
+        const buttons = [...holder.querySelectorAll('[data-report-good], [data-report-bad]')];
+        buttons.forEach((b) => { b.disabled = true; });
+        const span = clicked.querySelector('span');
+        const original = span?.textContent ?? null;
+        if (span) span.textContent = ok ? 'Sent' : 'Failed';
+        setTimeout(() => {
+            buttons.forEach((b) => { b.disabled = false; });
+            if (span && original !== null) span.textContent = original;
+        }, 1800);
+    }
 
     let prefs = readPrefs(server.id);
     let pttHeld = false;
@@ -328,6 +390,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         walkingOut = true;
         clearInterval(syncTimer);
         clearInterval(statsTimer);
+        clearInterval(streamDiagTimer);
         api.setToken(null);
         await platform.tokens.clear(server.id).catch(() => {});
         // A wiped or revoked account's saved password is dead weight that would re-fill
@@ -343,6 +406,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
     async function signOut() {
         clearInterval(syncTimer);
         clearInterval(statsTimer);
+        clearInterval(streamDiagTimer);
         await api.logout().catch(() => {
             // A network failure must not trap somebody in a signed-in interface. The
             // session lapses on its own; the important part is that this client forgets it.
@@ -1592,6 +1656,12 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                 }
                 return;
             }
+            const reportBtn = event.target.closest('[data-report-good], [data-report-bad]');
+            if (reportBtn) {
+                const holder = reportBtn.closest('[data-tile]');
+                if (holder) reportStreamQuality(reportBtn.matches('[data-report-bad]'), holder, reportBtn);
+                return;
+            }
             if (event.target.closest('[data-listen-volume]')) return;   // the slider is not a focus click
 
             const tile = event.target.closest('[data-tile]');
@@ -2309,6 +2379,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             document.removeEventListener('fullscreenchange', onFullscreenChange);
             clearInterval(syncTimer);
             clearInterval(statsTimer);
+            clearInterval(streamDiagTimer);
             voice.stop();
             background?.destroy();
             link.onEvent = () => {};

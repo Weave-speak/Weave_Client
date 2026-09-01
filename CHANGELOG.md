@@ -4,6 +4,18 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.52] - 2026-09-01
+
+### Added
+- **Good and Bad buttons on a live stream.** When a screen share looks grainy or keeps
+  freezing, a thumb up or down on the stream sends a report to your own server — carrying
+  the real numbers behind the picture rather than just "it looked bad". A viewer's report
+  describes what reached them (freezes, dropped frames, packet loss, how long each frame
+  took to decode); a streamer's describes what left them (whether the encoder or the uplink
+  was the limit, and at what frame rate and resolution). Each keeps the run-up to the moment
+  you clicked, so a freeze is caught with its cause rather than only its aftermath. Good
+  matters as much as Bad: it is the baseline a bad moment is measured against.
+
 ## [0.1.51] - 2026-09-01
 
 ### Fixed

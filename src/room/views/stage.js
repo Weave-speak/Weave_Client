@@ -38,6 +38,11 @@ const initialsOf = (name) => String(name ?? '?').trim().slice(0, 2).toUpperCase(
 /** The focused stream's floating pill: listen controls, fullscreen, the way out. */
 const streamPill = (t) => `
   <span class="stream-pill">
+    <button type="button" class="pill-btn pill-report good" data-report-good
+            title="This stream looks good — send a report" aria-label="Report this stream looks good">${icons.thumbUp}<span>Good</span></button>
+    <button type="button" class="pill-btn pill-report bad" data-report-bad
+            title="This stream looks bad — send a report" aria-label="Report this stream looks bad">${icons.thumbDown}<span>Bad</span></button>
+    <span class="pill-sep" aria-hidden="true"></span>
     ${t.self || !t.audio ? '' : `
     <button type="button" class="pill-btn" data-listen-mute
             title="${t.audio.muted ? 'Unmute for you' : 'Mute for you'}"

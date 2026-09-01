@@ -119,6 +119,41 @@ async function sendDiagnostics(report) {
 }
 
 /**
+ * Post a stream-quality report to the server the user is configured against.
+ *
+ * The Good/Bad buttons on a stream call this. It lands on the same endpoint as an update
+ * failure and by the same reasoning — to THEIR server, attributed when a token is present,
+ * anonymous when not — but it carries a structured stats payload, serialised into the
+ * endpoint's opaque `log` string so the server stores it without having to understand it.
+ *
+ * Returns false rather than throwing: the caller is a button, and a rejected promise there
+ * becomes an unhandled rejection nobody sees.
+ */
+async function sendStreamReport(kind, payload) {
+    const server = activeServer();
+    if (!server) return false;
+    try {
+        const token = await platform.tokens.get(server.id).catch(() => null);
+        const response = await fetch(`${server.origin}/api/diagnostics`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json',
+                ...(token ? { authorization: `Bearer ${token}` } : {}),
+            },
+            credentials: 'omit',
+            body: JSON.stringify({
+                kind,
+                client: { version: VERSION, target: platform.target },
+                log: JSON.stringify(payload),
+            }),
+        });
+        return response.ok;
+    } catch {
+        return false;
+    }
+}
+
+/**
  * Hand the window over to the room.
  *
  * The auth surface and the room do not share a frame: one is a card on a quiet field, the
@@ -161,6 +196,8 @@ async function enterRoom({ api, user, token, server, autoJoin = true }) {
         server,
         // What this server actually has switched on, learned moments ago.
         features,
+        // How a Good/Bad click on a stream reaches the server; see sendStreamReport.
+        reportStream: sendStreamReport,
         onSignedOut(detail) {
             room.destroy();
             boot(detail?.notice ?? null);

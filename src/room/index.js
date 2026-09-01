@@ -118,10 +118,15 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
      * stamp; the server re-decides with the media-core load only it can see. Both Good and Bad
      * are sent: a baseline is what a bad sample is compared against.
      */
-    function reportStreamQuality(bad, holder, clicked) {
+    async function reportStreamQuality(bad, holder, clicked) {
         const [cid, slotName] = holder.dataset.tile.split(':');
         const self = cid === 'self';
         const role = self ? 'streamer' : 'viewer';
+        // Capture THIS instant at full fidelity before reading the buffer. The background
+        // sampler runs every couple of seconds; a slight moment of lag the person reacted to
+        // could fall between two of those ticks, so take a fresh sample now — the click's own
+        // moment belongs in the report, not just the last one that happened to be timed.
+        await voice.sampleStream({ role, cid, slot: slotName }).catch(() => {});
         const { samples, latest } = voice.streamReport({ role, cid, slot: slotName });
         const verdict = latest ? classify({ ...latest, pi: null })
             : { verdict: 'no-samples', reasons: ['no samples were captured before the click'] };

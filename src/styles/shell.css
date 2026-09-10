@@ -1956,6 +1956,9 @@
 }
 .setting select option { background: var(--surface-1); color: var(--ink); }
 
+/* A select with a play/stop preview button riding next to it — sound pickers only. */
+.sound-select-row { display: flex; align-items: center; gap: var(--s-2); }
+
 #activeMic.is-warn { color: var(--warn); }
 
 .reset-link {
@@ -2320,6 +2323,7 @@
 .adm-flags { display: flex; align-items: center; gap: var(--s-2); flex: none; }
 .badge.banned { background: rgb(var(--bad-rgb) / 0.18); color: var(--bad); }
 .badge.reset { background: rgb(var(--warn-rgb) / 0.18); color: var(--warn); }
+.badge.default { background: rgb(var(--ok-rgb) / 0.18); color: var(--ok); }
 
 .adm-actions { display: flex; align-items: center; gap: var(--s-2); flex: none; flex-wrap: wrap; }
 /* Row actions stay out of the way until the row is under the pointer or holds focus. */

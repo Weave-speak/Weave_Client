@@ -50,6 +50,7 @@ export const SECTIONS = [
         items: [
             { id: 'admin-users', label: 'Users', icon: 'weave' },
             { id: 'admin-channels', label: 'Channels', icon: 'speaker' },
+            { id: 'admin-sounds', label: 'Sounds', icon: 'speaker' },
             { id: 'admin-server', label: 'Server', icon: 'doc' },
             { id: 'admin-danger', label: 'DO NOT PRESS', icon: 'power', danger: true },
         ],
@@ -144,9 +145,9 @@ const avatarCropper = ({ busy = false, error = '' } = {}) => `
  * is a fact rather than an invitation. If changing it ever becomes possible, the field comes
  * back as a working one.
  */
-export function profilePanel({ me = {}, features = [], avatarError = '' } = {}) {
+export function profilePanel({ me = {}, prefs = {}, features = [], avatarError = '', soundLibrary = [] } = {}) {
     const joined = joinedOn(me.createdAt);
-    const hasPersonas = features.includes('module.personas');
+    const hasSounds = features.includes('module.sounds');
     const canEdit = features.includes('profile');
 
     return `
@@ -190,9 +191,11 @@ export function profilePanel({ me = {}, features = [], avatarError = '' } = {}) 
          because a status three clicks into a preferences dialog is one nobody sets and
          nobody trusts to be current. -->
 
-    ${hasPersonas
-        ? notYet('Join and leave sounds', 'Sound library not loaded yet.')
-        : notYet('Join and leave sounds', 'The personas module is switched off on this server.')}
+    ${hasSounds
+        ? (soundLibrary.length
+            ? soundPicker({ soundLibrary, prefs })
+            : notYet('Join and leave sounds', 'No sounds have been uploaded to this server yet.'))
+        : notYet('Join and leave sounds', 'The sounds module is switched off on this server.')}
 
     <p class="panel-lead">Microphone and voice behaviour has moved to Voice &amp; Audio.</p>`;
 }
@@ -227,6 +230,40 @@ const choose = ({ id, label, hint, value, options }) => `
       ${options.map(([v, text]) => `<option value="${esc(v)}" ${String(v) === String(value) ? 'selected' : ''}>${esc(text)}</option>`).join('')}
     </select>
   </div>`;
+
+/**
+ * Like `choose()`, but with a play/stop preview button next to the select — for
+ * picking from a library of audio rather than a list of settings. The button starts
+ * as ▶; the controller flips it to ⏹ while that sound is actually playing.
+ */
+const soundOption = ({ id, label, hint, value, options }) => `
+  <div class="setting">
+    <label class="setting-text" for="${esc(id)}">
+      <span class="setting-label">${esc(label)}</span>
+      ${hint ? `<span class="setting-hint">${esc(hint)}</span>` : ''}
+    </label>
+    <span class="sound-select-row">
+      <select id="${esc(id)}" data-setting="${esc(id)}">
+        ${options.map(([v, text]) => `<option value="${esc(v)}" ${String(v) === String(value) ? 'selected' : ''}>${esc(text)}</option>`).join('')}
+      </select>
+      <button type="button" class="btn small" data-preview-sound-for="${esc(id)}" aria-label="Preview">▶</button>
+    </span>
+  </div>`;
+
+const soundPicker = ({ soundLibrary, prefs }) => {
+    const options = soundLibrary.map((s) => [s.id, s.name]);
+    return `
+    ${soundOption({
+        id: 'joinSound', label: 'Join sound',
+        hint: 'Played to everyone else in the channel when you arrive.',
+        value: prefs.joinSound, options,
+    })}
+    ${soundOption({
+        id: 'leaveSound', label: 'Leave sound',
+        hint: 'Played to everyone else in the channel when you leave.',
+        value: prefs.leaveSound, options,
+    })}`;
+};
 
 export function voicePanel({ prefs = {}, devices = [], cameras = [], outputs = [], features = [] } = {}) {
     const hasAfk = features.includes('module.afk');

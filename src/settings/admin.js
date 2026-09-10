@@ -15,6 +15,8 @@ const banner = (error, notice) => `
 
 const loading = (what) => `<p class="panel-lead">Loading ${esc(what)}…</p>`;
 
+const fmtBytes = (b) => (b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.round(b / 1024)} KB`);
+
 /**
  * Destructive buttons arm on the first click and fire on the second, so a slip of the
  * mouse costs nothing. The controller flips `data-armed`; the view just states it.
@@ -137,6 +139,56 @@ function channelRow(c, { editing, armedKey }) {
     </div>`;
 }
 
+/* ── Sounds ──────────────────────────────────────────────────────────────── */
+
+export function adminSoundsPanel({
+    sounds = null, defaults = { joinSound: null, leaveSound: null },
+    error = null, notice = null, armedKey = null, uploadBusy = false,
+} = {}) {
+    return `
+    <h2 class="panel-title">Join &amp; leave sounds</h2>
+    <p class="panel-lead">The server's sound library. Anyone can pick from these in their own profile.</p>
+    ${banner(error, notice)}
+    ${sounds === null ? loading('sounds') : `
+    <div class="admin-table" role="table" aria-label="Sounds">
+      ${sounds.map((s) => soundRow(s, { defaults, armedKey })).join('')
+        || '<p class="panel-lead">No sounds uploaded yet.</p>'}
+    </div>`}
+
+    <div class="adm-create">
+      <input type="file" accept="audio/ogg,audio/mpeg,audio/wav,.ogg,.mp3,.wav" multiple hidden data-sound-file>
+      <button type="button" class="btn primary" data-add-sound ${uploadBusy ? 'disabled' : ''}>
+        ${uploadBusy ? 'Uploading…' : 'Add sounds'}
+      </button>
+      <span class="setting-hint">OGG, MP3 or WAV. Up to 2&nbsp;MB each.</span>
+    </div>`;
+}
+
+function soundRow(s, { defaults, armedKey }) {
+    const armed = armedKey === `delete-sound:${s.id}`;
+    const isJoinDefault = defaults.joinSound === s.id;
+    const isLeaveDefault = defaults.leaveSound === s.id;
+    return `
+    <div class="adm-row" role="row" data-sound-row="${esc(s.id)}">
+      <span class="adm-who">
+        <span class="adm-names">
+          <span class="adm-display">${esc(s.name)}</span>
+          <span class="adm-username">${esc(fmtBytes(s.bytes))}</span>
+        </span>
+      </span>
+      <span class="adm-flags">
+        ${isJoinDefault ? '<span class="badge default">Join default</span>' : ''}
+        ${isLeaveDefault ? '<span class="badge default">Leave default</span>' : ''}
+      </span>
+      <span class="adm-actions">
+        <button type="button" class="btn small" data-preview-sound="${esc(s.id)}" aria-label="Preview">▶</button>
+        ${isJoinDefault ? '' : `<button type="button" class="btn small" data-set-default="${esc(s.id)}" data-which="join">Set as join default</button>`}
+        ${isLeaveDefault ? '' : `<button type="button" class="btn small" data-set-default="${esc(s.id)}" data-which="leave">Set as leave default</button>`}
+        ${armable(`data-delete-sound="${esc(s.id)}"`, 'Delete', 'Delete sound?', { armed })}
+      </span>
+    </div>`;
+}
+
 /* ── Server ──────────────────────────────────────────────────────────────── */
 
 const fmtUptime = (s) => {
@@ -144,7 +196,6 @@ const fmtUptime = (s) => {
     const d = Math.floor(s / 86400); const h = Math.floor((s % 86400) / 3600); const m = Math.floor((s % 3600) / 60);
     return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
 };
-const fmtBytes = (b) => (b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.round(b / 1024)} KB`);
 
 export function adminServerPanel({ overview = null, logs = null, error = null } = {}) {
     return `

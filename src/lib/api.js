@@ -108,6 +108,22 @@ export function createApi({ origin, token = null }) {
 
         removeAvatar: () => request('DELETE', '/api/me/avatar'),
 
+        async uploadSound(file, name) {
+            const res = await fetch(origin + `/api/sounds?name=${encodeURIComponent(name)}`, {
+                method: 'POST',
+                headers: { ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) },
+                body: file,
+                credentials: 'omit',
+                signal: AbortSignal.timeout(30_000),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new ApiError(data.message ?? data.error ?? 'The sound could not be uploaded.',
+                    { status: res.status });
+            }
+            return data;
+        },
+
         /** Auth-gated bytes (uploads) as a blob, for <img> tags and downloads. */
         async fetchBlob(path) {
             const res = await fetch(origin + path, {

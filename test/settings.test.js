@@ -16,7 +16,7 @@ import {
     appearancePanel, invitesPanel, inviteMessage, placeholderPanel, PLACEHOLDER_REASONS, settingsFrame, sessionsPanel,
 } from '../src/settings/panels.js';
 import {
-    adminUsersPanel, adminChannelsPanel, adminDangerPanel, reversedName,
+    adminUsersPanel, adminChannelsPanel, adminSoundsPanel, adminDangerPanel, reversedName,
 } from '../src/settings/admin.js';
 
 const ME = { id: 'u1', username: 'ghostbyte', displayName: 'Ghostbyte', createdAt: '2026-02-04T10:00:00Z' };
@@ -110,10 +110,10 @@ test('a picture already chosen is rendered, not just referenced', () => {
 });
 
 test('a disabled module is named as the reason, not hidden', () => {
-    // "The personas module is switched off" is actionable — an admin can turn it on.
+    // "The sounds module is switched off" is actionable — an admin can turn it on.
     // Silently omitting the control leaves somebody hunting for a feature they were shown.
     const off = profilePanel({ me: ME, features: [] });
-    assert.match(off, /personas module is switched off/);
+    assert.match(off, /sounds module is switched off/);
 
     // AFK behaviour lives with the microphone now, in Voice & Audio.
     const voiceOff = voicePanel({ prefs: {}, features: [] });
@@ -122,6 +122,57 @@ test('a disabled module is named as the reason, not hidden', () => {
     const voiceOn = voicePanel({ prefs: {}, features: ['module.afk'] });
     assert.match(voiceOn, /Exempt me from being moved when idle/);
     assert.ok(!voiceOn.includes('away module is switched off'));
+});
+
+test('join and leave sounds move through three states: off, empty, and pickable', () => {
+    const off = profilePanel({ me: ME, features: [] });
+    assert.ok(!off.includes('data-setting="joinSound"'));
+
+    // The module is on, but nobody has uploaded anything yet — a real reason, not the
+    // "not loaded yet" guess this used to say before the library was ever fetched.
+    const empty = profilePanel({ me: ME, features: ['module.sounds'], soundLibrary: [] });
+    assert.match(empty, /No sounds have been uploaded to this server yet/);
+    assert.ok(!empty.includes('data-setting="joinSound"'));
+
+    const sounds = [{ id: 'a1', name: 'Arrival' }, { id: 'd1', name: 'Departure' }];
+    const populated = profilePanel({
+        me: ME, features: ['module.sounds'], soundLibrary: sounds,
+        prefs: { joinSound: 'd1', leaveSound: 'a1' },
+    });
+    assert.match(populated, /data-setting="joinSound"/);
+    assert.match(populated, /data-setting="leaveSound"/);
+    assert.match(populated, /Arrival/);
+    assert.match(populated, /Departure/);
+    // Whatever the server resolved (a personal choice, or an admin default) is what's
+    // selected — not necessarily the first sound in the list.
+    assert.match(populated, /<option value="d1" selected>Departure<\/option>/);
+    assert.match(populated, /<option value="a1" selected>Arrival<\/option>/);
+});
+
+test('the sounds admin panel shows the library, marks the defaults, and offers to add or delete', () => {
+    assert.match(adminSoundsPanel({ sounds: null }), /Loading sounds/);
+    assert.match(adminSoundsPanel({ sounds: [] }), /No sounds uploaded yet/);
+
+    const markup = adminSoundsPanel({
+        sounds: [
+            { id: 's1', name: 'Arrival', bytes: 12000 },
+            { id: 's2', name: 'Departure', bytes: 8000 },
+        ],
+        defaults: { joinSound: 's1', leaveSound: null },
+    });
+    assert.match(markup, /Arrival/);
+    assert.match(markup, /Departure/);
+    assert.match(markup, /class="badge default">Join default/);
+    assert.ok(!markup.includes('Leave default'), 'no badge for a default that is not set');
+    assert.match(markup, /data-set-default="s2" data-which="join"/, 'the non-default row still offers to become one');
+    assert.ok(!markup.includes('data-set-default="s1" data-which="join"'), 'already the default, nothing to offer');
+    assert.match(markup, /data-add-sound/);
+
+    const armed = adminSoundsPanel({
+        sounds: [{ id: 's1', name: 'Arrival', bytes: 12000 }],
+        armedKey: 'delete-sound:s1',
+    });
+    assert.match(armed, /Delete sound\?/);
 });
 
 test('push-to-talk reveals its key only when it is on', () => {
@@ -325,6 +376,10 @@ test('every control the settings panels persist survives a round trip', async ()
     const markup = [
         voicePanel({ prefs, devices: [], cameras: [], features: [] }),
         appearancePanel({ prefs }),
+        profilePanel({
+            me: ME, prefs, features: ['module.sounds'],
+            soundLibrary: [{ id: 's1', name: 'Arrival' }],
+        }),
     ].join('\n');
 
     const named = [...markup.matchAll(/data-setting="([^"]+)"/g)].map((m) => m[1]);

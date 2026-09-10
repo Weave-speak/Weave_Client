@@ -932,6 +932,13 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             return;
         }
 
+        if (msg.type === 'sounds:play') {
+            // The server already filtered this to peers in the announcer's channel,
+            // excluding the announcer — nothing left to check here.
+            playSound(msg.soundId);
+            return;
+        }
+
         if (msg.type === 'text-chat:cleared' && msg.channelId) {
             // An admin emptied the channel. What we are showing of it is now fiction.
             state.setMessages(msg.channelId, []);
@@ -1328,6 +1335,24 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
                 img.src = obj;
             }).catch(() => { img.closest('.attach-image-wrap')?.remove(); });
         }
+    }
+
+    /**
+     * Play a join/leave sound by id. The server sends only the id — the bytes are
+     * fetched and cached exactly like an auth-gated image, via the same `blobUrls`
+     * map: a sound's id names immutable bytes, so once fetched it never needs asking
+     * for again.
+     */
+    function playSound(soundId) {
+        if (!soundId) return;
+        const url = `/api/sounds/${encodeURIComponent(soundId)}/audio`;
+        const held = blobUrls.get(url);
+        if (held) { new Audio(held).play().catch(() => {}); return; }
+        api.fetchBlob(url).then((blob) => {
+            const obj = URL.createObjectURL(blob);
+            blobUrls.set(url, obj);
+            new Audio(obj).play().catch(() => {});
+        }).catch(() => { /* the sound may have been deleted since it was chosen */ });
     }
 
     /**

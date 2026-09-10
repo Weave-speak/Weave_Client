@@ -17,7 +17,7 @@ import { VERSION } from '../platform/index.js';
 import { DEFAULT_STREAM_PRESET } from '../media/presets.js';
 import { dbToMeterPercent } from '../media/chain.js';
 import {
-    adminUsersPanel, adminChannelsPanel, adminServerPanel, adminDangerPanel,
+    adminUsersPanel, adminChannelsPanel, adminSoundsPanel, adminServerPanel, adminDangerPanel,
 } from './admin.js';
 import {
     settingsFrame, profilePanel, voicePanel, appearancePanel, invitesPanel, inviteMessage, sessionsPanel,
@@ -45,6 +45,10 @@ export const DEFAULTS = {
     micDevice: '',
     audioOutput: '',
     afkExempt: false,
+    // Resolved server-side (personal choice, or the admin's default if there is
+    // one) — an empty string just means "nothing to show yet".
+    joinSound: '',
+    leaveSound: '',
     // The mic chain. `noiseGate` defaults off because a gate the user did not ask for is
     // indistinguishable from a broken microphone; 64 on the sensitivity scale is -41.6 dBFS,
     // which sits above a quiet room and below speech.
@@ -89,6 +93,7 @@ export function createSettings({
     let devices = [];
     let cameras = [];
     let outputs = [];
+    let soundLibrary = [];
     let invite = null;
     let inviteBusy = false;
     let inviteError = null;
@@ -101,6 +106,7 @@ export function createSettings({
     // refetched after every action, so the table always shows what the server just did.
     const adm = {
         members: null, channels: null, overview: null, logs: null,
+        sounds: null, soundDefaults: { joinSound: null, leaveSound: null }, soundUploadBusy: false,
         error: null, notice: null,
         editingId: null,       // user or channel row in rename mode
         armedKey: null,        // 'action:id' of the one destructive button awaiting its second click
@@ -116,7 +122,7 @@ export function createSettings({
         switch (current) {
             case 'profile': return profilePanel({
                 me: { ...me, avatarUrl: avatars?.urlFor(me.avatar) ?? null },
-                prefs, features, avatarError,
+                prefs, features, avatarError, soundLibrary,
             });
             case 'voice': return voicePanel({ prefs, devices, cameras, outputs, features });
             case 'sessions': return sessionsPanel({ version: VERSION });
@@ -134,6 +140,11 @@ export function createSettings({
                 return adminChannelsPanel({
                     channels: adm.channels, error: adm.error, notice: adm.notice,
                     editingId: adm.editingId, armedKey: adm.armedKey, busy: adm.createBusy,
+                });
+            case 'admin-sounds':
+                return adminSoundsPanel({
+                    sounds: adm.sounds, defaults: adm.soundDefaults, error: adm.error, notice: adm.notice,
+                    armedKey: adm.armedKey, uploadBusy: adm.soundUploadBusy,
                 });
             case 'admin-server':
                 return adminServerPanel({ overview: adm.overview, logs: adm.logs, error: adm.error });
@@ -184,6 +195,14 @@ export function createSettings({
             await api.request('POST', '/api/afk/opt-out', { body: { optedOut: value } })
                 .catch(() => { /* the local preference still applies to this device */ });
         }
+
+        // Join/leave sound choice is also account-level — chosen once, heard everywhere
+        // you go, not per device. Both fields travel together; the route expects both.
+        if (key === 'joinSound' || key === 'leaveSound') {
+            await api.request('PUT', '/api/sounds/me', {
+                body: { joinSound: prefs.joinSound || null, leaveSound: prefs.leaveSound || null },
+            }).catch(() => { /* the local preference still applies to this device */ });
+        }
     }
 
     /* ── wiring ──────────────────────────────────────────────────────────── */
@@ -233,6 +252,10 @@ export function createSettings({
             } else if (current === 'admin-channels') {
                 const { channels } = await api.request('GET', '/api/channels');
                 adm.channels = channels;
+            } else if (current === 'admin-sounds') {
+                const { sounds, defaults } = await api.request('GET', '/api/sounds');
+                adm.sounds = sounds;
+                adm.soundDefaults = defaults;
             } else if (current === 'admin-server') {
                 // Fetched together: the numbers without the log answer half the question.
                 const [overview, logs] = await Promise.all([
@@ -380,6 +403,40 @@ export function createSettings({
             }).finally(() => { adm.createBusy = false; renderPanel(); });
         });
 
+        // -- sounds --
+        $$('[data-preview-sound]', el).forEach((b) => b.addEventListener('click', () => {
+            previewSound(b, b.dataset.previewSound);
+        }));
+        $$('[data-set-default]', el).forEach((b) => b.addEventListener('click', () => {
+            adminAct(() => api.request('PUT', `/api/sounds/${b.dataset.setDefault}/default`, {
+                body: { which: b.dataset.which },
+            }));
+        }));
+        $$('[data-delete-sound]', el).forEach((b) => b.addEventListener('click', () => {
+            const id = b.dataset.deleteSound;
+            armThen(`delete-sound:${id}`, () => adminAct(
+                () => api.request('DELETE', `/api/sounds/${id}`),
+            ));
+        }));
+        $('[data-add-sound]', el)?.addEventListener('click', () => {
+            $('[data-sound-file]', el)?.click();
+        });
+        $('[data-sound-file]', el)?.addEventListener('change', async (e) => {
+            const files = [...(e.currentTarget.files ?? [])];
+            if (!files.length) return;
+            adm.soundUploadBusy = true; renderPanel();
+            for (const file of files) {
+                const name = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim() || 'Untitled';
+                // One at a time and best-effort: a batch of 20 shouldn't abort on file 3
+                // and lose the other 19 the user already picked.
+                await api.uploadSound(file, name).catch((err) => {
+                    adm.error = err?.message ?? `"${file.name}" could not be uploaded.`;
+                });
+            }
+            adm.soundUploadBusy = false;
+            await loadAdminData();
+        });
+
         // -- server --
         $('[data-admin-refresh-logs]', el)?.addEventListener('click', () => loadAdminData());
 
@@ -515,6 +572,15 @@ export function createSettings({
             }
         });
 
+        // A sound's preview follows whatever the select currently shows, not
+        // necessarily what was last saved — you're previewing a choice, not replaying it.
+        $$('[data-preview-sound-for]', modal.element).forEach((button) => {
+            button.addEventListener('click', () => {
+                const select = $(`#${button.dataset.previewSoundFor}`, modal.element);
+                if (select?.value) previewSound(button, select.value);
+            });
+        });
+
         // The mic meter: the chain posts levels while a voice room is live; the panel
         // draws them only while someone is looking.
         const fill = $('#micMeterFill', modal.element);
@@ -600,6 +666,31 @@ export function createSettings({
                 flash(button, 'Press Ctrl+C');
             }
         });
+    }
+
+    /**
+     * Fetch-and-play a library sound, or stop it — one button, two states.
+     *
+     * The audio route is authenticated, so this goes through `api.fetchBlob` and an
+     * object URL rather than a plain `<audio src>`, the same shape `avatars.js` uses
+     * for pictures behind the same session.
+     */
+    async function previewSound(button, id) {
+        if (button._audio && !button._audio.paused) {
+            button._audio.pause();
+            button.textContent = '▶';
+            return;
+        }
+        try {
+            const blob = await api.fetchBlob(`/api/sounds/${encodeURIComponent(id)}/audio`);
+            const audio = new Audio(URL.createObjectURL(blob));
+            button._audio = audio;
+            audio.addEventListener('ended', () => { button.textContent = '▶'; });
+            button.textContent = '⏹';
+            await audio.play();
+        } catch {
+            button.textContent = '▶';
+        }
     }
 
     /** Show the outcome ON the button, then give the button back. */
@@ -696,6 +787,19 @@ export function createSettings({
             if (features.includes('module.afk')) {
                 await api.request('GET', '/api/afk/opt-out')
                     .then((r) => { prefs = { ...prefs, afkExempt: Boolean(r.optedOut) }; })
+                    .catch(() => { /* fall back to what this device remembers */ });
+            }
+
+            // Same principle: the server resolves the real value (a personal choice,
+            // or the admin's default if there is one) — nothing to guess here.
+            if (features.includes('module.sounds')) {
+                await api.request('GET', '/api/sounds')
+                    .then((r) => { soundLibrary = r.sounds ?? []; })
+                    .catch(() => { soundLibrary = []; });
+                await api.request('GET', '/api/sounds/me')
+                    .then((r) => {
+                        prefs = { ...prefs, joinSound: r.joinSound ?? '', leaveSound: r.leaveSound ?? '' };
+                    })
                     .catch(() => { /* fall back to what this device remembers */ });
             }
 

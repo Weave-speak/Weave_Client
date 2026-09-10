@@ -26,7 +26,6 @@ self-service `PATCH /api/me`, which covers the first three at once.
 
 | Control | What is missing |
 |---|---|
-| **Join and leave sounds** | The `personas` module ships disabled. Once an admin enables it, everything a crew member needs is already crew level. Two caveats: uploading sounds is admin-only so a fresh library is empty, and the preview route is authenticated so playback needs a blob URL rather than `<audio src>`. |
 | **Report a Bug** | No module and no endpoint. The client half is already built — `weaveNative.diagnostics.read()` returns a pre-redacted updater log — but there is nowhere to send it. Redaction must stay on the reporter's machine and be previewable before anything leaves. |
 
 ## Needs the desktop shell
@@ -49,4 +48,6 @@ Recorded so the list above is not mistaken for the whole picture: sign out (prop
 revoking the session server-side), the AFK exemption (account level, confirmed against the
 server), noise suppression, echo cancellation, automatic gain, microphone selection,
 in-window push-to-talk with a rebindable key, the still-background switch, creating an
-invite, and the join date.
+invite, the join date, and join/leave sounds (picking one, previewing it, admin add/remove/
+default, and actually hearing it when someone arrives or leaves — the `sounds` module
+still ships disabled, same as before, but everything behind the flag now works).

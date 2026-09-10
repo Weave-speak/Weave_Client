@@ -754,7 +754,9 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
                 pendingFocus = null;
             } else {
                 pendingFocus = key;
-                voice.setWatching(cid, slot, true);
+                // The account rides along so the choice can be re-aimed after a
+                // reconnection, when every cid in the room is a different string.
+                voice.setWatching(cid, slot, true, state.raw.peers.get(cid)?.userId ?? null);
             }
         }
         paintStage();
@@ -1168,16 +1170,28 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
                 rtpCapabilities: frame.rtpCapabilities,
                 mediaReset: frame.mediaReset === true,
             });
+        } else if (frame.type === 'joined' && frame.resumed) {
+            // RESUMED: the server kept the peer this socket was standing as, so every
+            // transport, producer and consumer we hold is still the real one and nobody in
+            // the room was told anything happened. Rebuilding here would throw away
+            // precisely what the resume saved — a running screen share included — so the
+            // only thing to mend is the ICE path that died with the socket.
+            await voice.onResumed();
         } else if (frame.type === 'joined') {
-            // A 'joined' frame is a BRAND-NEW server-side peer — which is exactly what a
-            // reconnect produces, and what every client gets after the server restarts.
-            // The server has no transports, producers or consumers for us at all, but the
-            // local objects survive the socket drop: ensureSend()/ensureRecv() see them,
-            // hand them straight back without asking for replacements, and every produce
-            // and consume against those zombies is refused with 'no_transport' for the
-            // rest of the session. The room looks joined, the roster is right, and no
-            // audio moves in either direction. Rebuild from nothing instead.
-            await voice.onMoved({ rtpCapabilities: frame.rtpCapabilities, mediaReset: true });
+            // A 'joined' frame is a BRAND-NEW server-side peer — which is what a reconnect
+            // produces when the resume is refused (an outage longer than the server's
+            // grace, or a server that restarted), and what every client gets after the
+            // server restarts. The server has no transports, producers or consumers for us
+            // at all, but the local objects survive the socket drop: ensureSend()/
+            // ensureRecv() see them, hand them straight back without asking for
+            // replacements, and every produce and consume against those zombies is refused
+            // with 'no_transport' for the rest of the session. The room looks joined, the
+            // roster is right, and no audio moves in either direction. Rebuild from nothing
+            // instead — but keep what this person had chosen to watch, which is about
+            // people rather than about connections.
+            await voice.onMoved({
+                rtpCapabilities: frame.rtpCapabilities, mediaReset: true, reconnect: true,
+            });
         }
         if (!frame.rtpCapabilities) return;
 
@@ -1191,8 +1205,15 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         // per producer waiting for a reply the server rightly refuses — enough stalls and
         // the people actually beside you are never consumed. That was a real, reported
         // one-way-audio bug.
-        for (const peer of (frame.peers ?? []).filter((p) => p.channelId === channel?.id)) {
-            await voice.consumePeer(peer);
+        //
+        // A resume kept every consumer it had, so there is nothing here to open.
+        const roomRoster = (frame.peers ?? []).filter((p) => p.channelId === channel?.id);
+        if (!frame.resumed) {
+            for (const peer of roomRoster) await voice.consumePeer(peer);
+            // AFTER that loop, not before: consumePeer skips watchable slots that are not
+            // watched, so re-aiming first would have both of them asking for the same
+            // screen at once. Watchable slots are this call's alone.
+            await voice.restoreWatches(roomRoster, channel?.id ?? null);
         }
         // And one reconciliation straight after: anything that changed WHILE the loop
         // above was awaiting is caught now rather than at the next beat — and once more

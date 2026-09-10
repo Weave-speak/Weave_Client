@@ -4,6 +4,36 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.60] - 2026-09-10
+
+### Fixed
+- **A connection that drops for a moment no longer stops your screen share, or plays a join
+  and leave sound for everyone else.** A few seconds of bad network — the kind nobody
+  notices at the time — was being treated as leaving the server and coming back. Everyone
+  else heard you go and arrive again, the timeline recorded that you had stopped streaming
+  and started streaming, and if you were sharing your screen it genuinely did stop, because
+  the client rebuilt every part of its media from nothing.
+
+  None of that was ever necessary. The audio and video path is a separate connection from
+  the one that dropped, and it was still perfectly good. A reconnection now claims back the
+  place it already had: the same standing in the room, the same microphone, the same share.
+  The only thing repaired is the network path itself, which happens without interrupting
+  anything carried on it. Against a server too old to offer this, the client falls back to
+  what it did before, so nothing gets worse.
+
+- **Watching somebody's screen survives your own connection dropping.** The choice to watch
+  a stream was remembered against the connection it was made on, so a blip on YOUR line
+  quietly turned everything you were watching back into a placeholder, with nothing on
+  screen to say why. It is remembered against the person now, and comes back with you — as
+  long as they are still sharing.
+
+- **A connection that stops answering is replaced immediately rather than after a wait.**
+  Having given up on a socket that had gone quiet, the client then waited for that socket to
+  admit it had closed — which, behind a router that has silently stopped forwarding, can
+  take minutes or simply never happen. "Reconnecting" sat there for the whole of it. It now
+  starts a fresh connection at once, and a straggling close from the old one can no longer
+  interfere with the new one.
+
 ## [0.1.58] - 2026-09-01
 
 ### Fixed

@@ -6,7 +6,7 @@ a protocol needs clients, and nobody should have to open-source their app to tal
 Weave server. One source tree, two builds — browser (`npm run build`) and Electron desktop
 (`npm run build:desktop`).
 
-Current release: **0.1.40**. Windows installers are published to GitHub Releases, unsigned,
+Current release: **0.1.60**. Windows installers are published to GitHub Releases, unsigned,
 so SmartScreen warns until a certificate exists.
 
 ## Commands

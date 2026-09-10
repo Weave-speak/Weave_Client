@@ -144,6 +144,10 @@ export function createLink({
     let cid = null;
     let wantOpen = false;
     let joined = false;
+    // What the server issued last time we joined, presented on the next join to claim the
+    // SAME peer back rather than standing up a second one beside it. Null until a server
+    // that supports it says otherwise, which is what makes this safe against an older one.
+    let resumeKey = null;
     // Standing NOWHERE is a standing too, and it must survive a reconnect: without
     // this, a network blip would rejoin a deliberately-roomless reader straight into
     // the default room. Seeded from the arrival preference, updated by noteChannel.
@@ -176,9 +180,13 @@ export function createLink({
         if (outstandingPings >= PONG_GRACE) {
             // The socket still claims to be open. It is not: two heartbeats have gone
             // unanswered, which through a tunnel is what a dead path looks like from here.
-            // Closing it ourselves is the only way to start recovering.
+            // Closing it ourselves is the only way to start recovering, and abandoning it
+            // rather than waiting on its close event is the only way to start NOW: there is
+            // no promise one arrives this side of a TCP timeout, and until it did, this
+            // link sat in RETRYING with no socket, no heartbeat and no timer at all.
             setState(LINK.RETRYING, { reason: 'heartbeat' });
-            try { ws?.close(4001, 'heartbeat timeout'); } catch { /* already gone */ }
+            abandon(4001, 'heartbeat timeout');
+            scheduleRetry();
             return;
         }
         lastPingAt = now();
@@ -215,7 +223,19 @@ export function createLink({
         if (!wantOpen) return;
         const delay = retryDelay(overrideBase);
         attempt += 1;
+        armRetry(delay);
         setState(LINK.RETRYING, { retryInMs: delay, attempt, force: true });
+    }
+
+    /**
+     * One pending attempt, never two, and armed BEFORE the state is announced.
+     *
+     * setState re-enters as far as link.close() — a session the server has signed out does
+     * exactly that — and close() can only cancel a timer it can already see. Arming
+     * afterwards installed a fresh one on a link that had just been deliberately closed.
+     */
+    function armRetry(delay) {
+        if (retryTimer) clearTimer(retryTimer);
         retryTimer = setTimer(() => { retryTimer = null; open(); }, delay);
     }
 
@@ -232,8 +252,8 @@ export function createLink({
         if (!wantOpen) return;
         const delay = Math.max(1000, Math.round(ms) + COOLDOWN_MARGIN_MS);
         attempt += 1;
+        armRetry(delay);
         setState(LINK.RETRYING, { retryInMs: delay, attempt, force: true });
-        retryTimer = setTimer(() => { retryTimer = null; open(); }, delay);
     }
 
     /**
@@ -247,27 +267,62 @@ export function createLink({
     function giveUp(code, message, detail) {
         wantOpen = false;
         failure = { code, message, detail };
+        // Whatever we were holding is not ours to claim any more. A revoked session that
+        // kept its key would try to walk back into the room it was removed from.
+        resumeKey = null;
         stopHeartbeat();
         setState(LINK.FAILED, { force: true });
     }
 
     /* ── the socket ──────────────────────────────────────────────────────── */
 
+    /**
+     * Stop driving a socket without waiting for it to admit that it is finished.
+     *
+     * A socket whose path has died can sit in CLOSING until the operating system's TCP
+     * timeout gives up on it — long after there is anything left to wait for. Dropping the
+     * reference and the handlers in the same breath is what lets the retry start now, and
+     * what stops the eventual close event from landing on whatever has replaced it.
+     */
+    function abandon(code, reason) {
+        const sock = ws;
+        ws = null;
+        joined = false;
+        stopHeartbeat();
+        if (!sock) return;
+        sock.onopen = null;
+        sock.onmessage = null;
+        sock.onerror = null;
+        sock.onclose = null;
+        try { sock.close(code, reason); } catch { /* already gone */ }
+    }
+
     function open() {
         if (!WebSocketImpl) throw new Error('No WebSocket implementation available');
-        if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
+        // A socket we still hold is a socket we are still driving, whatever its readyState
+        // says. CLOSING is the dangerous one: behind a black-holed tunnel it lasts until a
+        // TCP timeout, and building a second socket beside it is exactly how a client ends
+        // up joined twice — one socket carrying the heartbeat, the other holding the room.
+        // Giving up on a socket is always explicit; see abandon().
+        if (ws) return;
 
         joined = false;
         setState(LINK.CONNECTING, { force: true });
 
-        ws = new WebSocketImpl(socketUrl);
+        // Captured, so every handler below can tell whether it still speaks for this link.
+        // They all mutate one shared set of state, so without this a close event from a
+        // socket we abandoned minutes ago silences the heartbeat of the one that replaced
+        // it — leaving a socket that is joined at the server and will never be pinged again.
+        const sock = new WebSocketImpl(socketUrl);
+        ws = sock;
 
-        ws.onopen = () => {
+        sock.onopen = () => {
             // Nothing is sent yet. The server speaks first with `hello`, and joining before
             // it does would race the correlation id we want to quote in every log line.
         };
 
-        ws.onmessage = (event) => {
+        sock.onmessage = (event) => {
+            if (sock !== ws) return;
             let msg;
             try {
                 msg = JSON.parse(event.data);
@@ -279,12 +334,14 @@ export function createLink({
             handle(msg);
         };
 
-        ws.onerror = () => {
+        sock.onerror = () => {
             // Browsers deliberately give no detail here, to avoid leaking whether a host
             // exists. `onclose` always follows, and that is where recovery belongs.
         };
 
-        ws.onclose = (event) => {
+        sock.onclose = (event) => {
+            // Already given up on, and the retry that replaced it already arranged.
+            if (sock !== ws) return;
             stopHeartbeat();
             ws = null;
             joined = false;
@@ -326,6 +383,11 @@ export function createLink({
                 raw('join', {
                     token,
                     protocol: { min: CLIENT_PROTOCOL.MIN, max: CLIENT_PROTOCOL.MAX },
+                    // Claim the peer we were standing as, if the server still has it. It
+                    // keeps our transports, our producers and our place in the room, so a
+                    // blip costs nobody a rebuilt screen share or a sound. A server that
+                    // does not know the field ignores it and we arrive as anyone else.
+                    ...(resumeKey ? { resume: resumeKey } : {}),
                     ...(!nowhere && lastChannelId ? { channelId: lastChannelId } : {}),
                     // False means "arrive standing nowhere": signed in, reading anything,
                     // heard by no one until a room is chosen. Applied on the first join
@@ -346,6 +408,9 @@ export function createLink({
                 joined = true;
                 attempt = 0;                      // a real success, so the ladder resets
                 failure = null;
+                // Single use, and only ever as fresh as the last join: a key that has been
+                // spent is worthless, so the server sends the next one with every joined.
+                resumeKey = msg.resumeKey ?? null;
                 lastChannelId = msg.channel?.id ?? lastChannelId;
                 startHeartbeat();
                 setState(LINK.LIVE, { force: true });
@@ -408,6 +473,7 @@ export function createLink({
             wantOpen = true;
             failure = null;
             attempt = 0;
+            if (retryTimer) { clearTimer(retryTimer); retryTimer = null; }
             open();
         },
 
@@ -441,11 +507,11 @@ export function createLink({
         close() {
             wantOpen = false;
             if (retryTimer) { clearTimer(retryTimer); retryTimer = null; }
-            stopHeartbeat();
             queue.length = 0;
-            try { ws?.close(LEAVE_CODE, 'leaving'); } catch { /* already gone */ }
-            ws = null;
-            joined = false;
+            // Leaving is a decision, not a fault: the peer we were standing as should end
+            // with the socket rather than be claimed back by the next one.
+            resumeKey = null;
+            abandon(LEAVE_CODE, 'leaving');
             setState(LINK.CLOSED, { force: true });
         },
     };

@@ -30,9 +30,19 @@ class FakeSocket {
 
     close(code, reason) {
         if (this.readyState === 3) return;
-        this.readyState = 3;
         this.closedWith = { code, reason };
-        this.onclose?.({ code, reason });
+        // CLOSING, not closed. A real socket waits for the far end to answer the close
+        // frame, and behind a dead tunnel that wait lasts until a TCP timeout — which is
+        // precisely the window a second socket used to be built in. Nothing here fires
+        // onclose; the test decides when, if ever, that arrives.
+        this.readyState = 2;
+    }
+
+    /** The close handshake finally completing, or the TCP giving up. */
+    flushClose(code = this.closedWith?.code ?? 1006) {
+        if (this.readyState === 3) return;
+        this.readyState = 3;
+        this.onclose?.({ code });
     }
 
     /* — things the far end does — */
@@ -271,7 +281,7 @@ test('a rate limit is not retried immediately, because that is what caused it', 
     const h = harness({ random: () => 1 });
     h.goLive();
     h.sock.deliver({ type: 'error', code: 'rate_limited', message: 'Too many messages.' });
-    h.sock.close(1008, 'rate limited');
+    h.sock.dropByServer(1008);
 
     const delay = h.states.filter((s) => s.retryInMs != null).pop().retryInMs;
     assert.ok(delay >= 20_000, `expected a punitive delay, got ${delay}`);
@@ -538,4 +548,105 @@ test('the heartbeat carries idle time, and omits it when there is none to give',
     // Zero is a real answer — somebody just moved the mouse — and must still be sent.
     idle = 0;
     assert.equal(beat().idleMs, 0);
+});
+
+test('a heartbeat that times out does not wait for a close that may never come', () => {
+    // The socket is behind a black-holed tunnel: our close frame has nowhere to go, so it
+    // sits in CLOSING. Waiting for onclose before recovering left the link with no socket,
+    // no heartbeat and no timer at all — a client that came back only if something else
+    // happened to poke it.
+    const h = harness({ random: () => 1 });
+    h.goLive();
+    const dead = h.sock;
+
+    h.clock.advance(75_000);                  // two unanswered beats, then the give-up
+    assert.equal(dead.closedWith?.code, 4001);
+    assert.equal(dead.readyState, 2, 'still closing, and it may stay that way for a while');
+    assert.equal(h.link.state, LINK.RETRYING);
+
+    h.clock.advance(10_000);
+    assert.equal(h.FakeSocket.opened, 2, 'a replacement was built without the close event');
+    assert.notEqual(h.sock, dead);
+});
+
+test('a socket we gave up on cannot silence the one that replaced it', () => {
+    // Every handler mutates one shared set of state, so a close event arriving late from a
+    // socket nobody is driving any more used to stop the heartbeat and drop the reference
+    // to the LIVE socket — leaving one that was joined at the server and would never be
+    // pinged again. The server reaps that as a departure a minute later, which is the
+    // whole join-sound-and-dropped-screen-share story in one line.
+    const h = harness({ random: () => 1 });
+    h.goLive();
+    const dead = h.sock;
+    const lateClose = dead.onclose;           // captured before the handlers are let go
+
+    h.clock.advance(75_000);
+    h.clock.advance(10_000);
+    const live = h.sock;
+    assert.notEqual(live, dead);
+    live.accept();
+    live.deliver({ type: 'hello', cid: 'CID2' });
+    live.deliver({ type: 'joined', channel: { id: 'hall' }, self: {}, peers: [] });
+
+    // The tunnel finally admits the old socket is gone, long after it stopped mattering.
+    lateClose?.({ code: 1006 });
+
+    h.clock.advance(25_000);
+    assert.equal(live.types.filter((t) => t === 'ping').length, 1, 'the live socket is still kept alive');
+    assert.equal(h.FakeSocket.opened, 2, 'and no third socket was built');
+    assert.equal(h.link.state, LINK.LIVE);
+});
+
+test('a reconnection asks for the peer it was standing as', () => {
+    // Without this the server has no way to tell a returning client from a new one, and
+    // every blip costs the room an arrival, a departure and a rebuilt screen share.
+    const h = harness();
+    h.link.connect();
+    h.sock.accept();
+    h.sock.deliver({ type: 'hello', cid: 'CID1' });
+    assert.equal('resume' in h.sock.lastOf('join'), false, 'nothing to claim on a first join');
+
+    h.sock.deliver({ type: 'joined', channel: { id: 'hall' }, self: {}, peers: [], resumeKey: 'KEY-1' });
+    h.sock.dropByServer();
+    h.clock.advance(60_000);
+    h.sock.accept();
+    h.sock.deliver({ type: 'hello', cid: 'CID2' });
+    assert.equal(h.sock.lastOf('join').resume, 'KEY-1');
+
+    // Single use: the frame that accepts a key issues the next one.
+    h.sock.deliver({
+        type: 'joined', channel: { id: 'hall' }, self: {}, peers: [], resumed: true, resumeKey: 'KEY-2',
+    });
+    h.sock.dropByServer();
+    h.clock.advance(60_000);
+    h.sock.accept();
+    h.sock.deliver({ type: 'hello', cid: 'CID3' });
+    assert.equal(h.sock.lastOf('join').resume, 'KEY-2');
+});
+
+test('a server that cannot resume is simply never asked to', () => {
+    const h = harness();
+    h.link.connect();
+    h.sock.accept();
+    h.sock.deliver({ type: 'hello', cid: 'CID1' });
+    h.sock.deliver({ type: 'joined', channel: { id: 'hall' }, self: {}, peers: [] });   // no key
+    h.sock.dropByServer();
+    h.clock.advance(60_000);
+    h.sock.accept();
+    h.sock.deliver({ type: 'hello', cid: 'CID2' });
+    assert.equal('resume' in h.sock.lastOf('join'), false);
+});
+
+test('a deliberate leave gives up the peer, not just the socket', () => {
+    const h = harness();
+    h.link.connect();
+    h.sock.accept();
+    h.sock.deliver({ type: 'hello', cid: 'CID1' });
+    h.sock.deliver({ type: 'joined', channel: { id: 'hall' }, self: {}, peers: [], resumeKey: 'KEY-1' });
+
+    h.link.close();
+    h.link.connect();
+    h.sock.accept();
+    h.sock.deliver({ type: 'hello', cid: 'CID2' });
+    assert.equal('resume' in h.sock.lastOf('join'), false, 'leaving a room means leaving it');
 });

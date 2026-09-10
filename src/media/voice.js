@@ -37,6 +37,7 @@ import { listenOutput, MAX_LISTEN_GAIN } from './listen-policy.js';
 import { bestFitFramerate } from './presets.js';
 import { createStallDetector, readFlow } from './stall.js';
 import { buildStreamSample } from './stream-report.js';
+import { watchesToRestore } from './watch-resume.js';
 
 // Bundled beside the app; under weave:// and vite alike this resolves to a real URL.
 const GATE_WORKLET_URL = new URL('./gate-worklet.js', import.meta.url);
@@ -163,6 +164,16 @@ export function createVoice({
     // Entries survive resyncs (so the heal consumes what is watched and only that) and
     // are erased when that producer closes or the room changes.
     const watching = new Set();
+
+    // The same choices as 'userId:slot', and the map back from one to the other.
+    //
+    // A reconnection that cannot be resumed renames everybody: every cid in the room is
+    // new, so every entry in `watching` names somebody who no longer exists and the tiles
+    // all drop to placeholders. Nobody chose a connection, though — they chose a person —
+    // so the choice is also kept by account and rebuilt against the new roster. See
+    // watch-resume.js.
+    const watchedUsers = new Set();
+    const watchOwner = new Map();   // 'cid:slot' -> userId
 
     /** The key whose watch-state governs this slot: screen-audio rides its screen. */
     const watchKey = (cid, slot) =>
@@ -1356,6 +1367,51 @@ export function createVoice({
         streamRings.clear();
     }
 
+    /** Turn one watch on or off, remembering the choice by account as well as by cid. */
+    function setWatch(cid, slot, on, userId = null) {
+        const slots = slot === SLOTS.SCREEN ? [slot, SLOTS.SCREEN_AUDIO] : [slot];
+        const key = `${cid}:${slot}`;
+        if (on) {
+            rememberWatch(cid, slot, userId);
+            for (const k of slots) consume(cid, k).catch(() => {});
+            return;
+        }
+        forgetWatch(key, slot, { account: true });
+        for (const k of slots) {
+            for (const [id, entry] of [...consumers]) {
+                if (entry.cid === cid && entry.slot === k) {
+                    link.send('closeConsumer', { consumerId: id });
+                    dropConsumer(id);
+                }
+            }
+        }
+    }
+
+    /** Record a watch, by connection and — where the account is known — by account. */
+    function rememberWatch(cid, slot, userId = null) {
+        const key = `${cid}:${slot}`;
+        watching.add(key);
+        if (!userId) return;
+        watchOwner.set(key, userId);
+        watchedUsers.add(`${userId}:${slot}`);
+    }
+
+    /**
+     * Drop a watch key, and the account-level memory of it only when asked.
+     *
+     * That asymmetry is the point. Stopping a watch, and a share that ends, both forget it
+     * for good — the choice belonged to that broadcast. A peer LEAVING forgets only the
+     * cid: a reaped connection announces itself long after the one that replaced it
+     * arrived, and reading that as "they stopped wanting to watch" is how the memory would
+     * erase itself on precisely the reconnection it exists for.
+     */
+    function forgetWatch(key, slot, { account = false } = {}) {
+        watching.delete(key);
+        const userId = watchOwner.get(key);
+        watchOwner.delete(key);
+        if (account && userId) watchedUsers.delete(`${userId}:${slot}`);
+    }
+
     /* ── public surface ──────────────────────────────────────────────────── */
 
     return {
@@ -1589,24 +1645,33 @@ export function createVoice({
          * Watch or stop watching one stream. Watching starts the consumers (the video,
          * and a screen's system audio with it); stopping actually stops — consumers
          * close and the server is told, not merely hidden.
+         *
+         * The account is optional and only ever used to remember the choice across a
+         * reconnection. Without it the watch still works; it just does not survive one.
          */
-        setWatching(cid, slot, on) {
-            const slots = slot === SLOTS.SCREEN ? [slot, SLOTS.SCREEN_AUDIO] : [slot];
-            const key = `${cid}:${slot}`;
-            if (on) {
-                watching.add(key);
-                for (const k of slots) consume(cid, k).catch(() => {});
-            } else {
-                watching.delete(key);
-                for (const k of slots) {
-                    for (const [id, entry] of [...consumers]) {
-                        if (entry.cid === cid && entry.slot === k) {
-                            link.send('closeConsumer', { consumerId: id });
-                            dropConsumer(id);
-                        }
-                    }
-                }
+        setWatching(cid, slot, on, userId = null) {
+            setWatch(cid, slot, on, userId);
+        },
+
+        /**
+         * Re-arm what this person was watching, against a roster where every cid is new.
+         *
+         * Only for a reconnection: entering a DIFFERENT room deliberately starts from
+         * placeholders, and onMoved() clears the memory to say so.
+         */
+        async restoreWatches(peersInRoom = [], channelId = null) {
+            const restore = watchesToRestore({
+                watched: [...watchedUsers], peers: peersInRoom, channelId,
+            });
+            for (const { cid, slot, userId } of restore) rememberWatch(cid, slot, userId);
+            // Awaited rather than fired and forgotten: the reconciliation that follows a
+            // join reads the consumer map, and a consume still in flight looks exactly
+            // like a missing one — which is how you end up asking for it twice.
+            for (const { cid, slot } of restore) {
+                const slots = slot === SLOTS.SCREEN ? [slot, SLOTS.SCREEN_AUDIO] : [slot];
+                for (const k of slots) await consume(cid, k).catch(() => {});
             }
+            return restore.length;
         },
 
         /** Whether this stream is currently opted into. */
@@ -1665,8 +1730,8 @@ export function createVoice({
                 case 'producer_closed':
                     dropConsumersOf(msg.cid, msg.slot);
                     // The choice belonged to THAT broadcast; a new one starts as a
-                    // placeholder again.
-                    watching.delete(`${msg.cid}:${msg.slot}`);
+                    // placeholder again — for this connection and for the account.
+                    forgetWatch(`${msg.cid}:${msg.slot}`, msg.slot, { account: true });
                     return true;
 
                 case 'consumerClosed':
@@ -1675,7 +1740,12 @@ export function createVoice({
 
                 case 'peer_left':
                     dropConsumersOf(msg.cid);
-                    for (const key of [...watching]) if (key.startsWith(`${msg.cid}:`)) watching.delete(key);
+                    // The cid is finished; the wish to watch that PERSON is not. A socket
+                    // reaped after its replacement joined arrives here, and forgetting the
+                    // account here would undo the watch we had just restored.
+                    for (const key of [...watching]) {
+                        if (key.startsWith(`${msg.cid}:`)) forgetWatch(key, key.split(':')[1]);
+                    }
                     return true;
 
                 case 'transportFailed':
@@ -1716,11 +1786,18 @@ export function createVoice({
          * Rebuilding is left to the caller: it happens as part of bringing voice up for the
          * new room, so the microphone is opened once rather than closed and reopened.
          */
-        async onMoved({ rtpCapabilities, mediaReset = false } = {}) {
+        async onMoved({ rtpCapabilities, mediaReset = false, reconnect = false } = {}) {
             for (const id of [...consumers.keys()]) dropConsumer(id);
             // A different room is a different audience: everything starts as a
             // placeholder again.
+            //
+            // A RECONNECTION is not a different room. The cids are all new, so these keys
+            // have to go either way, but nobody changed their mind about what they wanted
+            // to see — the account-level memory survives and restoreWatches() rebuilds
+            // from it against the new roster.
             watching.clear();
+            watchOwner.clear();
+            if (!reconnect) watchedUsers.clear();
             // A key naming an old room's peer would otherwise sit in this map forever
             // (nothing will ever consume it again to clear it), permanently blocking the
             // banner from ever being allowed to clear again — see sync()'s check.
@@ -1762,6 +1839,29 @@ export function createVoice({
             if (rtpCapabilities && device && !device.loaded) {
                 await device.load({ routerRtpCapabilities: rtpCapabilities });
             }
+        },
+
+        /**
+         * The socket came back onto the SAME server-side peer. Keep everything.
+         *
+         * This is the whole point of resuming. The transports are ICE/DTLS over UDP and
+         * never belonged to the WebSocket, so every producer and consumer on them is still
+         * standing — including a screen share, which a rebuild would have stopped and
+         * announced to the room as "stopped streaming" for the sake of a blip.
+         *
+         * The one thing that may not have survived is the ICE path, because it usually
+         * died of the same network fault the socket did. So repair it in place: fresh
+         * credentials on the transports that are already there, which disturbs nothing
+         * riding on them. Sequentially, because repairIce single-flights on one shared
+         * promise and a concurrent second call would quietly return the first one's and
+         * leave that direction unrepaired.
+         *
+         * A repair that cannot be made falls back, inside repairIce, to the full rebuild
+         * that used to happen on every single reconnection.
+         */
+        async onResumed() {
+            if (sendTransport && !sendTransport.closed) await repairIce('send');
+            if (recvTransport && !recvTransport.closed) await repairIce('recv');
         },
 
         stop() {

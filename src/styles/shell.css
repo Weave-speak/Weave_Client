@@ -2074,6 +2074,77 @@
 .not-yet-what { font-weight: 550; color: var(--ink-dim); }
 .not-yet-why { font-size: var(--t-sm); color: var(--ink-faint); }
 
+/* The row in the device list that is the one being read. Same pill as "Planned" wears,
+   because it is doing the same job: a quiet label on a row, not a control. */
+.session-here {
+    margin-left: var(--s-2);
+    padding: 2px var(--s-2);
+    border-radius: var(--r-pill);
+    background: var(--accent-tint);
+    color: var(--accent-hi);
+    font-size: var(--t-xs);
+    font-weight: 600;
+    vertical-align: middle;
+}
+
+/* ── Report a Bug ─────────────────────────────────────────────────────────── */
+
+/* An inline control that reads as part of the sentence around it. "Show me exactly what
+   will be sent" is an aside, not a step, and a full button would over-state it. */
+.linkish {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent-hi);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+}
+.linkish:hover { color: var(--ink); }
+
+/* The exact text that would be sent. Scrolls inside itself rather than growing the panel,
+   because the point is that it can be inspected, not that it must be read. */
+.bug-log {
+    max-height: 260px;
+    overflow: auto;
+    margin: var(--s-2) 0;
+    padding: var(--s-3);
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    background: var(--surface-0);
+    color: var(--ink-dim);
+    font-family: var(--font-mono);
+    font-size: var(--t-xs);
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* What the reporter actually said, which is the part an administrator reads first and
+   the only part written by a person rather than by the software. */
+.bug-said {
+    margin: var(--s-2) 0 var(--s-4);
+    padding: var(--s-3);
+    border-left: 2px solid var(--accent-tint-hi);
+    color: var(--ink);
+    white-space: pre-wrap;
+}
+
+/* A description is a paragraph, not a line: it opens at a size that invites one. */
+.sec-form textarea {
+    width: 100%;
+    min-height: 140px;
+    padding: var(--s-3);
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    background: var(--surface-0);
+    color: var(--ink);
+    font: inherit;
+    line-height: 1.55;
+    resize: vertical;
+}
+.sec-form textarea:focus-visible { outline: 2px solid var(--focus-line); outline-offset: 1px; }
+
 /* ── Invites ──────────────────────────────────────────────────────────────── */
 
 .invite-result {

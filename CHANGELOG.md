@@ -4,6 +4,60 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.61] - 2026-09-11
+
+### Added
+- **You can change your own password from inside the app.** Settings → Security & Recovery has
+  said "needs a server update" since the screen was drawn, and the only way to change a
+  password was to go to the sign-in screen and claim you had forgotten it — which signs you
+  out everywhere and, in the server's log, reads like an account that got into trouble.
+  It now asks for your current password and takes a new one.
+
+  Your **other** devices are signed out, which is usually the whole reason for changing it.
+  The device you are typing on is not: signing yourself out for your own good housekeeping
+  would be absurd.
+
+- **And your security question.** The question that recovers this account if you forget the
+  password can now be chosen and changed here, and the screen says which one is currently set
+  rather than making you go to the sign-in screen to find out. An account that has never had
+  one — an old account set up with a recovery phrase — is told so plainly.
+
+  Against a server older than this app, the screen keeps the explanation it always had, since
+  a form that can only fail is worse than being told the server is behind.
+
+- **Report a Bug works.** Describe what happened in your own words and send it to the
+  administrator of the server you are signed in to — never to anyone else. The report carries
+  the tail of this app's log, redacted on **your** machine before the app itself ever sees the
+  text: home directories, tokens and anything that looks like a password are removed in the
+  background process. What will be sent is stated in plain bytes, and there is a Show button
+  that reveals the exact text, because a promise about redaction is not the same as reading it.
+
+  A browser build has no log file it can read, and says so rather than pretending — the
+  description is the report, which is most of it anyway.
+
+- **Administrators can read what was reported.** A new Admin → Bug reports screen lists
+  reports newest first and opens one in full: what the person said, their log, the server's
+  load at the moment it arrived, and the server's own log from around that time. One screen
+  instead of a folder on the server and a shell to read it with.
+
+- **Sessions & Devices lists everywhere this account is signed in, and signs any of them
+  out.** It has shown "needs a server update" since the screen was drawn. Each device is
+  named by what it actually is — "Weave desktop on Windows", "Chrome on Android" — with when
+  it signed in and when it was last used, and the one you are reading on is marked so there
+  is no doubt which row is yours.
+
+  Signing one out ends it immediately: the session is revoked and, if that device is sitting
+  in a room, its connection is closed then and there rather than at its own convenience. The
+  device you are on cannot be signed out from the list, because it would leave the app
+  looking signed in until its next request failed — Sign out is a button of its own and does
+  it properly.
+
+### Fixed
+- **A resumed connection knew itself by the wrong name.** Since reconnections started keeping
+  their place in the room, the id the app held for its own connection was the one issued to
+  the socket rather than the one the room actually uses — stale after the first resumed
+  reconnection. Nothing visible depended on it yet; two things were about to.
+
 ## [0.1.60] - 2026-09-10
 
 ### Fixed

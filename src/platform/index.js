@@ -125,7 +125,12 @@ const browserPlatform = {
     credentials: noCredentials,
 
     updates: noUpdates,
-    diagnostics: { available: false, async read() { return null; }, async openFolder() {} },
+    // A browser has no log file to offer. A bug report from one is the description alone,
+    // which is still worth sending — most of a report is what the person says anyway.
+    diagnostics: {
+        available: false, async read() { return null; }, async readAppLog() { return null; },
+        async openFolder() {},
+    },
     links: { available: false, onDeepLink() {} },
     // In a browser the browser's own picker appears inside getDisplayMedia; onPick
     // simply never fires.
@@ -200,7 +205,10 @@ const desktopPlatform = {
         : { available: false, onDeepLink() {} },
     diagnostics: (typeof window !== 'undefined' && window.weaveNative?.diagnostics)
         ? { available: true, ...window.weaveNative.diagnostics }
-        : { available: false, async read() { return null; }, async openFolder() {} },
+        : {
+            available: false, async read() { return null; }, async readAppLog() { return null; },
+            async openFolder() {},
+        },
 
     // Absent when the desktop UI is run in a plain browser during development, which is a
     // supported thing to do — so this degrades to the browser answer rather than throwing.

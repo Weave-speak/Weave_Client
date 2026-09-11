@@ -368,6 +368,9 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         onPrefsChange: applyPrefs,
         onSignOut: signOut,
         getActiveMicrophone: () => voice.activeMicrophone(),
+        // Read on each use, never captured: a reconnection that cannot be resumed gives
+        // this connection a new name, and settings needs the one that is true right now.
+        selfCid: () => link.cid,
         checkForUpdates: () => platform.updates.check?.(),
         // A picture is a fact about the roster, not about the settings dialog. The server
         // broadcasts it to everybody else; this is what makes it appear HERE without

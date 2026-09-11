@@ -14,9 +14,10 @@ globalThis.__WEAVE_TARGET__ = 'desktop';
 import {
     SECTIONS, sectionById, joinedOn, profilePanel, voicePanel,
     appearancePanel, invitesPanel, inviteMessage, placeholderPanel, PLACEHOLDER_REASONS, settingsFrame, sessionsPanel,
+    securityPanel, lastActive, bugPanel,
 } from '../src/settings/panels.js';
 import {
-    adminUsersPanel, adminChannelsPanel, adminSoundsPanel, adminDangerPanel, reversedName,
+    adminUsersPanel, adminChannelsPanel, adminSoundsPanel, adminDangerPanel, adminBugsPanel, reversedName,
 } from '../src/settings/admin.js';
 
 const ME = { id: 'u1', username: 'ghostbyte', displayName: 'Ghostbyte', createdAt: '2026-02-04T10:00:00Z' };
@@ -35,10 +36,10 @@ test('every placeholder section has a reason written for it', () => {
 });
 
 test('a placeholder panel says what it is and why it is empty', () => {
-    const markup = placeholderPanel({ label: 'Sessions & Devices', reason: PLACEHOLDER_REASONS.sessions });
-    assert.match(markup, /Sessions &amp; Devices/);
+    const markup = placeholderPanel({ label: 'Privacy & Blocking', reason: PLACEHOLDER_REASONS.privacy });
+    assert.match(markup, /Privacy &amp; Blocking/);
     assert.match(markup, /Not built yet/);
-    assert.match(markup, /server update/);
+    assert.match(markup, /only cosmetic/);
 });
 
 test('an unknown section falls back rather than rendering nothing', () => {
@@ -242,6 +243,11 @@ test('a hostile display name cannot become markup anywhere in settings', () => {
     for (const markup of [
         profilePanel({ me: hostile, prefs: {}, features: [] }),
         settingsFrame({ me: hostile, current: 'profile', body: '', serverName: hostile.displayName }),
+        securityPanel({
+            features: ['account.security'],
+            questions: [{ id: 'q1', text: hostile.displayName }],
+            question: { id: 'q1', text: hostile.displayName },
+        }),
     ]) {
         assert.ok(!markup.includes('<img src=x'));
         assert.ok(!/\son\w+\s*=\s*["']/.test(markup));
@@ -412,4 +418,256 @@ test('a stored stream preset is the one that comes back', async () => {
     assert.equal(prefs.streamPreset, '1080p60');
     assert.equal(prefs.micGain, 160, 'input gain is not silently reset to unity');
     assert.equal(prefs.noiseGate, true, 'a gate the user switched on stays on');
+});
+
+/* ── security & recovery ──────────────────────────────────────────────────── */
+
+const FLAG = ['account.security'];
+const QUESTIONS = [
+    { id: 'first_pet', text: 'What was the name of your first pet?' },
+    { id: 'first_car', text: 'What was the make and model of your first car?' },
+];
+
+test('an older server keeps its explanation rather than a form that can only fail', () => {
+    const markup = securityPanel({ features: [], questions: QUESTIONS });
+    assert.ok(!markup.includes('data-change-password'), 'no form against a server without the route');
+    assert.match(markup, /older than the app/);
+    // The route that DOES still work is the one worth naming.
+    assert.match(markup, /forgotten-password/);
+});
+
+test('with the server behind it, both forms are there', () => {
+    const markup = securityPanel({ features: FLAG, questions: QUESTIONS });
+    assert.match(markup, /data-change-password/);
+    assert.match(markup, /data-change-question/);
+    // The field names are the contract with the server: a 400 names one of these, and the
+    // client highlights the box by that name.
+    for (const name of ['currentPassword', 'newPassword', 'confirmPassword', 'securityQuestion', 'securityAnswer']) {
+        assert.match(markup, new RegExp(`name="${name}"`), `${name} must keep its name`);
+    }
+    // Saying what will happen before it happens, because signing out your phone is a
+    // surprise if you only find out afterwards.
+    assert.match(markup, /other devices will be signed out/i);
+});
+
+test('nothing on this screen is a preference', () => {
+    // data-setting is what routes a control through set(), which writes it to this device's
+    // localStorage. A password reaching that path would be the one real mistake available
+    // in this panel.
+    const markup = securityPanel({ features: FLAG, questions: QUESTIONS, question: QUESTIONS[0] });
+    assert.ok(!markup.includes('data-setting'), 'a password must never be persisted anywhere');
+});
+
+test('the question you already chose is the one already selected', () => {
+    const markup = securityPanel({ features: FLAG, questions: QUESTIONS, question: QUESTIONS[1] });
+    assert.match(markup, /<option value="first_car" selected>/);
+    assert.ok(!markup.includes('<option value="first_pet" selected>'));
+    // And it is said in words too, so the screen answers "which one is it?" without
+    // anybody opening the dropdown.
+    assert.match(markup, /You will be asked: What was the make/);
+});
+
+test('an account with no question is told so, rather than shown a guess', () => {
+    const markup = securityPanel({ features: FLAG, questions: QUESTIONS, question: null });
+    assert.match(markup, /no security question yet/);
+    assert.ok(!markup.includes('selected'), 'nothing is pre-selected when nothing was chosen');
+});
+
+test('what went wrong is shown, and what went right is too', () => {
+    assert.match(
+        securityPanel({ features: FLAG, error: 'Could not read your current security question.' }),
+        /Could not read your current/,
+    );
+    assert.match(
+        securityPanel({ features: FLAG, notice: 'Password changed. 2 other sessions signed out.' }),
+        /2 other sessions signed out/,
+    );
+});
+
+/* ── sessions & devices ───────────────────────────────────────────────────── */
+
+const NOW = Date.parse('2026-09-11T12:00:00Z');
+const ago = (ms) => NOW - ms;
+const SESSIONS = [
+    {
+        id: 's1', current: true, device: 'Weave desktop on Windows', kind: 'client',
+        createdAt: '2026-09-09 08:15:00', lastUsedAt: ago(30_000),
+    },
+    {
+        id: 's2', current: false, device: 'Chrome on Android', kind: 'client',
+        createdAt: '2026-09-01 19:40:00', lastUsedAt: ago(3 * 60 * 60 * 1000),
+    },
+];
+
+test('an older server is told apart from an account with no devices', () => {
+    // Both of these draw an empty list, and they mean completely different things.
+    const old = sessionsPanel({ version: '0.1.61', features: [] });
+    assert.ok(!old.includes('data-session-signout'));
+    assert.match(old, /older than the app/);
+
+    const reading = sessionsPanel({ version: '0.1.61', features: ['account.sessions'], sessions: null });
+    assert.match(reading, /Reading your devices/);
+});
+
+test('each device says what it is and when it was last used', () => {
+    const markup = sessionsPanel({
+        version: '0.1.61', features: ['account.sessions'], sessions: SESSIONS, now: NOW,
+    });
+    assert.match(markup, /Weave desktop on Windows/);
+    assert.match(markup, /Chrome on Android/);
+    assert.match(markup, /Signed in 9 September 2026 · last active just now/);
+    assert.match(markup, /last active 3 hours ago/);
+});
+
+test('the device you are reading on is marked, and cannot be signed out from the list', () => {
+    // Signing out the device you are holding would leave the app looking signed in until
+    // its next request failed. Sign out is its own button and does it properly.
+    const markup = sessionsPanel({
+        version: '0.1.61', features: ['account.sessions'], sessions: SESSIONS, now: NOW,
+    });
+    assert.match(markup, /This device/);
+    assert.ok(!markup.includes('data-session-signout="s1"'), 'no way to sign out the current one');
+    assert.match(markup, /data-session-signout="s2"/);
+});
+
+test('the version is still the running one, whatever the device list does', () => {
+    // The panel gained a whole feature; the thing it already did must survive it.
+    const markup = sessionsPanel({ version: '0.1.61', features: ['account.sessions'], sessions: SESSIONS });
+    assert.match(markup, /Weave 0\.1\.61/);
+    assert.match(markup, /data-check-updates/);
+});
+
+test('what happened to the last sign-out is said, either way', () => {
+    assert.match(
+        sessionsPanel({ features: ['account.sessions'], sessions: [], notice: 'That device has been signed out.' }),
+        /has been signed out/,
+    );
+    assert.match(
+        sessionsPanel({ features: ['account.sessions'], sessions: [], error: 'That session has already gone.' }),
+        /already gone/,
+    );
+});
+
+test('a hostile device name cannot become markup', () => {
+    // The name is built from a user agent, which is a string somebody else chose.
+    const markup = sessionsPanel({
+        features: ['account.sessions'],
+        sessions: [{ id: 'x', current: false, device: '<img src=x onerror="steal()">', createdAt: null, lastUsedAt: null }],
+    });
+    assert.ok(!markup.includes('<img src=x'));
+    assert.match(markup, /&lt;img/);
+});
+
+test('how long ago is said in the words somebody would use', () => {
+    const now = NOW;
+    assert.equal(lastActive(now - 5_000, now), 'just now');
+    assert.equal(lastActive(now - 80_000, now), 'just now');
+    assert.equal(lastActive(now - 12 * 60_000, now), '12 minutes ago');
+    assert.equal(lastActive(now - 60 * 60_000, now), '1 hour ago');
+    assert.equal(lastActive(now - 5 * 60 * 60_000, now), '5 hours ago');
+    assert.equal(lastActive(now - 2 * 24 * 60 * 60_000, now), '2 days ago');
+    // Past a week the date is the more useful answer again.
+    assert.equal(lastActive(Date.parse('2026-08-01T10:00:00Z'), now), '1 August 2026');
+    // A session from before last_used_at was recorded says nothing rather than 1970.
+    assert.equal(lastActive(null, now), null);
+    assert.equal(lastActive(0, now), null);
+});
+
+/* ── report a bug ─────────────────────────────────────────────────────────── */
+
+const BUG_FLAG = ['diagnostics.bug-report'];
+
+test('a server with no diagnostics module says so rather than offering a form', () => {
+    const markup = bugPanel({ features: [], serverName: 'Weave Dev' });
+    assert.ok(!markup.includes('data-bug-report'));
+    assert.match(markup, /nowhere for a report to land/);
+});
+
+test('the report is addressed to this server, and said to be', () => {
+    // Self-hosted software quietly sending diagnostics to its author is not a thing anybody
+    // asked for. Who receives this is the first thing the screen says.
+    const markup = bugPanel({ features: BUG_FLAG, serverName: 'Weave Dev' });
+    assert.match(markup, /Weave Dev/);
+    assert.match(markup, /never to anyone else/);
+    assert.match(markup, /name="description"/);
+});
+
+test('what is attached is stated in bytes, and can be read in full', () => {
+    // The requirement this screen exists to keep: redaction happens on this machine, and
+    // what is shown IS what would be sent rather than a promise about it.
+    const collapsed = bugPanel({ features: BUG_FLAG, logAvailable: true, log: 'x'.repeat(2048) });
+    assert.match(collapsed, /Attached: 2 KB/);
+    assert.match(collapsed, /Show me exactly what will be sent/);
+    assert.ok(!collapsed.includes(String.raw`<pre class="bug-log"`), 'not shown until asked for');
+
+    const shown = bugPanel({ features: BUG_FLAG, logAvailable: true, log: 'secret-looking line', showLog: true });
+    assert.match(shown, /<pre class="bug-log"[^>]*>secret-looking line/);
+    assert.match(shown, /Hide it/);
+});
+
+test('a build with no log says the description is the report', () => {
+    // A browser has no log file to read. Refusing the report would lose the part that
+    // matters most, which is what the person actually says.
+    const markup = bugPanel({ features: BUG_FLAG, logAvailable: false });
+    assert.match(markup, /No log is attached/);
+    assert.match(markup, /name="description"/);
+});
+
+test('a half-written description survives a repaint', () => {
+    // Looking at the log repaints the panel. Losing the paragraph for it would teach
+    // people not to look.
+    const markup = bugPanel({ features: BUG_FLAG, description: 'The stream froze at 8pm.' });
+    assert.match(markup, /The stream froze at 8pm\./);
+});
+
+test('a sent report says so and offers to start another', () => {
+    const markup = bugPanel({ features: BUG_FLAG, sent: true });
+    assert.match(markup, /your report has been sent/i);
+    assert.match(markup, /data-bug-again/);
+    assert.ok(!markup.includes('data-bug-report'), 'the form is gone, so it cannot be sent twice');
+});
+
+test('a description cannot become markup, in the panel or in the admin view', () => {
+    const hostile = '<img src=x onerror="steal()">';
+    for (const markup of [
+        bugPanel({ features: BUG_FLAG, description: hostile, log: hostile, logAvailable: true, showLog: true }),
+        adminBugsPanel({ reports: [{ name: 'r.json', description: hostile, from: hostile }], total: 1 }),
+        adminBugsPanel({ open: { description: hostile, log: hostile, from: { username: hostile } } }),
+    ]) {
+        assert.ok(!markup.includes('<img src=x'));
+        assert.match(markup, /&lt;img/);
+    }
+});
+
+test('the admin list is told apart from an empty one', () => {
+    assert.match(adminBugsPanel({ reports: null }), /Loading reports/);
+    assert.match(adminBugsPanel({ reports: [], total: 0 }), /Nothing has been reported/);
+});
+
+test('a report opens with both sides of the moment', () => {
+    const markup = adminBugsPanel({
+        open: {
+            receivedAt: '2026-09-11T18:30:00Z',
+            kind: 'bug',
+            from: { username: 'chris' },
+            client: { version: '0.1.61', target: 'desktop' },
+            description: 'Screen share froze.',
+            log: 'client line',
+            server: { loadPerCore: 1.4 },
+            serverLog: [{ msg: 'server line' }, 'a plain line'],
+        },
+    });
+    assert.match(markup, /chris/);
+    assert.match(markup, /Weave 0\.1\.61/);
+    assert.match(markup, /Screen share froze\./);
+    assert.match(markup, /client line/);
+    assert.match(markup, /loadPerCore/);
+    assert.match(markup, /server line/);
+    assert.match(markup, /a plain line/);
+    assert.match(markup, /data-bug-close/);
+});
+
+test('an unreadable report hands over the bytes rather than nothing', () => {
+    const markup = adminBugsPanel({ open: { raw: '{ this is not json' } });
+    assert.match(markup, /this is not json/);
 });

@@ -411,6 +411,12 @@ export function createLink({
                 // Single use, and only ever as fresh as the last join: a key that has been
                 // spent is worthless, so the server sends the next one with every joined.
                 resumeKey = msg.resumeKey ?? null;
+                // The id the ROOM knows us by, which is not always the one hello gave us.
+                // A resumed connection keeps the peer's original id, and the server mints
+                // the hello id for the socket before it knows the socket is a returning
+                // one — so hello's answer goes stale on the first resume. Anything that
+                // says "this connection, not the others" reads this.
+                cid = msg.self?.cid ?? cid;
                 lastChannelId = msg.channel?.id ?? lastChannelId;
                 startHeartbeat();
                 setState(LINK.LIVE, { force: true });

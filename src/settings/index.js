@@ -12,16 +12,19 @@
 import { createModal } from '../ui/modal.js';
 import { createAvatarPicker } from './avatar-picker.js';
 import { settingsFor } from '../server/store.js';
-import { $, $$ } from '../ui/dom.js';
-import { VERSION } from '../platform/index.js';
+import {
+    $, $$, setFieldError, clearErrors, setFormMessage, setBusy, passwordStrength,
+} from '../ui/dom.js';
+import { VERSION, platform } from '../platform/index.js';
 import { DEFAULT_STREAM_PRESET } from '../media/presets.js';
 import { dbToMeterPercent } from '../media/chain.js';
 import {
     adminUsersPanel, adminChannelsPanel, adminSoundsPanel, adminServerPanel, adminDangerPanel,
+    adminBugsPanel,
 } from './admin.js';
 import {
     settingsFrame, profilePanel, voicePanel, appearancePanel, invitesPanel, inviteMessage, sessionsPanel,
-    placeholderPanel, sectionById, PLACEHOLDER_REASONS,
+    securityPanel, bugPanel, placeholderPanel, sectionById, PLACEHOLDER_REASONS,
 } from './panels.js';
 
 /**
@@ -79,6 +82,10 @@ export function readPrefs(serverId) {
 export function createSettings({
     getActiveMicrophone = null,
     checkForUpdates = null, api, server, me: signedInAs, features = [], onPrefsChange = () => {}, onSignOut = () => {},
+    // Which connection this app is, read at the moment it is needed rather than captured:
+    // it changes on every reconnect that cannot be resumed. Changing your own password
+    // signs out your other devices, and this is how the server knows which one to spare.
+    selfCid = () => null,
     // A new picture changes the roster for everybody, so the room repaints rather
     // than the settings dialog quietly knowing something the rest of the app does not.
     onProfileChange = () => {},
@@ -102,11 +109,30 @@ export function createSettings({
     let avatarError = '';
     let picker = null;
 
+    // Security & Recovery. The questions and the current choice come from the server when
+    // the panel is opened; the rest is the working state of two forms, held here so a
+    // repaint reproduces the same screen rather than losing what was typed.
+    const sec = { question: null, questions: [], error: null, notice: null };
+
+    // The account's signed-in devices. null means "not asked yet", which the panel draws
+    // as reading rather than as an account with no devices — a distinction that matters,
+    // because one of those is impossible and would be alarming to see.
+    const deviceList = { sessions: null, error: null, notice: null };
+
+    // A bug report in progress. The log is read when the dialog opens so it can be SHOWN;
+    // nothing leaves until the button is pressed. Held here, like the cropper's state, so a
+    // repaint reproduces the same screen rather than losing a half-written paragraph.
+    const bug = {
+        description: '', log: null, showLog: false, sending: false, sent: false, error: null,
+    };
+
     // The admin console's working state. Data is fetched when its panel is opened and
     // refetched after every action, so the table always shows what the server just did.
     const adm = {
         members: null, channels: null, overview: null, logs: null,
         sounds: null, soundDefaults: { joinSound: null, leaveSound: null }, soundUploadBusy: false,
+        // Bug reports: the list, how many there are in total, and the one being read.
+        bugs: null, bugTotal: 0, bugOpen: null,
         error: null, notice: null,
         editingId: null,       // user or channel row in rename mode
         armedKey: null,        // 'action:id' of the one destructive button awaiting its second click
@@ -125,7 +151,19 @@ export function createSettings({
                 prefs, features, avatarError, soundLibrary,
             });
             case 'voice': return voicePanel({ prefs, devices, cameras, outputs, features });
-            case 'sessions': return sessionsPanel({ version: VERSION });
+            case 'sessions': return sessionsPanel({
+                version: VERSION, features,
+                sessions: deviceList.sessions, error: deviceList.error, notice: deviceList.notice,
+            });
+            case 'bug': return bugPanel({
+                ...bug, features,
+                logAvailable: platform.diagnostics.available,
+                serverName: server?.lastSeen?.name ?? '',
+            });
+            case 'security': return securityPanel({
+                question: sec.question, questions: sec.questions, features,
+                error: sec.error, notice: sec.notice,
+            });
             case 'appearance': return appearancePanel({ prefs });
             case 'invites': return invitesPanel({
                 invite, busy: inviteBusy, error: inviteError,
@@ -145,6 +183,11 @@ export function createSettings({
                 return adminSoundsPanel({
                     sounds: adm.sounds, defaults: adm.soundDefaults, error: adm.error, notice: adm.notice,
                     armedKey: adm.armedKey, uploadBusy: adm.soundUploadBusy,
+                });
+            case 'admin-bugs':
+                return adminBugsPanel({
+                    reports: adm.bugs, total: adm.bugTotal, open: adm.bugOpen,
+                    error: adm.error, notice: adm.notice, armedKey: adm.armedKey,
                 });
             case 'admin-server':
                 return adminServerPanel({ overview: adm.overview, logs: adm.logs, error: adm.error });
@@ -256,6 +299,12 @@ export function createSettings({
                 const { sounds, defaults } = await api.request('GET', '/api/sounds');
                 adm.sounds = sounds;
                 adm.soundDefaults = defaults;
+            } else if (current === 'admin-bugs') {
+                // Only the list. A report is fetched whole when somebody asks to read it,
+                // because the logs inside one are the size of the thing.
+                const { reports, total } = await api.request('GET', '/api/admin/diagnostics?limit=100');
+                adm.bugs = reports;
+                adm.bugTotal = total ?? reports.length;
             } else if (current === 'admin-server') {
                 // Fetched together: the numbers without the log answer half the question.
                 const [overview, logs] = await Promise.all([
@@ -314,6 +363,34 @@ export function createSettings({
                 body: { displayName },
             }));
         }));
+        $$('[data-bug-open]', el).forEach((b) => b.addEventListener('click', async () => {
+            adm.error = null;
+            try {
+                const { report } = await api.request('GET', `/api/admin/diagnostics/${encodeURIComponent(b.dataset.bugOpen)}`);
+                adm.bugOpen = report;
+            } catch (err) {
+                adm.error = err?.message ?? 'That report could not be read.';
+            }
+            renderPanel();
+        }));
+
+        $('[data-bug-close]', el)?.addEventListener('click', () => {
+            adm.bugOpen = null;
+            renderPanel();
+        });
+
+        $$('[data-bug-delete]', el).forEach((b) => b.addEventListener('click', () => {
+            const name = b.dataset.bugDelete;
+            armThen(`bug:${name}`, () => adminAct(
+                async () => {
+                    await api.request('DELETE', `/api/admin/diagnostics/${encodeURIComponent(name)}`);
+                    // Whatever was open went with it.
+                    adm.bugOpen = null;
+                },
+                'Report deleted.',
+            ));
+        }));
+
         $$('[data-admin-reset]', el).forEach((b) => b.addEventListener('click', () => {
             const id = b.dataset.adminReset;
             armThen(`reset:${id}`, () => adminAct(
@@ -542,10 +619,241 @@ export function createSettings({
         });
     }
 
+    /* ── report a bug ────────────────────────────────────────────────────── */
+
+    function wireBug() {
+        $('[data-bug-again]', modal.element)?.addEventListener('click', () => {
+            bug.sent = false;
+            bug.description = '';
+            bug.error = null;
+            renderPanel();
+        });
+
+        $('[data-bug-toggle-log]', modal.element)?.addEventListener('click', () => {
+            // Whatever has been typed survives the repaint, because losing a paragraph for
+            // looking at the log would teach people not to look at the log.
+            bug.description = $('[name="description"]', modal.element)?.value ?? bug.description;
+            bug.showLog = !bug.showLog;
+            renderPanel();
+        });
+
+        const form = $('[data-bug-report]', modal.element);
+        if (!form) return;
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            clearErrors(form);
+
+            const description = form.description.value.trim();
+            if (!description) {
+                setFieldError(form, 'description', 'Tell them what happened, in your own words.');
+                return;
+            }
+
+            const button = $('button[type="submit"]', form);
+            setBusy(button, true, 'Sending…');
+            try {
+                // To THIS server, and attributed: the api client carries the session token,
+                // so an administrator can come back and ask. The endpoint accepts anonymous
+                // reports too, which is what the update banner uses before sign-in.
+                await api.request('POST', '/api/diagnostics', {
+                    body: {
+                        kind: 'bug',
+                        description,
+                        client: { version: VERSION, target: platform.target },
+                        ...(bug.log ? { log: bug.log } : {}),
+                    },
+                });
+                bug.sent = true;
+                bug.description = '';
+                bug.error = null;
+                renderPanel();
+            } catch (err) {
+                setBusy(button, false);
+                bug.description = description;
+                setFormMessage(form, err?.message ?? 'That could not be sent.');
+            }
+        });
+    }
+
+    /* ── sessions & devices ──────────────────────────────────────────────── */
+
+    async function loadSessions() {
+        try {
+            const { sessions } = await api.request('GET', '/api/me/sessions');
+            deviceList.sessions = sessions ?? [];
+            deviceList.error = null;
+        } catch (err) {
+            deviceList.sessions = [];
+            deviceList.error = err?.message ?? 'Could not read your signed-in devices.';
+        }
+    }
+
+    function wireSessions() {
+        $$('[data-session-signout]', modal.element).forEach((button) => {
+            button.addEventListener('click', async () => {
+                const id = button.dataset.sessionSignout;
+                setBusy(button, true, 'Signing out…');
+                deviceList.notice = null;
+                deviceList.error = null;
+                try {
+                    await api.request('DELETE', `/api/me/sessions/${encodeURIComponent(id)}`);
+                    deviceList.notice = 'That device has been signed out.';
+                } catch (err) {
+                    deviceList.error = err?.message ?? 'That did not work.';
+                }
+                // Re-read rather than splicing the row out locally: the server has just
+                // changed what is true, and a list that agrees with itself but not with the
+                // server is how somebody ends up signing out a device twice.
+                await loadSessions();
+                renderPanel();
+            });
+        });
+    }
+
+    /* ── security & recovery ─────────────────────────────────────────────── */
+
+    /**
+     * The two forms on Security & Recovery.
+     *
+     * Deliberately nothing to do with set() and the [data-setting] listener below: that
+     * path writes everything it touches to this device's storage, which is the last place
+     * a password should end up. These post and then forget.
+     */
+    function wireSecurity() {
+        const passwordForm = $('[data-change-password]', modal.element);
+        if (passwordForm) {
+            const button = $('button[type="submit"]', passwordForm);
+            wireStrength(passwordForm);
+            wireMatch(passwordForm, button);
+            passwordForm.addEventListener('submit', (event) => {
+                event.preventDefault();
+                changePassword(passwordForm, button);
+            });
+        }
+
+        const questionForm = $('[data-change-question]', modal.element);
+        if (questionForm) {
+            const button = $('button[type="submit"]', questionForm);
+            questionForm.addEventListener('submit', (event) => {
+                event.preventDefault();
+                changeQuestion(questionForm, button);
+            });
+        }
+    }
+
+    /** The meter follows what is typed. It encourages; the server's ten characters gate. */
+    function wireStrength(form) {
+        const input = form.newPassword;
+        const meter = $('.strength', form);
+        const label = $('.strength-label', form);
+        if (!input || !meter) return;
+
+        input.addEventListener('input', () => {
+            const { score, label: text } = passwordStrength(input.value);
+            $$('i', meter).forEach((bar, i) => bar.classList.toggle('on', i < score));
+            meter.dataset.score = String(score);
+            if (label) label.textContent = input.value ? text : 'At least 10 characters.';
+        });
+    }
+
+    /** Live match indicator, and the submit button follows it. */
+    function wireMatch(form, button) {
+        const a = form.newPassword;
+        const b = form.confirmPassword;
+        const label = $('.match-label', form);
+        if (!a || !b || !button) return;
+
+        const check = () => {
+            const long = a.value.length >= 10;
+            const same = a.value === b.value;
+            const filled = b.value.length > 0;
+
+            if (!filled) {
+                label.textContent = '';
+                label.className = 'field-help match-label';
+            } else if (same) {
+                label.textContent = '✓ Passwords match';
+                label.className = 'field-help match-label ok';
+            } else {
+                label.textContent = "✗ Passwords don't match yet";
+                label.className = 'field-help match-label bad';
+            }
+            button.disabled = !(long && same && filled);
+        };
+
+        a.addEventListener('input', check);
+        b.addEventListener('input', check);
+        check();
+    }
+
+    async function changePassword(form, button) {
+        clearErrors(form);
+        const currentPassword = form.currentPassword.value;
+        const newPassword = form.newPassword.value;
+
+        // Checked here as well as on the server so the common mistakes are answered without
+        // a round trip. The server is still the authority, and says so in its own words.
+        if (newPassword.length < 10) {
+            setFieldError(form, 'newPassword', 'Use at least 10 characters.');
+            return;
+        }
+        if (newPassword !== form.confirmPassword.value) {
+            setFieldError(form, 'confirmPassword', "These don't match.");
+            return;
+        }
+
+        setBusy(button, true, 'Saving…');
+        try {
+            const result = await api.request('POST', '/api/me/password', {
+                // Which connection is ours, so the server signs out the other devices and
+                // not this one. Absent where we are not in a room yet, and the server
+                // simply spares nothing.
+                body: { currentPassword, newPassword, ...(selfCid() ? { cid: selfCid() } : {}) },
+            });
+            const gone = result?.sessionsRevoked ?? 0;
+            sec.error = null;
+            sec.notice = gone
+                ? `Password changed. ${gone} other session${gone === 1 ? '' : 's'} signed out.`
+                : 'Password changed.';
+            // Repainting is what takes the typed passwords back out of the page, which is
+            // worth more here than avoiding a flicker.
+            renderPanel();
+        } catch (err) {
+            setBusy(button, false);
+            if (err?.field) setFieldError(form, err.field, err.message);
+            else setFormMessage(form, err?.message ?? 'That did not work.');
+        }
+    }
+
+    async function changeQuestion(form, button) {
+        clearErrors(form);
+        setBusy(button, true, 'Saving…');
+        try {
+            const result = await api.request('POST', '/api/me/security-question', {
+                body: {
+                    questionId: form.securityQuestion.value,
+                    answer: form.securityAnswer.value,
+                },
+            });
+            sec.question = result?.question ?? sec.question;
+            sec.error = null;
+            sec.notice = 'Security question saved.';
+            renderPanel();
+        } catch (err) {
+            setBusy(button, false);
+            if (err?.field) setFieldError(form, err.field, err.message);
+            else setFormMessage(form, err?.message ?? 'That did not work.');
+        }
+    }
+
     function wirePanel() {
         paintActiveMic();
         wireAdminPanel();
         wireAvatar();
+        wireSecurity();
+        wireSessions();
+        wireBug();
         $$('[data-setting]', modal.element).forEach((input) => {
             input.addEventListener('change', async () => {
                 const value = input.type === 'checkbox' ? input.checked : input.value;
@@ -801,6 +1109,37 @@ export function createSettings({
                         prefs = { ...prefs, joinSound: r.joinSound ?? '', leaveSound: r.leaveSound ?? '' };
                     })
                     .catch(() => { /* fall back to what this device remembers */ });
+            }
+
+            // Read here so the panel can SHOW it. Redaction already happened in the main
+            // process, so this is the text itself rather than a promise about it — which is
+            // the whole basis on which somebody decides to press send.
+            if (platform.diagnostics.available) {
+                await platform.diagnostics.readAppLog?.()
+                    .then((result) => { bug.log = result?.text ?? null; })
+                    .catch(() => { bug.log = null; });
+            }
+
+            // Asked on open rather than when the panel is first shown: the list is small,
+            // and a screen that draws itself empty and then fills in is a screen people
+            // click on before it is telling the truth.
+            if (features.includes('account.sessions')) await loadSessions();
+
+            // Both halves belong to the server: which questions it offers, and which one
+            // this account chose. Asked only where the routes exist, so an older server is
+            // never sent a request it can only 404.
+            if (features.includes('account.security')) {
+                sec.error = null;
+                sec.notice = null;
+                await api.securityQuestions()
+                    .then((r) => { sec.questions = r.questions ?? []; })
+                    .catch(() => { sec.questions = []; });
+                await api.request('GET', '/api/me/security-question')
+                    .then((r) => { sec.question = r.question ?? null; })
+                    .catch(() => {
+                        sec.question = null;
+                        sec.error = 'Could not read your current security question.';
+                    });
             }
 
             modal.open({ from, content: '' });

@@ -135,6 +135,8 @@ contextBridge.exposeInMainWorld('weaveNative', {
     diagnostics: {
         /** The updater log, already redacted in the main process. */
         read: () => ipcRenderer.invoke('weave:diagnostics.read'),
+        /** The tail of the app log, likewise redacted before it crosses. */
+        readAppLog: (maxBytes) => ipcRenderer.invoke('weave:diagnostics.readAppLog', maxBytes),
         openFolder: () => ipcRenderer.invoke('weave:app.openLogFolder'),
     },
 

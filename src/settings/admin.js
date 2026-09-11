@@ -84,6 +84,95 @@ function userRow(m, { editing, armedKey }) {
     </div>`;
 }
 
+/* ── Bug reports ─────────────────────────────────────────────────────────── */
+
+/** A moment, in the words somebody would use to say when it was. */
+const receivedAtText = (value) => {
+    if (!value) return 'Unknown time';
+    const when = new Date(value);
+    if (Number.isNaN(when.getTime())) return String(value);
+    return when.toLocaleString(undefined, {
+        day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+    });
+};
+
+/** Log entries as they were written, whether they parsed as JSON or not. */
+const asLines = (entries) => entries
+    .map((entry) => (typeof entry === 'string' ? entry : JSON.stringify(entry)))
+    .join('\n');
+
+/**
+ * Bug reports, as an administrator reads them.
+ *
+ * The store is a folder of JSON files on the server — one report read whole by one person,
+ * which is a file rather than a query. This is a window onto it: a list to scan, and one
+ * report opened in full when a line looks like the one.
+ *
+ * A report deliberately carries both sides of the moment: what the reporter said, the tail
+ * of their app log with paths and tokens already removed on their own machine, the server's
+ * load at the instant it arrived, and the server's log around the same time. Reading one
+ * file should answer the question without correlating two by timestamp.
+ */
+export function adminBugsPanel({
+    reports = null, total = 0, open = null, error = null, notice = null, armedKey = null,
+} = {}) {
+    if (open) {
+        return `
+    ${banner(error, notice)}
+    <button type="button" class="btn small" data-bug-close>← All reports</button>
+    <h3 class="panel-section">${esc(receivedAtText(open.receivedAt))}</h3>
+    <p class="panel-lead">
+      ${esc(open.from?.username ?? 'Anonymous')}${open.client?.version
+        ? ` · Weave ${esc(open.client.version)}${open.client.target ? ` (${esc(open.client.target)})` : ''}`
+        : ''} · ${esc(open.kind ?? 'report')}
+    </p>
+
+    ${open.description ? `
+    <h4 class="panel-section">What they said</h4>
+    <p class="bug-said">${esc(open.description)}</p>` : ''}
+
+    ${open.server ? `
+    <h4 class="panel-section">The server, at that moment</h4>
+    <pre class="bug-log">${esc(JSON.stringify(open.server, null, 2))}</pre>` : ''}
+
+    ${open.log ? `
+    <h4 class="panel-section">Their log</h4>
+    <pre class="bug-log">${esc(open.log)}</pre>` : ''}
+
+    ${Array.isArray(open.serverLog) && open.serverLog.length ? `
+    <h4 class="panel-section">The server's log</h4>
+    <pre class="bug-log">${esc(asLines(open.serverLog))}</pre>` : ''}
+
+    ${open.raw ? `
+    <h4 class="panel-section">The file, as it is on disk</h4>
+    <pre class="bug-log">${esc(open.raw)}</pre>` : ''}`;
+    }
+
+    return `
+    ${banner(error, notice)}
+    ${reports === null ? loading('reports') : `
+    <p class="panel-lead">${total === 0
+        ? 'Nothing has been reported. Reports appear here as they arrive, and are deleted automatically once they age out.'
+        : `${total} report${total === 1 ? '' : 's'}, newest first.`}</p>
+    <div class="admin-table" role="table" aria-label="Bug reports">
+      ${reports.map((r) => `
+      <div class="adm-row" role="row">
+        <span class="adm-names">
+          <span class="adm-display">${r.description
+            ? esc(r.description)
+            : '<span class="adm-username">No description</span>'}</span>
+          <span class="adm-username">${esc(receivedAtText(r.receivedAt))} ·
+            ${esc(r.from ?? 'Anonymous')} · ${esc(r.kind ?? 'report')}</span>
+        </span>
+        <span class="adm-actions">
+          <button type="button" class="btn small" data-bug-open="${esc(r.name)}">Read</button>
+          ${armable(`data-bug-delete="${esc(r.name)}"`, 'Delete', 'Delete for good?',
+        { armed: armedKey === `bug:${r.name}` })}
+        </span>
+      </div>`).join('')}
+    </div>`}`;
+}
+
 /* ── Channels ────────────────────────────────────────────────────────────── */
 
 export function adminChannelsPanel({ channels = null, error = null, notice = null, editingId = null, armedKey = null, busy = false } = {}) {

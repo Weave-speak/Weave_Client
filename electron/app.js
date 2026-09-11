@@ -28,7 +28,7 @@ import electronUpdater from 'electron-updater';
 import log from 'electron-log/main';
 
 const { autoUpdater } = electronUpdater;
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, open, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { join, dirname, normalize, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -501,6 +501,37 @@ function registerBridge() {
             return { path: file.path, text: redact(text) };
         } catch (err) {
             log.warn('Could not read the updater log', err);
+            return null;
+        }
+    });
+
+    /**
+     * The APP log, for a bug report. Deliberately separate from the updater log above:
+     * that one holds update events and nothing else, and a bug report is about the rest of
+     * the app. Both are redacted here, in the main process, so the renderer never handles
+     * the unredacted text — which is what makes the preview the reporter sees honest.
+     *
+     * Only the tail. These roll at a few megabytes, and nobody reads the start of one.
+     */
+    ipcMain.handle('weave:diagnostics.readAppLog', async (_event, maxBytes) => {
+        const file = log.transports.file.getFile();
+        if (!file?.path) return null;
+        try {
+            const cap = Math.min(Math.max(Number(maxBytes) || 128 * 1024, 4096), 256 * 1024);
+            const { size } = await stat(file.path);
+            const handle = await open(file.path, 'r');
+            try {
+                const length = Math.min(size, cap);
+                const buffer = Buffer.alloc(length);
+                await handle.read(buffer, 0, length, Math.max(0, size - length));
+                // A partial first line is expected when reading from an offset.
+                const text = buffer.toString('utf8').replace(/^[^\n]*\n/, '');
+                return { path: file.path, text: redact(text), truncated: size > length };
+            } finally {
+                await handle.close();
+            }
+        } catch (err) {
+            log.warn('Could not read the app log', err);
             return null;
         }
     });

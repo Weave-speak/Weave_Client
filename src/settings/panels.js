@@ -21,7 +21,7 @@ export const SECTIONS = [
         group: 'Account',
         items: [
             { id: 'profile', label: 'My Profile', icon: 'weave' },
-            { id: 'security', label: 'Security & Recovery', icon: 'lock', placeholder: true },
+            { id: 'security', label: 'Security & Recovery', icon: 'lock' },
             { id: 'sessions', label: 'Sessions & Devices', icon: 'screen' },
         ],
     },
@@ -38,7 +38,7 @@ export const SECTIONS = [
         items: [
             { id: 'invites', label: 'Invites', icon: 'plus' },
             { id: 'privacy', label: 'Privacy & Blocking', icon: 'lock', placeholder: true },
-            { id: 'bug', label: 'Report a Bug', icon: 'doc', placeholder: true },
+            { id: 'bug', label: 'Report a Bug', icon: 'doc' },
         ],
     },
     {
@@ -51,6 +51,7 @@ export const SECTIONS = [
             { id: 'admin-users', label: 'Users', icon: 'weave' },
             { id: 'admin-channels', label: 'Channels', icon: 'speaker' },
             { id: 'admin-sounds', label: 'Sounds', icon: 'speaker' },
+            { id: 'admin-bugs', label: 'Bug reports', icon: 'doc' },
             { id: 'admin-server', label: 'Server', icon: 'doc' },
             { id: 'admin-danger', label: 'DO NOT PRESS', icon: 'power', danger: true },
         ],
@@ -200,8 +201,57 @@ export function profilePanel({ me = {}, prefs = {}, features = [], avatarError =
     <p class="panel-lead">Microphone and voice behaviour has moved to Voice &amp; Audio.</p>`;
 }
 
-export function sessionsPanel({ version = '' } = {}) {
+/**
+ * How long ago, in the words somebody would use.
+ *
+ * Deliberately coarse, and deliberately not a clock time: the question this answers is
+ * "is this device still in use?", and "3 hours ago" answers it while "14:12" makes the
+ * reader do the arithmetic. Beyond a week the date is the more useful answer again.
+ *
+ * @param {number|null} at    epoch milliseconds, as the server stores last_used_at
+ * @param {number}      now   injected so the test is not a race against the clock
+ */
+export function lastActive(at, now = Date.now()) {
+    if (!at || !Number.isFinite(at)) return null;
+
+    const seconds = Math.max(0, Math.round((now - at) / 1000));
+    if (seconds < 90) return 'just now';
+
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return `${minutes} minutes ago`;
+
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+
+    const days = Math.round(hours / 24);
+    if (days <= 7) return `${days} day${days === 1 ? '' : 's'} ago`;
+
+    return joinedOn(new Date(at).toISOString()) ?? null;
+}
+
+const sessionRow = (session, now) => {
+    const when = [
+        joinedOn(session.createdAt) ? `Signed in ${joinedOn(session.createdAt)}` : null,
+        lastActive(session.lastUsedAt, now) ? `last active ${lastActive(session.lastUsedAt, now)}` : null,
+    ].filter(Boolean).join(' · ');
+
     return `
+    <div class="setting">
+      <span class="setting-text">
+        <span class="setting-label">${esc(session.device)}${session.current
+            ? ' <span class="session-here">This device</span>' : ''}</span>
+        <span class="setting-hint">${esc(when)}</span>
+      </span>
+      ${session.current
+        ? ''
+        : `<button type="button" class="btn" data-session-signout="${esc(session.id)}">Sign out</button>`}
+    </div>`;
+};
+
+export function sessionsPanel({
+    version = '', features = [], sessions = null, error = null, notice = null, now = Date.now(),
+} = {}) {
+    const head = `
     <h2 class="panel-title">Sessions &amp; Devices</h2>
     <p class="panel-lead">This installation, and the account's other ones.</p>
 
@@ -215,9 +265,25 @@ export function sessionsPanel({ version = '' } = {}) {
         <span class="setting-note" id="updateCheckNote"></span>
       </span>
       <button type="button" class="btn" data-check-updates>Check for updates</button>
-    </div>
+    </div>`;
 
-    ${notYet('Signed-in sessions', 'Listing and revoking other sessions needs a server update.')}`;
+    if (!features.includes('account.sessions')) {
+        return `${head}
+    ${notYet('Signed-in sessions', 'This server is older than the app and cannot list them yet.')}`;
+    }
+
+    const list = sessions === null
+        ? '<p class="panel-lead">Reading your devices…</p>'
+        : sessions.map((s) => sessionRow(s, now)).join('');
+
+    return `${head}
+
+    <h3 class="panel-section">Signed-in sessions</h3>
+    <p class="panel-lead">Everywhere this account is signed in. Signing one out ends it
+      immediately — that device is returned to the sign-in screen.</p>
+    ${error ? `<div class="form-message error show">${esc(error)}</div>` : ''}
+    ${notice ? `<div class="form-message ok show">${esc(notice)}</div>` : ''}
+    ${list}`;
 }
 
 const choose = ({ id, label, hint, value, options }) => `
@@ -503,6 +569,173 @@ export function invitesPanel({ invite = null, busy = false, error = null, origin
     ${notYet('Your existing invites', 'Listing and revoking your own codes needs a server update.')}`;
 }
 
+/**
+ * Security & Recovery.
+ *
+ * Two forms rather than the `setting` rows the rest of settings is built from, because
+ * neither of these is a preference: a preference is remembered, and a password must not be.
+ * Nothing here carries `data-setting`, which is what routes a control through set() and
+ * into this device's localStorage — the one mistake in this file that would be a real one.
+ *
+ * A server without the routes keeps the explanation it always had. A form that can only
+ * 404 is worse than being told plainly that the server is older than the app.
+ */
+export function securityPanel({
+    question = null, questions = [], features = [], error = null, notice = null,
+} = {}) {
+    const head = `
+    <h2 class="panel-title">Security &amp; Recovery</h2>
+    <p class="panel-lead">Your password, and the question that can recover this account if you
+      ever forget it.</p>`;
+
+    if (!features.includes('account.security')) {
+        return `${head}
+    ${notYet('Changing your password', 'This server is older than the app and has no route for it. '
+        + 'The forgotten-password link on the sign-in screen still works.')}`;
+    }
+
+    const current = question
+        ? `You will be asked: ${question.text}`
+        : 'This account has no security question yet. Choosing one is the only way to recover '
+          + 'it without an administrator.';
+
+    return `${head}
+    ${error ? `<div class="form-message error show">${esc(error)}</div>` : ''}
+    ${notice ? `<div class="form-message ok show">${esc(notice)}</div>` : ''}
+
+    <h3 class="panel-section">Password</h3>
+    <form class="sec-form" data-change-password novalidate>
+      <div class="form-message"></div>
+
+      <div class="field">
+        <label for="currentPassword">Current password</label>
+        <input id="currentPassword" name="currentPassword" type="password" required
+               autocomplete="current-password">
+        <div class="field-error"></div>
+      </div>
+
+      <div class="field">
+        <label for="newPassword">New password</label>
+        <input id="newPassword" name="newPassword" type="password" required
+               autocomplete="new-password" minlength="10">
+        <div class="strength" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+        <div class="field-help strength-label">At least 10 characters.</div>
+        <div class="field-error"></div>
+      </div>
+
+      <div class="field">
+        <label for="confirmPassword">Re-type new password</label>
+        <input id="confirmPassword" name="confirmPassword" type="password" required
+               autocomplete="new-password">
+        <div class="field-help match-label"></div>
+        <div class="field-error"></div>
+      </div>
+
+      <p class="field-help">Your other devices will be signed out. This one will not.</p>
+      <button type="submit" class="btn primary">Change password</button>
+    </form>
+
+    <h3 class="panel-section">Security question</h3>
+    <form class="sec-form" data-change-question novalidate>
+      <div class="form-message"></div>
+      <p class="panel-lead">${esc(current)}</p>
+
+      <div class="field">
+        <label for="securityQuestion">Question</label>
+        <select id="securityQuestion" name="securityQuestion" required>
+          ${questions.map((q) => `<option value="${esc(q.id)}"${q.id === question?.id ? ' selected' : ''}>${esc(q.text)}</option>`).join('')}
+        </select>
+        <div class="field-error"></div>
+      </div>
+
+      <div class="field">
+        <label for="securityAnswer">Your answer</label>
+        <input id="securityAnswer" name="securityAnswer" required autocomplete="off"
+               placeholder="Biscuit">
+        <div class="field-help">Capitals and spacing don't matter. There is no email reset, so
+          this is the only way back in on your own.</div>
+        <div class="field-error"></div>
+      </div>
+
+      <button type="submit" class="btn">Save question</button>
+    </form>`;
+}
+
+/** Bytes, in the units somebody reads rather than the ones a computer counts in. */
+const sizeOf = (text) => {
+    const bytes = new TextEncoder().encode(String(text ?? '')).length;
+    if (bytes < 1024) return `${bytes} bytes`;
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+/**
+ * Report a Bug.
+ *
+ * Two rules this screen exists to keep. The redaction happens on this machine, in the main
+ * process, before the renderer ever sees the text — so what is shown here IS what would be
+ * sent, not a promise about it. And nothing leaves until somebody presses the button: the
+ * log is gathered when the screen opens so it can be read, not so it can be uploaded.
+ *
+ * The report goes to the server this person is signed in to, never to us. Self-hosted
+ * software sending diagnostics to its author by default is not a thing anybody asked for,
+ * and the person who can act on the report is whoever runs the server.
+ */
+export function bugPanel({
+    features = [], description = '', log = null, logAvailable = false, showLog = false,
+    sending = false, sent = false, error = null, serverName = '',
+} = {}) {
+    const head = `
+    <h2 class="panel-title">Report a Bug</h2>
+    <p class="panel-lead">Tell ${serverName ? esc(serverName) : 'this server'}'s administrator what
+      happened. The report goes to them — never to anyone else.</p>`;
+
+    if (!features.includes('diagnostics.bug-report')) {
+        return `${head}
+    ${notYet('Reporting a bug', 'This server has no diagnostics module switched on, so there is '
+        + 'nowhere for a report to land.')}`;
+    }
+
+    if (sent) {
+        return `${head}
+    <div class="form-message ok show">Thank you — your report has been sent.</div>
+    <p class="panel-lead">An administrator will see it alongside what the server was doing at
+      the time. Nothing else was sent.</p>
+    <button type="button" class="btn" data-bug-again>Report something else</button>`;
+    }
+
+    const attached = logAvailable && log
+        ? `<p class="field-help">Attached: ${esc(sizeOf(log))} of this app's log, with paths,
+             tokens and passwords already removed on this machine.
+             <button type="button" class="linkish" data-bug-toggle-log>${showLog ? 'Hide it' : 'Show me exactly what will be sent'}</button></p>
+           ${showLog ? `<pre class="bug-log" tabindex="0">${esc(log)}</pre>` : ''}`
+        : `<p class="field-help">No log is attached — this build keeps none that it can read.
+             Your description is the report.</p>`;
+
+    return `${head}
+    ${error ? `<div class="form-message error show">${esc(error)}</div>` : ''}
+
+    <form class="sec-form" data-bug-report novalidate>
+      <div class="form-message"></div>
+
+      <div class="field">
+        <label for="bugDescription">What happened?</label>
+        <textarea id="bugDescription" name="description" rows="7" maxlength="4000"
+                  placeholder="What you were doing, what you expected, and what happened instead."
+                  required>${esc(description)}</textarea>
+        <div class="field-help">What you were doing, what you expected, and what happened
+          instead. A time helps, and so does whether anyone else saw it.</div>
+        <div class="field-error"></div>
+      </div>
+
+      ${attached}
+
+      <button type="submit" class="btn primary" ${sending ? 'disabled' : ''}>
+        ${sending ? 'Sending…' : 'Send report'}
+      </button>
+    </form>`;
+}
+
 export function placeholderPanel({ label = '', reason = '' } = {}) {
     return `
     <h2 class="panel-title">${esc(label)}</h2>
@@ -514,15 +747,10 @@ export function placeholderPanel({ label = '', reason = '' } = {}) {
 }
 
 export const PLACEHOLDER_REASONS = {
-    security: 'Changing your password or security question from inside the app needs a server update — '
-        + 'today the only route is the forgotten-password flow on the sign-in screen.',
-    sessions: 'Listing and signing out other devices needs a server update. Sessions are stored, but '
-        + 'there is no way for the app to ask for yours.',
     notifications: 'Weave does not track unread messages or mentions yet, so there is nothing to notify '
         + 'you about.',
     privacy: 'Blocking someone has to be enforced by the server or it is only cosmetic. That work has '
         + 'not been done.',
-    bug: 'The app can already gather a redacted diagnostic log; the server has nowhere to send it yet.',
 };
 
 /* ── the frame ────────────────────────────────────────────────────────────── */

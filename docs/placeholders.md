@@ -17,16 +17,8 @@ self-service `PATCH /api/me`, which covers the first three at once.
 | **Profile picture** | Uploads work (`POST /api/uploads`, crew level) but nothing writes `users.avatar`. Second problem: `GET /api/uploads/:id` is authenticated, so a plain `<img src>` gets a 401 — this needs either an unauthenticated avatar route or a fetch-and-blob in the client. |
 | **Status** | No status concept anywhere — no column, no WebSocket message, nothing in the peer snapshot. Presence is shown instead. |
 | **Hours woven** | Nothing accumulates time in a room. Needs a column or table plus an accumulator on the peer-leave hook. The join date works today and is shown. |
-| **Security & Recovery** | `setPassword` and `setSecurityQuestion` exist but are only reachable from the unauthenticated recovery flow and from admin. Needs `POST /api/me/password` and `POST /api/me/security-question`, both re-verifying the current password. |
-| **Sessions & Devices** | Sessions are stored with enough detail to list, but there is no crew-facing route. **This one needs a migration**: the primary key is `token_hash`, a secret that must never be served, so a session needs an opaque id before the client can refer to one. |
 | **Your existing invites** | Creating an invite works today and is wired. Listing and revoking are admin-only, and `listInvites` is unfiltered — it returns every code on the server with who made it, so it cannot simply be relaxed. Needs `GET /api/me/invites` and `DELETE /api/me/invites/:code` scoped to the creator. |
 | **Privacy & Blocking** | Nothing exists. Needs a table, routes, and — the load-bearing part — enforcement at every delivery point: chat send and history, the voice consume path, and the roster. A client-side hide is cosmetic on a server that still ships the bytes. |
-
-## Needs a module
-
-| Control | What is missing |
-|---|---|
-| **Report a Bug** | No module and no endpoint. The client half is already built — `weaveNative.diagnostics.read()` returns a pre-redacted updater log — but there is nowhere to send it. Redaction must stay on the reporter's machine and be previewable before anything leaves. |
 
 ## Needs the desktop shell
 

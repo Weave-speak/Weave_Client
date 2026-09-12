@@ -45,7 +45,10 @@ export const rooms = [
     { id: 'lounge', name: 'The Lounge', occupants: [] },
     { id: 'war-room', name: 'The War Room', occupants: [] },
     { id: 'strung-out', name: 'Strung Out (AFK)', occupants: inRoom('strung-out') },
-    { id: 'great-hall', name: 'The Great Hall', current: true, occupants: inRoom('great-hall') },
+    // Both flags, because standing in the room you are also reading is the ordinary case:
+    // `current` is what is highlighted, `occupied` is where you actually are, and the
+    // loom hangs on the second one.
+    { id: 'great-hall', name: 'The Great Hall', current: true, occupied: true, occupants: inRoom('great-hall') },
 ];
 
 export const items = [

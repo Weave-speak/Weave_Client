@@ -117,6 +117,36 @@ test('every occupied voice room lists its people, current or not', () => {
         .includes('room-people'));
 });
 
+test('the loom hangs in the room you are standing in, and only there', () => {
+    const room = (over) => sidebar({
+        rooms: [{ id: 'r', name: 'Hall', occupants: [{ username: 'kestrel' }], ...over }],
+        me: { username: 'me' },
+    });
+
+    // Standing here: the same rows, plus somewhere for the strings to be drawn.
+    const standing = room({ occupied: true, current: true });
+    assert.ok(standing.includes('class="loom"'));
+    assert.ok(standing.includes('loom-anchors'));
+    assert.ok(standing.includes('loom-canvas-wrap'));
+
+    // Merely looking at it, or at somebody else's room: a plain list.
+    assert.ok(!room({ current: true }).includes('loom-canvas-wrap'),
+        'a room you are only reading has no voices to draw');
+    assert.ok(!room({}).includes('loom-canvas-wrap'));
+
+    // The regression this pins: `current` follows what is being READ, so keying the loom
+    // on it packed the strings away every time somebody opened a text channel — while
+    // they were still standing in the room, still listening to it.
+    const reading = room({ occupied: true, current: false });
+    assert.ok(reading.includes('loom-canvas-wrap'),
+        'opening a text channel must not take the loom down');
+
+    // And the rows are untouched either way, which is what keeps drag, the context menu
+    // and the speaking class working inside the loom.
+    assert.ok(standing.includes('data-person="kestrel"'));
+    assert.ok(standing.includes('class="room-person"'));
+});
+
 test('an unread count is capped so the tile cannot change size', () => {
     assert.ok(rail({ dms: [{ id: 'd', username: 'a', unread: 7 }] }).includes('>7'));
     assert.ok(rail({ dms: [{ id: 'd', username: 'a', unread: 143 }] }).includes('99+'));

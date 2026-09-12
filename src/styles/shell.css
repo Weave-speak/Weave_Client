@@ -438,6 +438,44 @@
 /* An administrator's mute is louder than a self-mute on purpose: one is a choice, the
    other is a moderation decision somebody watching the roster may need to see. */
 .person-marks .mark-forced { color: var(--bad); }
+
+/* ── The Loom ─────────────────────────────────────────────────────────────── */
+
+/* The room you are standing in: the same occupant rows, with a strings canvas beside
+   them. See src/ui/loom.js — the renderer derives each string's row as height/voices,
+   so the canvas MUST be exactly as tall as the list next to it or the strings stop
+   lining up with the faces they belong to. Stretching both in one flex row is what
+   guarantees that, and is why this is not a grid. */
+/* The spacing lives HERE, on the wrapper, and both children are flush. Declared on the
+   two columns instead, it was 4px/8px on one and 4px/0 on the other: the canvas came out
+   eight pixels shorter than the list, the renderer divided that height by the number of
+   people, and every string sat a little higher than the face it belonged to — worse the
+   further down you looked. Two declarations that have to agree eventually will not. */
+.loom {
+    display: flex;
+    align-items: stretch;
+    margin: var(--s-1) 0 var(--s-2);
+}
+.loom-anchors {
+    width: var(--loom-anchors-w);
+    flex: none;
+    margin: 0;
+}
+/* A fixed row, so a long display name cannot make one string taller than the rest. */
+.loom-anchors .room-person {
+    height: var(--loom-row);
+    padding-top: 0;
+    padding-bottom: 0;
+}
+.loom-canvas-wrap { flex: 1; min-width: 0; position: relative; }
+.loom-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    pointer-events: none;
+}
 .person-marks .mark-share { color: var(--accent-hi); }
 
 /* ── Cropping a profile picture ───────────────────────────────────────────── */
@@ -653,6 +691,12 @@
     border: 1px solid var(--line-soft);
     border-radius: var(--r-4);
     overflow: hidden;
+    /* Makes this column its own stacking context, which is the whole reason the living
+       background is visible at all. `position: relative` with z-index:auto does NOT form
+       one, so .room-bg's --z-below put it in the ROOT context — painted before .room's
+       own opaque background went down on top of it. The canvas was drawing every frame,
+       perfectly, behind a wall. Removing this line hides it again. */
+    isolation: isolate;
 }
 
 /* The living background. Sits behind everything in this column; the message gutter is
@@ -1576,7 +1620,12 @@
     box-shadow: 0 0 0 0 transparent;
     transition: box-shadow var(--dur-fast) var(--ease);
 }
-.room-person.speaking .avatar {
+/* Not inside the loom. There the ring is written per frame by the renderer, in that
+   person's own colour and scaled to how loudly they are actually talking — an inline
+   style, which would win over this rule anyway. Two things driving one box-shadow is
+   how you end up with a ring that flickers between two colours. */
+.loom-anchors .room-person .avatar { transition: box-shadow var(--dur-fast) var(--ease); }
+.room-people:not(.loom-anchors) > .room-person.speaking .avatar {
     box-shadow: 0 0 0 2px var(--ok), 0 0 10px -2px var(--ok);
 }
 .room-person.speaking .person-name { color: var(--ink); }

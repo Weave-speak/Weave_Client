@@ -168,4 +168,11 @@
     --avatar-sm: 26px;
     --avatar: 34px;
     --avatar-lg: 42px;
+
+    /* ── The Loom ──────────────────────────────────────────────────────────── */
+    /* One row per person, and the strings canvas beside them derives its row height
+       from this same number — a face and the string it belongs to have to line up, so
+       the two cannot be allowed to drift apart in separate files. */
+    --loom-row: 34px;
+    --loom-anchors-w: 56%;
 }

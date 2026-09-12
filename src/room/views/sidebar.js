@@ -86,10 +86,40 @@ function roomItem(room, me) {
       ${isVoice && !occupants.length && !room.current && !lockedOut
         ? '<span class="room-empty">(empty)</span>'
         : ''}
-      ${isVoice && occupants.length
-        ? `<ul class="room-people">${occupants.map((p) => occupant(p, me)).join('')}</ul>`
-        : ''}
+      ${isVoice && occupants.length ? people(occupants, me, room.occupied) : ''}
     </li>`;
+}
+
+/**
+ * The occupants of a voice room — as a plain list, or as the Loom.
+ *
+ * The room you are STANDING in gets the Loom: the same rows, with a canvas beside them
+ * carrying one vibrating string per person. Every other room stays a list, because a
+ * string for a voice you cannot hear is decoration.
+ *
+ * Keyed on `occupied`, NOT on `current`. Those diverge the moment somebody opens a text
+ * channel to read, and the strings are about who you can hear, not about which row is
+ * highlighted — keyed on `current` the loom would pack itself away every time you went to
+ * check a message, which is the same mistake that once emptied the roster.
+ *
+ * The rows themselves are byte-for-byte the same either way, and that is the point.
+ * `peer-actions.js` keys drag, the context menu and the volume slider off
+ * `.room-person[data-person]`, and `paintSpeaking()` toggles `.speaking` on the same
+ * elements — so wrapping the list costs nothing and rewriting it would cost all of that.
+ *
+ * The canvas is left EMPTY here. A view is a pure function of state and may not touch a
+ * 2D context, so the controller parents one persistent canvas into this wrap after every
+ * render (see `mountLoom` in room/index.js). Creating one per render would restart the
+ * animation on every roster change.
+ */
+function people(occupants, me, standing) {
+    const rows = `<ul class="room-people${standing ? ' loom-anchors' : ''}">${occupants.map((p) => occupant(p, me)).join('')}</ul>`;
+    if (!standing) return rows;
+    return `
+      <div class="loom" data-loom>
+        ${rows}
+        <div class="loom-canvas-wrap"></div>
+      </div>`;
 }
 
 /** The scrolling room list. Exported so a roster change can replace just this. */

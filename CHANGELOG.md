@@ -4,6 +4,43 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.62] - 2026-09-12
+
+### Added
+- **The Loom: you can see who is talking, as strings.** The room you are standing in now
+  draws one vibrating string per person beside their face in the rooms column. A string
+  belongs to somebody — it carries their colour, the same colour they have everywhere else —
+  and it swells and glows with their voice. When two or more people talk at once the strings
+  leave their rows, pull toward each other and braid, which is the thing this app is named
+  after and the one part of a conversation a list of names cannot show.
+
+  Three instruments to choose from in Settings → Appearance, and they are genuinely
+  different rather than three palettes. **Cloth** hangs the strings in a warp and interlaces
+  them, so they pass over and under as real thread does. **Harp** strings them between two
+  rails with a tuning peg each and no harmonics, so the motion is a pure ring. **Web** joins
+  every pair of people who are actually talking with a glowing thread.
+
+  Somebody who has muted themselves lies flat, however much noise reaches their microphone.
+
+### Fixed
+- **The living background behind the conversation has never once been visible.** It was
+  built, it was tested, and it was drawing a correct frame sixty times a second into a
+  canvas that the browser was compositing *behind* the room's own opaque background — the
+  column is positioned but never formed a stacking context, so a layer asking to sit behind
+  the content went behind the column instead. One property; the whole animation.
+
+- **And it had nothing to draw for most of the time you were looking at it.** The strands
+  came from the occupants of the room being *read* rather than from who is actually here, and
+  a text channel has no occupants at all — so it emptied itself precisely when somebody was
+  most likely to be watching it. It is now everyone online on the server, which is what a
+  field of strands was always meant to say.
+
+- **"Still background" only worked if you changed it.** Turning it on stopped the animation,
+  but starting the app with it already on ran a *frozen* weave rather than none, because
+  start-up did not ask. Both animations now answer to one place, and stopping clears rather
+  than leaving the last frame painted — a still photograph of a living thing reads worse than
+  its absence.
+
 ## [0.1.61] - 2026-09-11
 
 ### Added

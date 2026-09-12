@@ -6,7 +6,7 @@ a protocol needs clients, and nobody should have to open-source their app to tal
 Weave server. One source tree, two builds — browser (`npm run build`) and Electron desktop
 (`npm run build:desktop`).
 
-Current release: **0.1.61**. Windows installers are published to GitHub Releases, unsigned,
+Current release: **0.1.62**. Windows installers are published to GitHub Releases, unsigned,
 so SmartScreen warns until a certificate exists.
 
 ## Commands
@@ -39,9 +39,9 @@ src/               the app — shared by both builds
   auth/ rooms/ server/ settings/ ui/ updates/
   styles/          tokens.css ← the design system; a raw hex elsewhere is a bug
 
-test/              26 files, plain `node --test`
+test/              35 files, plain `node --test`
 scripts/           ensure-release · finish-release · predict-delta · make-installer-art
-dev/               component sandboxes (shell.html, background.html, fixtures.js)
+dev/               component sandboxes (shell.html, background.html, loom.html, fixtures.js)
 docs/releasing.md  the four rules that silently break delta updates — READ before releasing
 dist-electron/     build output. Generated. Never edit.
 ```
@@ -62,6 +62,7 @@ holds the app log. Fatal startup errors go to `%TEMP%\weave\startup-crash.log`.
 | Markup only, no behaviour | `src/room/views/*` |
 | Native window, IPC, capture picker, updates | `electron/app.js` |
 | Colors, spacing, radii | `src/styles/tokens.css` |
+| The strands — speaking strings, the room background | `src/ui/loom.js`, `src/ui/weave-background.js` |
 
 ## Conventions
 

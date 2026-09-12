@@ -15,7 +15,9 @@ import { roomGroups, selfBar } from './views/sidebar.js';
 import { rail, dmSearchView, dmSearchResults } from './views/rail.js';
 import { messageList, typingLine, voiceNoticeMarkup, emptyState, roomGlyph } from './views/timeline.js';
 import { createRoomState } from './state.js';
-import { WeaveBackground, createMessageNoise } from '../ui/weave-background.js';
+import { WeaveBackground, createMessageNoise, voiceNoise } from '../ui/weave-background.js';
+import { LoomRenderer } from '../ui/loom.js';
+import { createVoiceTraces } from '../ui/voice-trace.js';
 import { createVoice } from '../media/voice.js';
 import { effectiveMute, onPushToTalkChange, muteButtonDisabled } from '../media/mute-policy.js';
 import { screenShareSettings, cameraConstraints, cameraEncodings } from '../media/presets.js';
@@ -67,6 +69,14 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
     });
 
     let background = null;
+    let loom = null;
+    // Created once and re-parented after every render. #roomScroll's innerHTML is replaced
+    // wholesale on any roster change, so a canvas built inside the markup would be thrown
+    // away — and rebuilt, and restarted — several times a minute.
+    let loomCanvas = null;
+    // Levels arrive ten times a second; the loom draws sixty. These fill in the gap and
+    // add the onset bounce, which the media layer has no concept of. See voice-trace.js.
+    const loomTraces = createVoiceTraces();
     let painting = false;
     let voiceLevels = new Map();
     const speakingUntil = new Map();   // username -> when the ring may fade
@@ -419,10 +429,8 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             link.send('setMute', { muted: next.muted, deafened });
             paint();   // the mute button greys out (or comes back) right now
         }
-        if (background) {
-            background.reduceMotion = Boolean(prefs.staticBackground);
-            if (prefs.staticBackground) background.stop(); else background.start();
-        }
+        loom?.setMode(prefs.loomMode);
+        applyMotionPrefs();
     }
 
     /**
@@ -520,6 +528,8 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             setHtml('#roomScroll', roomGroups(view.rooms, view.me));
             // The row the open menu points at was among the ones just replaced.
             peerActions?.reselect();
+            // So was the loom's canvas, if the room being stood in has one.
+            mountLoom();
         }
         setHtml('#selfBarSlot', selfBar({ ...view.me, pttOn: Boolean(prefs.pushToTalk) }));
         const railEl = $('.rail', mount);
@@ -827,35 +837,137 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         else scroller.scrollTop = scroller.scrollHeight - fromBottom;
     }
 
-    /* ── the living background ───────────────────────────────────────────── */
+    /* ── the living background, and the loom ─────────────────────────────── */
+
+    /** How loud one person is, across every connection they hold. */
+    function levelOf(person, meId) {
+        let level = person.id === meId ? (voiceLevels.get('self') ?? 0) : 0;
+        for (const cid of person.cids ?? []) level = Math.max(level, voiceLevels.get(cid) ?? 0);
+        return level;
+    }
 
     function startBackground() {
         const canvas = $('#roomBg', mount);
         if (!canvas) return;
         background = new WeaveBackground(canvas, {
-            reduceMotion: prefs.staticBackground || undefined,
+            // `state.people` rather than `toShell()`: this is read on every animation
+            // frame, and toShell() additionally walks the roster once per channel to work
+            // out who is standing where — none of which a field of strands needs.
             getState: () => {
-                const view = state.toShell();
-                const here = view.rooms.find((r) => r.current)?.occupants ?? [];
-
-                // The room's pace is how loud it actually is. Favours the loudest speaker
-                // blended with the average, so one person talking quietly in a room of
-                // eight still registers rather than being averaged into silence.
-                const values = here.map((p) => {
-                    let level = p.id === view.me.id ? (voiceLevels.get('self') ?? 0) : 0;
-                    for (const cid of p.cids ?? []) level = Math.max(level, voiceLevels.get(cid) ?? 0);
-                    return level;
-                });
-                const loudest = values.length ? Math.max(...values) : 0;
-                const average = values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+                // Everyone ONLINE, not the occupants of whatever room is on screen. The
+                // field answers "who is here", and that must not change because you opened
+                // a text channel to read — which is what it used to do, and since a text
+                // channel has no occupants at all it went blank exactly when somebody was
+                // most likely to be looking at it.
+                const here = state.people.filter((p) => p.presence !== 'offline');
+                const meId = state.raw.me?.id;
 
                 return {
                     participants: here.map((p) => ({ id: p.username, hue: userHue(p.username) })),
-                    noise: Math.min(1, Math.max(loudest, average * 1.4, msgNoise.value(Date.now()))),
+                    // How much is being said, by voice or in text, whichever is livelier.
+                    noise: Math.max(
+                        voiceNoise(here.map((p) => levelOf(p, meId))),
+                        msgNoise.value(Date.now()),
+                    ),
                 };
             },
         });
-        background.start();
+        applyMotionPrefs();
+    }
+
+    /**
+     * One string per person in the room you are standing in.
+     *
+     * Read from the DOM rather than from state, deliberately. String *i* has to be the
+     * face at row *i*, and taking the order from the rows that were actually rendered is
+     * the only way the two cannot drift — a repaint queued behind this frame would
+     * otherwise put the strings in tomorrow's order beside today's faces.
+     */
+    function loomVoices() {
+        // Built from the peer map directly, not from the roster. This runs sixty times a
+        // second, and every derived view in this app sorts, dedupes and walks the channel
+        // list to produce things a string does not need.
+        const meId = state.raw.me?.id;
+        const live = new Map();
+        for (const peer of state.raw.peers.values()) {
+            const entry = live.get(peer.username) ?? { id: peer.userId, cids: [], forceMuted: false };
+            entry.cids.push(peer.cid);
+            // The most recent connection decides, exactly as the roster does — picking
+            // arbitrarily between two is what makes somebody flicker.
+            entry.muted = Boolean(peer.muted);
+            entry.forceMuted = entry.forceMuted || Boolean(peer.forceMuted);
+            live.set(peer.username, entry);
+        }
+
+        const readings = [...mount.querySelectorAll('.loom-anchors .room-person')]
+            .map((el) => el.dataset.person)
+            .filter(Boolean)
+            .map((username) => {
+                const person = live.get(username);
+                // A muted string lies flat. Somebody who has muted themselves is not
+                // talking, however much noise reaches their microphone.
+                const level = !person || person.muted || person.forceMuted
+                    ? 0
+                    : levelOf(person, meId);
+                return { id: username, level };
+            });
+
+        return loomTraces.step(readings)
+            .map((v) => ({ ...v, hue: userHue(v.id) }));
+    }
+
+    /** The renderer lights the avatar that belongs to each string. */
+    function loomRing(username, glow) {
+        const avatar = mount.querySelector(
+            `.loom-anchors .room-person[data-person="${CSS.escape(username)}"] .avatar`);
+        if (avatar) avatar.style.boxShadow = glow;
+    }
+
+    /**
+     * Parent the one canvas into wherever the loom currently is.
+     *
+     * Called after every render of the room list. The canvas outlives the markup around
+     * it, so switching rooms or watching somebody join re-homes a live renderer instead of
+     * building a new one and losing a second of animation each time.
+     */
+    function mountLoom() {
+        const wrap = $('.loom-canvas-wrap', mount);
+        if (!wrap) { loom?.stop(); return; }   // not standing in a voice room
+
+        if (!loomCanvas) {
+            loomCanvas = document.createElement('canvas');
+            loomCanvas.className = 'loom-canvas';
+            loomCanvas.setAttribute('aria-hidden', 'true');
+        }
+        if (loomCanvas.parentElement !== wrap) wrap.append(loomCanvas);
+
+        loom ??= new LoomRenderer(loomCanvas, {
+            mode: prefs.loomMode,
+            getVoices: loomVoices,
+            onRing: loomRing,
+        });
+        applyMotionPrefs();
+    }
+
+    /**
+     * Whether the animations run at all.
+     *
+     * One owner, because the previous split was wrong in a way nobody would notice for
+     * months: the preference change stopped the background, but start-up called start()
+     * unconditionally, so launching with "Still background" already on gave a frozen
+     * weave rather than none. Both animations now answer to this and nothing else.
+     *
+     * stop() clears as well as halting — a bare stop leaves the last frame painted, which
+     * reads as a photograph of a living thing rather than as its absence.
+     */
+    function applyMotionPrefs() {
+        if (prefs.staticBackground) {
+            background?.stop();
+            loom?.stop();
+            return;
+        }
+        background?.start();
+        loom?.start();
     }
 
     /* ── talking to the server ───────────────────────────────────────────── */
@@ -2448,6 +2560,7 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         })));
         wire();
         startBackground();
+        mountLoom();
 
         state.subscribe(paint);
 
@@ -2504,6 +2617,7 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             clearInterval(streamDiagTimer);
             voice.stop();
             background?.destroy();
+            loom?.destroy();
             link.onEvent = () => {};
             link.onState = () => {};
         },

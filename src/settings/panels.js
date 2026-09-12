@@ -12,6 +12,7 @@
 // and the gaps are the roadmap. Showing them is how the shape of the thing stays visible.
 
 import { esc } from '../ui/dom.js';
+import { LOOM_MODES } from '../ui/loom.js';
 import { icons } from '../room/icons.js';
 import { avatar } from '../room/views/parts.js';
 
@@ -508,10 +509,20 @@ export function appearancePanel({ prefs = {} } = {}) {
     <h2 class="panel-title">Appearance</h2>
     <p class="panel-lead">How Weave looks on this device.</p>
 
+    ${choose({
+        id: 'loomMode',
+        label: 'Speaking strands',
+        hint: 'How a voice is drawn beside the people in your room. Cloth weaves the '
+            + 'strings through a warp, Harp strings them between two rails, Web joins '
+            + 'everyone who is talking.',
+        value: prefs.loomMode ?? LOOM_MODES[0],
+        options: LOOM_MODES.map((m) => [m, m[0].toUpperCase() + m.slice(1)]),
+    })}
+
     ${toggle({
         id: 'staticBackground',
         label: 'Still background',
-        hint: 'Stops the weaving strands behind the conversation from moving.',
+        hint: 'Stops the weaving strands — behind the conversation and beside your room — from moving.',
         checked: Boolean(prefs.staticBackground),
         note: 'Also follows your system "reduce motion" setting.',
     })}

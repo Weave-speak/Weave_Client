@@ -17,6 +17,7 @@ import {
 } from '../ui/dom.js';
 import { VERSION, platform } from '../platform/index.js';
 import { DEFAULT_STREAM_PRESET } from '../media/presets.js';
+import { DEFAULT_LOOM_MODE } from '../ui/loom.js';
 import { dbToMeterPercent } from '../media/chain.js';
 import {
     adminUsersPanel, adminChannelsPanel, adminSoundsPanel, adminServerPanel, adminDangerPanel,
@@ -45,6 +46,9 @@ export const DEFAULTS = {
     echoCancellation: true,
     autoGainControl: true,
     staticBackground: false,
+    // Which instrument the speaking strands are drawn as: cloth, harp or web. Per server
+    // rather than per machine only because everything here is — see the header.
+    loomMode: DEFAULT_LOOM_MODE,
     micDevice: '',
     audioOutput: '',
     afkExempt: false,

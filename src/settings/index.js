@@ -16,7 +16,7 @@ import {
     $, $$, setFieldError, clearErrors, setFormMessage, setBusy, passwordStrength,
 } from '../ui/dom.js';
 import { VERSION, platform } from '../platform/index.js';
-import { DEFAULT_STREAM_PRESET } from '../media/presets.js';
+import { DEFAULT_SHARE_QUALITY, DEFAULT_SHARE_CONTENT, legacyShareChoice } from '../media/presets.js';
 import { DEFAULT_LOOM_MODE } from '../ui/loom.js';
 import { dbToMeterPercent } from '../media/chain.js';
 import {
@@ -64,12 +64,14 @@ export const DEFAULTS = {
     gateSensitivity: 64,
     // Tone shaping, off because it changes how somebody already sounds. Opt in.
     voiceOptimize: false,
-    // Camera and screen share. These are the ones people actually noticed reverting.
+    // Camera. These are the ones people actually noticed reverting.
     camDevice: '',
     camRes: '720',
     camFps: 30,
-    streamPreset: DEFAULT_STREAM_PRESET,
-    streamPrefer: 'detail',
+    // The last screen-share choice. No control in this dialog: the share chooser asks every
+    // time and opens pre-set to these, and the room writes them when a share starts.
+    shareQuality: DEFAULT_SHARE_QUALITY,
+    shareContent: DEFAULT_SHARE_CONTENT,
 };
 
 /** Read every preference for a server, defaults filled in. */
@@ -79,6 +81,21 @@ export function readPrefs(serverId) {
     for (const key of Object.keys(DEFAULTS)) {
         const stored = store.get(key, null);
         if (stored !== null) prefs[key] = stored;
+    }
+
+    // The share chooser replaced two settings. Somebody who set those should find the
+    // chooser opening on what they had picked, not on the new default — the header above
+    // records eight preferences that were once lost silently, and this would have been a
+    // ninth. Only when no share has been started since, so a real new choice always wins.
+    if (store.get('shareQuality', null) === null) {
+        const carried = legacyShareChoice({
+            streamPreset: store.get('streamPreset', null),
+            streamPrefer: store.get('streamPrefer', null),
+        });
+        if (carried) {
+            prefs.shareQuality = carried.quality;
+            prefs.shareContent = carried.content;
+        }
     }
     return prefs;
 }

@@ -27,7 +27,8 @@
 
     /* ── Surfaces, as a depth ladder ───────────────────────────────────────── */
     /* Deeper number = closer to the viewer. Nothing should invent a step between two. */
-    --bg-void: #08070f;      /* behind the whole window */
+    --bg-void-rgb: 8 7 15;
+    --bg-void: rgb(var(--bg-void-rgb));   /* behind the whole window */
     --bg-app: #0d0c14;       /* the app field */
     --surface-0: #12101d;    /* sunken: inputs, wells */
     --surface-1: #16142a;    /* columns */

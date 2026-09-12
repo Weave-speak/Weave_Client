@@ -20,7 +20,8 @@ import { LoomRenderer } from '../ui/loom.js';
 import { createVoiceTraces } from '../ui/voice-trace.js';
 import { createVoice } from '../media/voice.js';
 import { effectiveMute, onPushToTalkChange, muteButtonDisabled } from '../media/mute-policy.js';
-import { screenShareSettings, cameraConstraints, cameraEncodings } from '../media/presets.js';
+import { screenShareSettings, normaliseShareChoice, cameraConstraints, cameraEncodings } from '../media/presets.js';
+import { settingsFor } from '../server/store.js';
 import { classify } from '../media/stream-report.js';
 import { captureProcessAudio } from '../media/process-audio.js';
 import { createSettings, readPrefs } from '../settings/index.js';
@@ -32,7 +33,7 @@ import { platform } from '../platform/index.js';
 import { userHue } from '../ui/hue.js';
 import { mentionQuery, matchMentions, insertMention } from './mentions.js';
 import { freshHistory, advanceHistory, nextPageQuery, shouldLoadOlder } from './history.js';
-import { stageView, tileKey, sharePickerView } from './views/stage.js';
+import { stageView, tileKey, sharePickerView, shareSetupView } from './views/stage.js';
 import { stageSignature, stagePaintDecision } from './stage-paint.js';
 import { extractUrls } from './embeds.js';
 import { avatar } from './views/parts.js';
@@ -151,8 +152,10 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             reporter: state.raw.me?.username ?? null,
             subject: self ? (state.raw.me?.username ?? null) : (peer?.displayName || peer?.username || cid),
             channel: state.raw.currentChannelId ?? null,
-            preset: prefs.streamPreset ?? null,
-            prefer: prefs.streamPrefer ?? null,
+            // The field names predate the share chooser and the server stores reports as
+            // they come, so they stay; what they carry is now the running share's choice.
+            preset: activeShare.choice.quality,
+            prefer: activeShare.choice.content,
             verdict: verdict.verdict,
             reasons: verdict.reasons,
             samples,
@@ -175,6 +178,9 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
     }
 
     let prefs = readPrefs(server.id);
+    // The settings of the share that is running, or of the next one until a choice is made.
+    // Replaced only when the share chooser commits; see openShareSetup.
+    let activeShare = screenShareSettings({ quality: prefs.shareQuality, content: prefs.shareContent });
     let pttHeld = false;
     // Text channels are openable-from-anywhere only when the server broadcasts chat
     // that way; against an older server every click is still a move.
@@ -319,15 +325,12 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         // behaviour — straight to rebuilding the transport — rather than a failed round
         // trip on every hiccup.
         canRestartIce: () => features.includes('media.ice-restart'),
-        getScreenConstraints: () => screenShareSettings({
-            preset: prefs.streamPreset, prefer: prefs.streamPrefer,
-        }).constraints,
-        getScreenContentHint: () => screenShareSettings({
-            preset: prefs.streamPreset, prefer: prefs.streamPrefer,
-        }).contentHint,
-        getScreenEncodings: () => screenShareSettings({
-            preset: prefs.streamPreset, prefer: prefs.streamPrefer,
-        }).encodings,
+        // What the chooser settled on for THIS share — not re-derived from preferences on
+        // every call, which is what these used to do. voice.js reads them again when a share
+        // is re-produced after a reconnect, and that must be the share that was started.
+        getScreenConstraints: () => activeShare.constraints,
+        getScreenContentHint: () => activeShare.contentHint,
+        getScreenEncodings: () => activeShare.encodings,
         onChange: (status) => {
             voiceState = status;
             paint();
@@ -773,6 +776,72 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             }
         }
         paintStage();
+    }
+
+    /* ── sharing a screen ────────────────────────────────────────────────── */
+
+    /**
+     * Ask how to share, then share.
+     *
+     * Every time, before the screen picker: quality and whether it is video or text. A game
+     * and a spreadsheet are different streams, and the settings that used to decide this sat
+     * in a dialog nobody reopened between the two. The chooser opens on the last choice, so
+     * sharing the same kind of thing again is one click more than it was, not a decision.
+     *
+     * A modal rather than a menu by the button, because the self bar — and the share button
+     * with it — is rewritten on every paint, which a presence change triggers at any moment.
+     * The top layer is the one place nothing in the room can repaint over.
+     *
+     * Nothing reaches voice.js until "Choose screen". Cancelling here must leave no trace:
+     * enableScreen() records that a share is WANTED before it ever reaches the picker.
+     */
+    function openShareSetup() {
+        const modal = createModal({ className: 'share-setup-modal', label: 'Share your screen' });
+        modal.open({
+            content: shareSetupView({ quality: prefs.shareQuality, content: prefs.shareContent }),
+        });
+
+        const form = modal.element.querySelector('[data-share-setup]');
+        form?.addEventListener('submit', (event) => {
+            event.preventDefault();
+            const data = new FormData(form);
+            const choice = normaliseShareChoice({ quality: data.get('quality'), content: data.get('content') });
+
+            // Remembered before the share starts, not after it succeeds: cancelling the
+            // screen picker is a different decision from the one made here, and the next
+            // chooser should still open on what was picked.
+            const store = settingsFor(server.id);
+            store.set('shareQuality', choice.quality);
+            store.set('shareContent', choice.content);
+            prefs = { ...prefs, shareQuality: choice.quality, shareContent: choice.content };
+
+            // Held for the life of the share: the re-produce after a reconnect and the frame
+            // rate watcher both read it again, and must get what the share started with.
+            activeShare = screenShareSettings(choice);
+            modal.close();
+
+            // Straight from the click, with nothing slow awaited first — getDisplayMedia is
+            // allowed to open the picker on the strength of this gesture.
+            runShare(voice.enableScreen());
+        });
+        modal.element.addEventListener('click', (event) => {
+            if (event.target.closest('[data-share-cancel]')) modal.close();
+        });
+    }
+
+    /** Start or stop a share, and say something only when it genuinely failed. */
+    function runShare(promise) {
+        promise
+            .catch((err) => {
+                // Cancelling the picker is a decision, not a failure. The two names are the
+                // two pickers: a browser's own declines with NotAllowedError, while our
+                // desktop picker declines by handing Electron no source, which surfaces here
+                // as AbortError.
+                if (err?.name === 'NotAllowedError' || err?.name === 'AbortError') return;
+                voiceState = { state: 'no-mic', message: `Screen share failed: ${err.message}` };
+                paint();
+            })
+            .finally(() => paintMediaButtons());
     }
 
     /** The header's camera and screen buttons: shown where sending is possible, lit while on. */
@@ -1924,17 +1993,9 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             }
 
             if (event.target.closest('[data-toggle-screen]')) {
-                (voice.screenOn ? Promise.resolve(voice.disableScreen()) : voice.enableScreen())
-                    .catch((err) => {
-                        // Cancelling the picker is a decision, not a failure. The two names
-                        // are the two pickers: a browser's own declines with NotAllowedError,
-                        // while our desktop picker declines by handing Electron no source,
-                        // which surfaces here as AbortError.
-                        if (err?.name === 'NotAllowedError' || err?.name === 'AbortError') return;
-                        voiceState = { state: 'no-mic', message: `Screen share failed: ${err.message}` };
-                        paint();
-                    })
-                    .finally(() => paintMediaButtons());
+                // Stopping is immediate. Starting asks how first — see openShareSetup.
+                if (voice.screenOn) runShare(Promise.resolve(voice.disableScreen()));
+                else openShareSetup();
                 return;
             }
 

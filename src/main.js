@@ -20,13 +20,26 @@ import { createLink } from './net/link.js';
 import { createIdleReporter } from './room/idle.js';
 import { createRoom } from './room/index.js';
 import { displayAddress } from './server/address.js';
+import { readPrefs } from './settings/index.js';
+import { JoinBackground } from './ui/join-background.js';
 import { $, html, safe } from './ui/dom.js';
 
 const app = $('#app');
 
+/**
+ * The strings behind the sign-in card.
+ *
+ * Held here rather than inside the auth controller because it belongs to the SHELL: auth
+ * re-renders only #stage as you move between sign-in, register, reset and servers, so one
+ * animation carries on across all of them instead of restarting on every click.
+ */
+let authBackground = null;
+
 function shell() {
     return `
     <div class="app">
+      <canvas class="auth-bg" id="authBg" aria-hidden="true"></canvas>
+      <div class="auth-vignette" aria-hidden="true"></div>
       <header class="topbar">
         <div class="brand">
           <span class="brand-mark small" aria-hidden="true">
@@ -43,6 +56,33 @@ function shell() {
       <main class="stage" id="stage"></main>
     </div>`;
 }
+
+/** Build the sign-in strings into a freshly rendered shell. */
+function startAuthBackground() {
+    authBackground?.destroy();
+    const canvas = $('#authBg');
+    authBackground = canvas ? new JoinBackground(canvas) : null;
+    applyAuthMotion();
+}
+
+/**
+ * Whether the sign-in strings move.
+ *
+ * "Still background" is stored per server, so it can only be honoured once there is a
+ * server to read it from — on a first run there is not, and only the system's own
+ * reduce-motion setting applies (the renderer reads that itself). Somebody who stilled the
+ * weave in a room should not be greeted by a moving one on the way back in.
+ */
+function applyAuthMotion() {
+    if (!authBackground) return;
+    const server = activeServer();
+    const still = server ? Boolean(readPrefs(server.id).staticBackground) : false;
+    if (still) authBackground.stop(); else authBackground.start();
+}
+
+// Once, at module level: boot() runs again on every sign-out, and a listener added there
+// would be added again each time.
+window.addEventListener('weave:server-changed', applyAuthMotion);
 
 /**
  * Point the topbar at whatever server is current.
@@ -187,6 +227,13 @@ async function enterRoom({ api, user, token, server, autoJoin = true }) {
         readIdleMs: () => idle.current(),
     });
 
+    // Before the markup goes, not after. Replacing the shell removes the canvas but does not
+    // stop the loop drawing into it — that would carry on, unseen, for as long as the room
+    // stayed open, with its visibility listener still attached. Signing out calls boot()
+    // again, which builds a fresh one.
+    authBackground?.destroy();
+    authBackground = null;
+
     app.innerHTML = '';
     room = createRoom({
         mount: app,
@@ -245,6 +292,7 @@ async function boot(notice = null) {
     platform.links.onDeepLink(handleDeepLink);
     app.innerHTML = '';
     app.append(html(shell()));
+    startAuthBackground();
 
     // Mounted before anything else, so an update that started at launch is already visible
     // while the server probe runs. It reports nothing when there is nothing to report.

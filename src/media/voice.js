@@ -100,9 +100,9 @@ export function createVoice({
     getVideoConstraints = () => ({ width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }),
     /** Screen constraints: resolution/fps caps and whether to bring system audio. */
     getScreenConstraints = () => ({ video: { frameRate: { max: 120 } }, audio: true }),
-    /** 'detail' keeps text readable under motion; 'motion' keeps games smooth. */
+    /** 'text' keeps glyphs sharp under pressure; 'motion' keeps games smooth. */
     getScreenContentHint = () => 'detail',
-    /** Encoder budget for a screen share, read fresh per share so presets apply next time. */
+    /** Encoder budget for a screen share. The room holds these steady for the life of a share. */
     getScreenEncodings = () => [{ maxBitrate: 4_000_000 }],
     getVideoEncodings = () => [{ maxBitrate: 1_800_000 }],
     canRestartIce = () => false,
@@ -948,9 +948,9 @@ export function createVoice({
      */
     function watchScreenFramerate() {
         stopScreenFramerateWatch();
-        // Frozen for the life of the share, like every other preset value: the settings panel
-        // says 'Applies from your next share', and a target that moved mid-share would leave
-        // the rate following one preset while the bitrate still followed another.
+        // Frozen for the life of the share, like every other value the chooser set: a target
+        // that moved mid-share would leave the rate following one choice while the bitrate
+        // still followed another.
         screenFpsTarget = getScreenEncodings()?.[0]?.maxFramerate ?? null;
         const producer = screenProducer;
         const tick = (delay) => {
@@ -982,8 +982,8 @@ export function createVoice({
             screenStream = await navigator.mediaDevices.getDisplayMedia(getScreenConstraints());
         }
         const [video] = screenStream.getVideoTracks();
-        // 'detail' keeps text legible when the encoder has to choose; 'motion' keeps
-        // frame rate. The preference is the user's, read fresh each share.
+        // 'text' keeps glyphs legible when the encoder has to choose; 'motion' keeps
+        // frame rate. Chosen by the person in the share chooser, just before this share.
         try { video.contentHint = getScreenContentHint(); } catch { /* advisory only */ }
         video.addEventListener('ended', () => disableScreenInner());
 

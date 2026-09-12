@@ -12,6 +12,9 @@
 import { esc } from '../../ui/dom.js';
 import { icons } from '../icons.js';
 import { userHue } from '../../ui/hue.js';
+import {
+    SHARE_QUALITIES, SHARE_CONTENT, DEFAULT_SHARE_QUALITY, DEFAULT_SHARE_CONTENT,
+} from '../../media/presets.js';
 
 export const tileKey = (cid, slot) => `${cid}:${slot}`;
 
@@ -136,6 +139,56 @@ export function stageView({ tiles = [], focus = null, heightPx = null, canReport
 }
 
 /* ── choosing what to share ───────────────────────────────────────────────── */
+
+/**
+ * How to share, asked every time, just before the screen picker.
+ *
+ * A game and a spreadsheet are different streams — one wants every frame, the other every
+ * glyph — and a setting chosen once in a dialog nobody reopens gets one of them wrong. So the
+ * two choices are made at the moment they matter, pre-set to whatever was chosen last.
+ *
+ * A real form with real radio groups, as the room browser's kind picker is: arrow keys move
+ * within a group, the checked card is the state, and Enter submits. Nothing is selected by a
+ * click handler that could fall out of step with what the screen shows. Nothing starts until
+ * "Choose screen" — unlike the web app, where clicking a quality started the share at once
+ * and the content type had to be picked BEFORE it, below it.
+ */
+export function shareSetupView({ quality = DEFAULT_SHARE_QUALITY, content = DEFAULT_SHARE_CONTENT } = {}) {
+    const card = (name, key, entry, checked) => `
+          <label class="kind-card share-option">
+            <input type="radio" name="${name}" value="${esc(key)}" ${checked ? 'checked' : ''}>
+            <span class="kind-name">${esc(entry.title)}</span>
+            <span class="kind-hint">${esc(entry.sub)}</span>
+          </label>`;
+
+    return `
+    <form class="share-picker share-setup" data-share-setup>
+      <header class="browser-head">
+        <div>
+          <h2 class="panel-title">Share your screen</h2>
+          <p class="panel-lead">Higher quality needs more upload and more of your computer — and
+            more again for each person watching. You will pick the screen or window next.</p>
+        </div>
+        <span class="browser-spacer"></span>
+        <button type="button" class="icon-btn" data-share-cancel aria-label="Cancel">✕</button>
+      </header>
+
+      <h3 class="panel-section" id="shareQualityLabel">Quality</h3>
+      <div class="kind-pick share-qualities" role="radiogroup" aria-labelledby="shareQualityLabel">
+        ${Object.entries(SHARE_QUALITIES).map(([key, entry]) => card('quality', key, entry, key === quality)).join('')}
+      </div>
+
+      <h3 class="panel-section" id="shareContentLabel">What are you sharing?</h3>
+      <div class="kind-pick" role="radiogroup" aria-labelledby="shareContentLabel">
+        ${Object.entries(SHARE_CONTENT).map(([key, entry]) => card('content', key, entry, key === content)).join('')}
+      </div>
+
+      <div class="create-actions share-setup-actions">
+        <button type="button" class="btn" data-share-cancel>Cancel</button>
+        <button type="submit" class="btn primary" data-share-go data-initial-focus>Choose screen</button>
+      </div>
+    </form>`;
+}
 
 /**
  * The desktop share picker. Thumbnails come from the main process's own capture of the

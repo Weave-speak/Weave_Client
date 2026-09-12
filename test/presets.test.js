@@ -1,40 +1,68 @@
-// Stream and camera presets: two settings in, everything a share needs out.
+// Share and camera presets: two choices in, everything a share needs out.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
     screenShareSettings, bestFitFramerate, cameraConstraints, cameraEncodings,
-    STREAM_PRESETS, CAPTURE_FPS_CEILING,
+    SHARE_QUALITIES, SHARE_CONTENT, DEFAULT_SHARE_QUALITY, DEFAULT_SHARE_CONTENT,
+    CAPTURE_FPS_CEILING, normaliseShareChoice, legacyShareChoice,
 } from '../src/media/presets.js';
 
-test('a preset caps size and budget, and asks the ENCODER for its rate', () => {
-    const p = screenShareSettings({ preset: '1080p60' });
-    assert.equal(p.constraints.video.width.max, 1920);
-    assert.equal(p.encodings[0].maxBitrate, 6_000_000);
-    assert.equal(p.encodings[0].maxFramerate, 60, 'the rate is the encoder\'s business now');
-    assert.equal(p.targetFramerate, 60, 'and voice.js snaps against it');
-});
-
-test('no preset caps the CAPTURE at its own rate', () => {
-    // This is the stuttering-game fix, and the thing most likely to be undone by accident.
-    // A per-preset max here makes Chromium run the desktop capturer on a fixed-interval
-    // timer, and a source that does not divide into that interval lands its frames either
-    // side of the tick — 70 fps into a 30 Hz grid is a 2-1-2-1 stagger with nothing lost to
-    // the network at all. The ceiling belongs to the machine, not to the quality picked.
-    for (const preset of Object.keys(STREAM_PRESETS)) {
-        const { video } = screenShareSettings({ preset }).constraints;
-        assert.equal(video.frameRate.max, CAPTURE_FPS_CEILING, preset);
-        assert.equal(video.frameRate.ideal, undefined, preset + ': for display capture, ideal caps too');
+test('each quality caps the capture size and sets the video budget', () => {
+    // The web app's ladder, plus Source. The numbers are what a viewer actually receives,
+    // so they are pinned rather than left to drift.
+    for (const [quality, width, bitrate] of [
+        ['720p', 1280, 2_500_000],
+        ['1080p', 1920, 5_000_000],
+        ['1440p', 2560, 8_000_000],
+    ]) {
+        const p = screenShareSettings({ quality });
+        assert.equal(p.constraints.video.width.max, width, quality);
+        assert.equal(p.constraints.video.width.ideal, undefined, `${quality}: a ceiling, never a target to scale up to`);
+        assert.equal(p.encodings[0].maxBitrate, bitrate, quality);
     }
 });
 
-test('source imposes no size and no rate at all', () => {
-    const p = screenShareSettings({ preset: 'source' });
+test('the content type sets the rate and the tie-breaker', () => {
+    const video = screenShareSettings({ content: 'video' });
+    assert.equal(video.encodings[0].maxFramerate, 60, 'the rate is the encoder\'s business');
+    assert.equal(video.targetFramerate, 60, 'and voice.js snaps against it');
+    assert.equal(video.contentHint, 'motion', 'a game keeps its frame rate');
+
+    const text = screenShareSettings({ content: 'text' });
+    assert.equal(text.encodings[0].maxFramerate, 30);
+    assert.equal(text.contentHint, 'text', 'a document keeps its glyphs sharp');
+});
+
+test('no choice caps the CAPTURE at its own rate', () => {
+    // This is the stuttering-game fix, and the thing most likely to be undone by accident.
+    // A per-choice max here makes Chromium run the desktop capturer on a fixed-interval
+    // timer, and a source that does not divide into that interval lands its frames either
+    // side of the tick — 70 fps into a 30 Hz grid is a 2-1-2-1 stagger with nothing lost to
+    // the network at all. The ceiling belongs to the machine, not to the quality picked.
+    for (const quality of Object.keys(SHARE_QUALITIES)) {
+        for (const content of Object.keys(SHARE_CONTENT)) {
+            const { video } = screenShareSettings({ quality, content }).constraints;
+            assert.equal(video.frameRate.max, CAPTURE_FPS_CEILING, `${quality}/${content}`);
+            assert.equal(video.frameRate.ideal, undefined, `${quality}/${content}: for display capture, ideal caps too`);
+        }
+    }
+});
+
+test('source imposes no size', () => {
+    const p = screenShareSettings({ quality: 'source', content: 'video' });
     assert.equal(p.constraints.video.width, undefined);
+    assert.equal(p.constraints.video.height, undefined);
     assert.equal(p.encodings[0].maxBitrate, 8_000_000);
-    assert.equal(p.encodings[0].maxFramerate, undefined, '"as it is" means as it is');
-    assert.equal(p.targetFramerate, null);
+    assert.equal(p.encodings[0].maxFramerate, 60, 'but the content type still decides the rate');
+});
+
+test('every tier and content type can be rendered, and says what it is', () => {
+    // The chooser draws straight from these tables, so a missing title is a blank card.
+    for (const [key, entry] of [...Object.entries(SHARE_QUALITIES), ...Object.entries(SHARE_CONTENT)]) {
+        assert.ok(entry.title && entry.sub, `${key} needs a title and a description`);
+    }
 });
 
 test('the chosen rate snaps to a cadence the source divides into', () => {
@@ -71,15 +99,32 @@ test('an unsettled stat falls back to the chosen rate, not to nonsense', () => {
     }
 });
 
-test('the tie-breaker maps onto the content hint', () => {
-    assert.equal(screenShareSettings({ prefer: 'detail' }).contentHint, 'detail');
-    assert.equal(screenShareSettings({ prefer: 'motion' }).contentHint, 'motion');
-    assert.equal(screenShareSettings({ prefer: 'nonsense' }).contentHint, 'detail', 'text survives by default');
+test('an unknown choice falls back to the defaults rather than breaking the share', () => {
+    // The choice is remembered on disk. A value from an older or newer build must still
+    // produce a working share.
+    const p = screenShareSettings({ quality: 'nope', content: 'nonsense' });
+    assert.equal(p.encodings[0].maxBitrate, SHARE_QUALITIES[DEFAULT_SHARE_QUALITY].maxBitrate);
+    assert.equal(p.contentHint, SHARE_CONTENT[DEFAULT_SHARE_CONTENT].contentHint);
+    assert.deepEqual(p.choice, { quality: DEFAULT_SHARE_QUALITY, content: DEFAULT_SHARE_CONTENT });
+    assert.deepEqual(normaliseShareChoice(), { quality: '1080p', content: 'video' }, 'the web app\'s defaults');
+    // Prototype keys are not tiers.
+    assert.deepEqual(normaliseShareChoice({ quality: 'toString', content: '__proto__' }),
+        { quality: '1080p', content: 'video' });
 });
 
-test('an unknown preset falls back to the everyday default', () => {
-    const p = screenShareSettings({ preset: 'nope' });
-    assert.equal(p.encodings[0].maxBitrate, STREAM_PRESETS['1080p30'].maxBitrate);
+test('the old settings carry over to the chooser once', () => {
+    for (const [streamPreset, streamPrefer, expected] of [
+        ['720p30', 'detail', { quality: '720p', content: 'text' }],
+        ['1080p30', 'detail', { quality: '1080p', content: 'text' }],
+        ['1080p30', 'motion', { quality: '1080p', content: 'video' }],
+        ['1080p60', 'detail', { quality: '1080p', content: 'video' }],   // the games preset
+        ['source', null, { quality: 'source', content: 'text' }],
+        ['something-else', 'motion', { quality: '1080p', content: 'video' }],
+    ]) {
+        assert.deepEqual(legacyShareChoice({ streamPreset, streamPrefer }), expected,
+            `${streamPreset}/${streamPrefer}`);
+    }
+    assert.equal(legacyShareChoice({}), null, 'nothing ever chosen is not the same as the default');
 });
 
 test('camera constraints follow the chosen ladder and device', () => {
@@ -113,8 +158,8 @@ test('system audio keeps echo cancellation, and drops the rest', () => {
 test('a screen share is a single encoding', () => {
     // VP9 K-SVC here gave every viewer a black picture while the audio from the same
     // share played fine. It goes back only behind a two-machine test.
-    for (const prefer of ['detail', 'motion']) {
-        const { encodings } = screenShareSettings({ prefer });
+    for (const content of Object.keys(SHARE_CONTENT)) {
+        const { encodings } = screenShareSettings({ content });
         assert.equal(encodings.length, 1);
         assert.equal(encodings[0].scalabilityMode, undefined, 'no SVC until it is proven');
     }

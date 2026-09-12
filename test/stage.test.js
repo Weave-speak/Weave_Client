@@ -3,7 +3,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { stageView, orderTiles, tileKey, sharePickerView } from '../src/room/views/stage.js';
+import { stageView, orderTiles, tileKey, sharePickerView, shareSetupView } from '../src/room/views/stage.js';
+import { SHARE_QUALITIES, SHARE_CONTENT } from '../src/media/presets.js';
 
 const t = (cid, slot, extra = {}) => ({ key: tileKey(cid, slot), cid, slot, label: cid, live: true, ...extra });
 
@@ -69,6 +70,42 @@ test('the picker splits screens from windows and escapes window titles', () => {
     assert.ok(!view.includes('<script>evil'));
     assert.match(view, /&lt;script&gt;/);
     assert.match(view, /id="shareAudio" checked/, 'computer audio rides along by default');
+});
+
+/** The value of the one checked radio in a named group, read out of the markup. */
+const checkedIn = (markup, name) => [...markup.matchAll(/<input type="radio" name="([^"]+)" value="([^"]+)" ([^>]*)>/g)]
+    .filter((m) => m[1] === name && /\bchecked\b/.test(m[3]))
+    .map((m) => m[2]);
+
+test('the share chooser offers every quality and both kinds of content', () => {
+    const view = shareSetupView({});
+    for (const key of Object.keys(SHARE_QUALITIES)) assert.match(view, new RegExp(`name="quality" value="${key}"`));
+    for (const key of Object.keys(SHARE_CONTENT)) assert.match(view, new RegExp(`name="content" value="${key}"`));
+    assert.match(view, /High/);
+    assert.match(view, /1440p/, 'the tier the web app has and this app did not');
+    assert.match(view, /Source/);
+});
+
+test('the share chooser opens on the last choice, exactly one per group', () => {
+    const view = shareSetupView({ quality: '1440p', content: 'text' });
+    assert.deepEqual(checkedIn(view, 'quality'), ['1440p']);
+    assert.deepEqual(checkedIn(view, 'content'), ['text']);
+
+    // With nothing remembered, the defaults — and still exactly one each, so the form can
+    // never submit an empty group.
+    const fresh = shareSetupView();
+    assert.deepEqual(checkedIn(fresh, 'quality'), ['1080p']);
+    assert.deepEqual(checkedIn(fresh, 'content'), ['video']);
+});
+
+test('nothing starts until "Choose screen", and there is a way out', () => {
+    // On the web app, clicking a quality started the share at once — so the content type,
+    // which sat BELOW the qualities, had to be picked first. Here the cards only select.
+    const view = shareSetupView({});
+    assert.equal((view.match(/type="submit"/g) ?? []).length, 1, 'one thing starts a share');
+    assert.match(view, /type="submit"[^>]*data-share-go[^>]*data-initial-focus/, 'and Enter reaches it');
+    assert.ok((view.match(/data-share-cancel/g) ?? []).length >= 1);
+    assert.ok(!/<button[^>]*name="quality"/.test(view), 'a quality is a choice, not a button that acts');
 });
 
 test('the FOCUSED stream carries the pill: listen controls, fullscreen, the way out', () => {

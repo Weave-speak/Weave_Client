@@ -1090,6 +1090,15 @@
 }
 .share-audio { margin-top: var(--s-5); }
 
+/* How to share: the same radio cards as the room browser's kind picker (.kind-card), laid out
+   for this dialog. Narrower than the picker it precedes, because it is two short questions,
+   not a gallery of thumbnails. */
+.share-setup { width: min(520px, 92vw); display: flex; flex-direction: column; }
+.share-setup .panel-section { margin-top: var(--s-5); }
+.share-setup .browser-head + .panel-section { margin-top: var(--s-2); }
+.share-option { padding: var(--s-3) var(--s-4); }
+.share-setup-actions { margin-top: var(--s-6); }
+
 /* ── Timeline ─────────────────────────────────────────────────────────────── */
 
 .timeline {
@@ -2357,6 +2366,9 @@
     border-color: var(--accent);
     background: var(--accent-tint);
 }
+/* The radio is invisible, so the ring the browser would draw on it is too. Without this a
+   keyboard user moving through the cards with the arrow keys cannot see where they are. */
+.kind-card:has(input:focus-visible) { outline: 2px solid var(--focus-line); outline-offset: 2px; }
 .kind-name { display: flex; align-items: center; gap: var(--s-2); font-weight: 600; }
 .kind-name svg { width: 17px; height: 17px; }
 .kind-hint { font-size: var(--t-sm); color: var(--ink-faint); }

@@ -471,26 +471,6 @@ export function voicePanel({ prefs = {}, devices = [], cameras = [], outputs = [
         ],
     })}
 
-    <h3 class="panel-section">Screen sharing</h3>
-
-    ${choose({
-        id: 'streamPreset', label: 'Stream quality',
-        hint: 'Applies from your next share. The frame rate is a target rather than a ceiling: a 70fps game streams at 35 rather than stuttering against a hard 30.',
-        value: prefs.streamPreset ?? '1080p30',
-        options: [
-            ['720p30', '720p · 30fps — kind to every connection'],
-            ['1080p30', '1080p · 30fps — the everyday default'],
-            ['1080p60', '1080p · 60fps — games'],
-            ['source', 'Source — your screen exactly as it is'],
-        ],
-    })}
-    ${choose({
-        id: 'streamPrefer', label: 'When the connection tightens',
-        hint: 'The encoder cannot always keep both. Pick what survives — a game usually wants motion.',
-        value: prefs.streamPrefer ?? 'detail',
-        options: [['detail', 'Keep text readable'], ['motion', 'Keep motion smooth']],
-    })}
-
     <h3 class="panel-section">Presence</h3>
 
     ${hasAfk

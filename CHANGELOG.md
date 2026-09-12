@@ -4,6 +4,55 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.63] - 2026-09-12
+
+### Added
+- **The sign-in screen weaves itself.** Eleven strings run the height of the window behind
+  the card, each in its own colour, and every so often one is struck — a bounce, a glow, a
+  slow fall back to rest — while the rest keep breathing. Nobody is doing it. It is the same
+  instrument the Loom plays in a room, literally: one string, drawn by the same code in both
+  places, so the first thing you see and the room you walk into are recognisably the same
+  thing.
+
+  It carries on unbroken as you move between signing in, registering and resetting a
+  password, rather than starting over on every screen, and a vignette keeps the card easy to
+  read in front of it. It stops the moment you are in a room — not merely hidden, stopped —
+  and pauses whenever the window is out of sight.
+
+  **Still background** applies here too, for the server you are signing in to, and the
+  system's reduce-motion setting leaves the strings drawn but at rest. On a first run there
+  is no server yet to have a preference, so only the system setting applies.
+
+  One thing deliberately differs from the web version. Each string waits for its next
+  moment on a clock, and after a while in another window all of those moments are in the
+  past, so the web login screen strikes all eleven on the frame you come back. Here the time
+  spent away does not count, and the strings pick up where they left off.
+
+- **Sharing your screen asks how, every time.** Pressing share now opens a short chooser
+  before the screen picker, as the web app does: a quality, and whether it is video or text.
+  A game and a spreadsheet are different streams — one wants every frame, the other every
+  letter — and the settings that used to decide this sat in a dialog nobody reopened between
+  the two. The chooser opens on whatever you picked last, so sharing the same kind of thing
+  again is a single extra click.
+
+  Four qualities: **Smooth** (720p, about 2.5 Mb/s), **Balanced** (1080p, about 5), **High**
+  (1440p, about 8), and **Source** — your screen at its own resolution, about 8. **Video**
+  keeps motion smooth at up to 60 frames a second; **Text** keeps small type sharp at up to
+  30. Nothing starts until you press *Choose screen*, so the order you pick them in does not
+  matter — on the web app, clicking a quality started the share on the spot.
+
+  The quality you choose is held for the whole share, including when a dropped connection
+  puts the share back on its own.
+
+### Changed
+- **Screen sharing is no longer in Settings.** The two settings it had moved into the chooser.
+  If you had changed them, the chooser opens on the nearest match the first time: 1080p60
+  becomes Balanced + Video, and "keep text readable" becomes Text.
+- **High needs a server on 0.1.33 or later to reach its full quality.** Older servers cap one
+  person's streams at 8 Mb/s all together, which a High share with its sound already exceeds.
+  The share still works; it is simply held back to what that server allows.
+- A 1080p share at 60 frames a second now budgets 5 Mb/s rather than 6, matching the web app.
+
 ## [0.1.62] - 2026-09-12
 
 ### Added

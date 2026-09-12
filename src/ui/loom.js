@@ -43,7 +43,7 @@ const SEGMENTS = 46;
 // that is not coloured by a person, so it takes the app's own palette. These are the hues
 // of --gold-rgb and --accent in tokens.css. They live here as numbers because the canvas
 // draws in HSL and cannot read a CSS variable; if either token moves, move these with it.
-const HUE_WARP = 37;    // --gold-rgb: 224 163 62
+export const HUE_WARP = 37;    // --gold-rgb: 224 163 62
 const HUE_WEB = 258;    // --accent: #8b5cf6
 
 /** Below this a voice is not active enough to braid with anybody. */
@@ -179,65 +179,14 @@ export class LoomRenderer {
 
     /* ── the maths, verbatim from the original ───────────────────────────── */
 
-    /**
-     * How far a string is displaced at a fractional position along it.
-     *
-     * `sin(pi * tx)` pins both ends at zero and bulges the middle, which is what a plucked
-     * string does. `harm` adds a second and a half harmonic so cloth and web shimmer; harp
-     * stays pure, which is the difference you can actually see between them.
-     */
+    // Both live at module level now, shared with the sign-in background, which plucks the
+    // very same string. These stay as the names the drawing code below already uses.
     _disp(tx, amp, freq, t, harm) {
-        const env = Math.sin(Math.PI * tx);
-        let d = env * amp * Math.sin(2 * Math.PI * freq * t);
-        if (harm) {
-            d += env * amp * 0.34 * Math.sin(2 * Math.PI * freq * 2 * t + 1.1)
-                + Math.sin(2 * Math.PI * tx) * amp * 0.18 * Math.sin(2 * Math.PI * freq * 0.5 * t);
-        }
-        return d;
+        return stringDisplacement(tx, amp, freq, t, harm);
     }
 
-    /**
-     * One string: a wide glow pass, then a bright core along the same path.
-     *
-     * `offFn` bends the whole baseline, which is how braiding is done — the string keeps
-     * its own vibration and the offset carries it toward everybody else.
-     */
     _drawString(ctx, x0, x1, y, v, rowH, t, mode, offFn) {
-        const maxA = rowH * 0.34;
-        const pluckA = rowH * 0.42;
-        const idle = 0.05 + 0.04 * Math.sin(t * 1.1 + v.phase);
-        let amp = (v.level * maxA) + (v.pluck * pluckA) + idle * (rowH * 0.16);
-        amp = Math.min(amp, rowH * 0.47);
-        const harm = mode !== 'harp';
-
-        const pts = [];
-        for (let i = 0; i <= SEGMENTS; i++) {
-            const tx = i / SEGMENTS;
-            const x = x0 + (x1 - x0) * tx;
-            const off = offFn ? offFn(tx) : 0;
-            pts.push([x, y + off - this._disp(tx, amp, v.freq, t, harm)]);
-        }
-
-        const lvl = Math.min(1, v.level + v.pluck);
-        ctx.save();
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-
-        // Glow pass.
-        ctx.shadowBlur = 5 + lvl * 20;
-        ctx.shadowColor = this._hsl(v.hue, 90, 62, 0.9);
-        ctx.strokeStyle = this._hsl(v.hue, 78, 56 + lvl * 8, 0.55 + lvl * 0.4);
-        ctx.lineWidth = 1.3 + v.level * 3 + v.pluck * 2.4;
-        trace(ctx, pts);
-
-        // Bright core.
-        ctx.shadowBlur = 0;
-        ctx.strokeStyle = this._hsl(v.hue, 100, 86, 0.25 + lvl * 0.6);
-        ctx.lineWidth = 0.8 + lvl * 1.1;
-        trace(ctx, pts);
-
-        ctx.restore();
-        return { amp };
+        return drawString(ctx, { x0, x1, y, voice: v, rowH, t, harm: mode !== 'harp', offFn });
     }
 
     _drawLoom(ctx, w, h, t, raw) {
@@ -446,6 +395,79 @@ export class LoomRenderer {
         this._handle = this._raf(this._animate);
     }
 }
+
+/* ── the string itself ────────────────────────────────────────────────────── */
+
+// One vibrating string, as both the Loom and the sign-in background draw it. The original
+// server code carried two copies of this, line for line; they are one here so that the day
+// somebody retunes it, the first screen and the room stay the same instrument.
+
+/**
+ * How far a string is displaced at a fractional position along it.
+ *
+ * `sin(pi * tx)` pins both ends at zero and bulges the middle, which is what a plucked
+ * string does. `harm` adds a second and a half harmonic so cloth and web shimmer; harp
+ * stays pure, which is the difference you can actually see between them.
+ */
+export function stringDisplacement(tx, amp, freq, t, harm) {
+    const env = Math.sin(Math.PI * tx);
+    let d = env * amp * Math.sin(2 * Math.PI * freq * t);
+    if (harm) {
+        d += env * amp * 0.34 * Math.sin(2 * Math.PI * freq * 2 * t + 1.1)
+            + Math.sin(2 * Math.PI * tx) * amp * 0.18 * Math.sin(2 * Math.PI * freq * 0.5 * t);
+    }
+    return d;
+}
+
+/**
+ * One string: a wide glow pass, then a bright core along the same path.
+ *
+ * `offFn` bends the whole baseline, which is how braiding is done — the string keeps its
+ * own vibration and the offset carries it toward everybody else.
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {object} s
+ * @param {{hue: number, level: number, pluck: number, phase: number, freq: number}} s.voice
+ * @returns {{amp: number}} the amplitude used, which the cloth interlace needs to follow it
+ */
+export function drawString(ctx, { x0, x1, y, voice: v, rowH, t, harm = true, offFn = null }) {
+    const maxA = rowH * 0.34;
+    const pluckA = rowH * 0.42;
+    const idle = 0.05 + 0.04 * Math.sin(t * 1.1 + v.phase);
+    let amp = (v.level * maxA) + (v.pluck * pluckA) + idle * (rowH * 0.16);
+    amp = Math.min(amp, rowH * 0.47);
+
+    const pts = [];
+    for (let i = 0; i <= SEGMENTS; i++) {
+        const tx = i / SEGMENTS;
+        const x = x0 + (x1 - x0) * tx;
+        const off = offFn ? offFn(tx) : 0;
+        pts.push([x, y + off - stringDisplacement(tx, amp, v.freq, t, harm)]);
+    }
+
+    const lvl = Math.min(1, v.level + v.pluck);
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    // Glow pass.
+    ctx.shadowBlur = 5 + lvl * 20;
+    ctx.shadowColor = hsl(v.hue, 90, 62, 0.9);
+    ctx.strokeStyle = hsl(v.hue, 78, 56 + lvl * 8, 0.55 + lvl * 0.4);
+    ctx.lineWidth = 1.3 + v.level * 3 + v.pluck * 2.4;
+    trace(ctx, pts);
+
+    // Bright core.
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = hsl(v.hue, 100, 86, 0.25 + lvl * 0.6);
+    ctx.lineWidth = 0.8 + lvl * 1.1;
+    trace(ctx, pts);
+
+    ctx.restore();
+    return { amp };
+}
+
+export const hsl = (h, s, l, a) => (a == null ? `hsl(${h},${s}%,${l}%)` : `hsla(${h},${s}%,${l}%,${a})`);
 
 /** Trace a polyline that has already been computed. */
 function trace(ctx, pts) {

@@ -396,7 +396,7 @@ test('every control the settings panels persist survives a round trip', async ()
     }
 });
 
-test('a stored stream preset is the one that comes back', async () => {
+test('a stored share choice is the one that comes back', async () => {
     // The structural test above proves DEFAULTS names every control. This proves the
     // consequence people actually felt: picking 1080p60 and getting 1080p30 back, because
     // readPrefs seeded from DEFAULTS and copied only the keys it already knew.
@@ -410,14 +410,57 @@ test('a stored stream preset is the one that comes back', async () => {
     const { settingsFor } = await import('../src/server/store.js');
 
     const store = settingsFor('server-1');
-    store.set('streamPreset', '1080p60');
+    store.set('shareQuality', '1440p');
+    store.set('shareContent', 'text');
     store.set('micGain', 160);
     store.set('noiseGate', true);
 
     const prefs = readPrefs('server-1');
-    assert.equal(prefs.streamPreset, '1080p60');
+    assert.equal(prefs.shareQuality, '1440p');
+    assert.equal(prefs.shareContent, 'text');
     assert.equal(prefs.micGain, 160, 'input gain is not silently reset to unity');
     assert.equal(prefs.noiseGate, true, 'a gate the user switched on stays on');
+});
+
+test('the old stream settings carry over to the share chooser, until a new choice is made', async () => {
+    const map = new Map();
+    globalThis.localStorage = {
+        getItem: (k) => (map.has(k) ? map.get(k) : null),
+        setItem: (k, v) => map.set(k, String(v)),
+        removeItem: (k) => map.delete(k),
+    };
+    const { readPrefs } = await import('../src/settings/index.js');
+    const { settingsFor } = await import('../src/server/store.js');
+
+    // Somebody who spent the last release on the games preset.
+    const store = settingsFor('server-legacy');
+    store.set('streamPreset', '1080p60');
+    store.set('streamPrefer', 'detail');
+    let prefs = readPrefs('server-legacy');
+    assert.equal(prefs.shareQuality, '1080p');
+    assert.equal(prefs.shareContent, 'video', '1080p60 was the games preset');
+
+    // Their first share through the chooser is a real choice, and it wins from then on.
+    store.set('shareQuality', '720p');
+    store.set('shareContent', 'text');
+    prefs = readPrefs('server-legacy');
+    assert.equal(prefs.shareQuality, '720p');
+    assert.equal(prefs.shareContent, 'text');
+
+    // Nothing ever chosen, old or new: the defaults.
+    prefs = readPrefs('server-untouched');
+    assert.equal(prefs.shareQuality, '1080p');
+    assert.equal(prefs.shareContent, 'video');
+});
+
+test('screen sharing is no longer a setting', async () => {
+    // It moved to the moment of sharing. A select here would be a second, stale answer to
+    // the question the chooser asks every time.
+    const { voicePanel } = await import('../src/settings/panels.js');
+    const html = voicePanel({ prefs: {}, devices: {}, features: [] });
+    assert.ok(!html.includes('streamPreset'));
+    assert.ok(!html.includes('streamPrefer'));
+    assert.ok(!html.includes('Screen sharing'));
 });
 
 /* ── security & recovery ──────────────────────────────────────────────────── */

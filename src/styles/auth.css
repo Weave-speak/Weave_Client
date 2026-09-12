@@ -20,7 +20,43 @@
         radial-gradient(1300px 900px at 88% 94%, rgb(var(--accent-rgb) / 0.09) 0%, transparent 66%),
         var(--bg-void);
     overflow-y: auto;
+    /* Its own stacking context, so the strings below can sit behind the card and still in
+       front of this background. Without it a --z-below layer drops into the ROOT context
+       and paints underneath the opaque field above — exactly how the room's background
+       spent its whole life invisible (see .room in shell.css). */
+    isolation: isolate;
 }
+
+/* ── The strings ──────────────────────────────────────────────────────────── */
+
+/* Eleven strings that pluck themselves, behind everything on the sign-in surface. See
+   src/ui/join-background.js.
+
+   FIXED, so the strings belong to the window rather than to whatever box happens to hold
+   them. Absolute works today only because .app is not itself positioned; give it a
+   `position` and a tall register card would scroll the canvas away with the form, leaving
+   a bare strip below. */
+.auth-bg,
+.auth-vignette {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: var(--z-below);
+    pointer-events: none;
+}
+.auth-bg { display: block; opacity: 0.9; }
+/* Painted after the canvas, so it darkens the strings rather than the other way round. Clear
+   where the card sits and deep at the edges: eleven glowing strings are a lot to read a
+   form in front of, and the card has to win. */
+.auth-vignette {
+    background: radial-gradient(680px 460px at 50% 42%,
+        rgb(var(--bg-void-rgb) / 0) 0%,
+        rgb(var(--bg-void-rgb) / 0.55) 70%,
+        rgb(var(--bg-void-rgb) / 0.82) 100%);
+}
+.app > .topbar,
+.app > .stage { position: relative; z-index: var(--z-base); }
 
 /* ── Top bar ──────────────────────────────────────────────────────────────── */
 

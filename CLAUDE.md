@@ -6,7 +6,7 @@ a protocol needs clients, and nobody should have to open-source their app to tal
 Weave server. One source tree, two builds — browser (`npm run build`) and Electron desktop
 (`npm run build:desktop`).
 
-Current release: **0.1.63**. Windows installers are published to GitHub Releases, unsigned,
+Current release: **0.1.64**. Windows installers are published to GitHub Releases, unsigned,
 so SmartScreen warns until a certificate exists.
 
 ## Commands
@@ -95,6 +95,21 @@ holds the app log. Fatal startup errors go to `%TEMP%\weave\startup-crash.log`.
   broke every LAN client, and no amount of reading signalling code would have shown it.
 - **Processed mic tracks can be silently empty in Chromium** (worklet + MediaStreamSource).
   Always verify a track carries audio rather than assuming the graph works.
+- **`backdrop-filter` over a fullscreen video is not free.** The LIVE badge and the stream
+  pill both sit inside `.tile`, both asked for a blur, and a backdrop-filter descendant forces
+  each decoded frame through a render surface instead of a compositor overlay. Invisible at
+  172px, ruinous at 1440p — the tell was the thumbnail being smooth while fullscreen was not.
+  Neutralised in the `.tile:fullscreen` block; do not add another blur inside a tile.
+- **Nothing pauses a canvas for fullscreen.** `document.hidden` stays FALSE while an element
+  is fullscreen — Page Visibility is about the document, not about what covers it — so the
+  renderers' own visibilitychange handlers never fire, and the window has meanwhile resized
+  to the monitor. `onFullscreenChange` calls `applyMotionPrefs()` for exactly this reason.
+- **A server-closed producer is invisible to mediasoup-client.** It is only told when a
+  TRANSPORT closes. Moving into a room with `allowVoice: false` (the away room, by way of the
+  idle sweep) closes the audio producer server-side and announces nothing, so `micProducer`
+  stayed truthy, `enableMic()`'s guard returned it, and the person was silent for the rest of
+  the session with every indicator normal. The client now drops the handle itself on landing
+  in such a room. A guard on a producer handle must check the transport too.
 - **Deltas are fragile.** An update is ~1 MB against a ~108 MB installer because
   electron-updater diffs blockmaps. `npm run predict-delta` fails the release if that
   ratio degrades — usually a changed build machine or bumped toolchain.

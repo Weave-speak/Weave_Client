@@ -4,6 +4,43 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.64] - 2026-09-17
+
+### Fixed
+- **Watching a shared screen full-window is smooth again.** Three separate things were wrong
+  at once, which is why it looked so erratic.
+
+  The picture itself stuttered because of the "LIVE" badge and the controls that sit on the
+  stream. Both are frosted glass, and frosted glass over a video means every frame has to be
+  copied and blurred rather than handed straight to the screen. At thumbnail size that costs
+  nothing; at 1440p it is the difference between smooth and broken — which is exactly why the
+  small tile looked fine while the big one did not. They are still there, and no longer made
+  of blurred video.
+
+  The whole window then stopped responding for several seconds because the weaving strands
+  behind the room kept animating at full screen size, redrawing a glowing strand for every
+  person online sixty times a second, behind a video covering them completely. They now pause
+  while anything is full-window and come back when you leave.
+
+- **Full-window watching no longer drops you out on its own.** A stream that flickers for a
+  moment — a connection repaired, a room reshuffled — looked exactly like a share that had
+  ended, and you were returned to the small tiles. It now waits a couple of seconds to see
+  which it was. A share that has genuinely ended still returns you, as it should.
+
+- **Escape leaves full-window without also closing the stream.** One press was doing both.
+
+- **Being moved to Away no longer costs you your microphone.** Coming back and rejoining a
+  voice room left you silent to everybody else, for the rest of the session, with your own
+  microphone button and level meter looking perfectly normal — which is the worst way for
+  this to fail, because there was nothing to notice.
+
+  A room that does not allow voice switches your microphone off at the server, and the away
+  room is one of those. Nothing told this app, so it went on believing it was still sending
+  and never started again. It now lets go properly when it lands in such a room, and starts
+  cleanly on the way back — from the microphone that was already open, so there is no second
+  permission prompt. The same applies to any move into a room with voice switched off, not
+  only the idle sweep.
+
 ## [0.1.63] - 2026-09-12
 
 ### Added

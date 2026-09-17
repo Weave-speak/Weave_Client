@@ -63,6 +63,14 @@ const SPEAKING_HOLD_MS = 450;
 /** How long to wait for an animation frame before painting anyway. */
 const PAINT_FLOOR_MS = 100;
 
+/**
+ * How long a fullscreen tile may sit without a stream before it counts as over.
+ *
+ * Long enough to cover a re-consume — a reconcile, an ICE repair — and short enough that a
+ * share which really ended does not leave somebody staring at a frozen frame wondering.
+ */
+const FULLSCREEN_HOLD_MS = 2000;
+
 export function createRoom({ mount, api, link, user, server, features = [], reportStream = () => Promise.resolve(false), onSignedOut }) {
     const state = createRoomState({
         me: user,
@@ -242,6 +250,11 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
     // Set when a repaint was withheld because it would have dropped the viewer out of
     // fullscreen; flushed the moment they leave it.
     let stagePaintDeferred = false;
+    // While a fullscreen tile's stream is missing, until this moment passes. A dropped
+    // consumer that is about to be re-made is indistinguishable from a share that ended —
+    // see stage-paint.js — so the difference is decided by waiting a beat.
+    let fullscreenHoldUntil = 0;
+    let fullscreenHoldTimer = 0;
 
     const voice = createVoice({
         link,
@@ -283,7 +296,12 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
                 // A share that ended forgets you were viewing it, so the next one starts as a
                 // placeholder rather than snapping straight to a live self-view.
                 watchingSelf.delete(key);
-                if (stageFocus === key) stageFocus = null;
+                // Somebody watching this one in fullscreen gets a moment's grace before it is
+                // treated as over: a re-consume lands on the existing <video> through
+                // attachStreams and they never notice, where ejecting them would be the whole
+                // picture vanishing for a hiccup.
+                const held = holdFullscreen(key);
+                if (!held && stageFocus === key) stageFocus = null;
             } else {
                 videoStreams.set(key, stream);
                 // Watching is opt-in now, so every remote stream that arrives here was
@@ -672,8 +690,15 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             }
         }
 
+        // The tile holder is what was handed to requestFullscreen, so it carries the key.
+        const fullscreenKey = document.fullscreenElement?.dataset?.tile ?? null;
+        const hold = Boolean(fullscreenKey) && Date.now() < fullscreenHoldUntil;
+
         // Focus may only rest on a live tile; a placeholder in focus would be a black box.
-        if (stageFocus && !tiles.some((t) => t.key === stageFocus && t.live)) stageFocus = null;
+        // Except while the fullscreen tile is being held: dropping the focus there would
+        // survive the hold and put the viewer back in the grid anyway.
+        if (stageFocus && !tiles.some((t) => t.key === stageFocus && t.live)
+            && !(hold && stageFocus === fullscreenKey)) stageFocus = null;
         // A dragged height belongs to the SPLIT; the compact indication row sizes itself.
         if (!stageFocus) stageHeightPx = null;
 
@@ -682,8 +707,8 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             signature,
             lastSignature: lastStageSignature,
             hasChildren: slot.childElementCount > 0,
-            // The tile holder is what was handed to requestFullscreen, so it carries the key.
-            fullscreenKey: document.fullscreenElement?.dataset?.tile ?? null,
+            fullscreenKey,
+            hold,
             tiles,
         });
         if (decision !== 'paint') {
@@ -717,10 +742,52 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         }
     }
 
-    // Anything the stage wanted to draw while the viewer was in fullscreen was withheld so
-    // it would not eject them; draw it now that leaving is their own doing.
+    /**
+     * A fullscreen tile has just lost its stream. Wait, rather than ejecting.
+     *
+     * Returns whether this key is the one in fullscreen — the caller leaves the focus alone
+     * when it is. The timer is what ends the grace: if nothing re-consumed by then, the paint
+     * that was withheld happens and the viewer leaves fullscreen on the honest grounds that
+     * the share is over.
+     */
+    function holdFullscreen(key) {
+        if (!key || document.fullscreenElement?.dataset?.tile !== key) return false;
+        fullscreenHoldUntil = Date.now() + FULLSCREEN_HOLD_MS;
+        clearTimeout(fullscreenHoldTimer);
+        fullscreenHoldTimer = setTimeout(() => {
+            fullscreenHoldUntil = 0;
+            paintStage();
+        }, FULLSCREEN_HOLD_MS);
+        return true;
+    }
+
+    function clearFullscreenHold() {
+        fullscreenHoldUntil = 0;
+        clearTimeout(fullscreenHoldTimer);
+        fullscreenHoldTimer = 0;
+    }
+
+    /**
+     * Entering and leaving fullscreen.
+     *
+     * Two jobs. Anything the stage wanted to draw while the viewer was in fullscreen was
+     * withheld so it would not eject them; draw it now that leaving is their own doing.
+     *
+     * And the animations stop for the duration. Nothing else pauses them: `document.hidden`
+     * stays false while an element is fullscreen — the Page Visibility spec is about the
+     * document, not about what is covering it — so the visibilitychange handler inside each
+     * renderer never fires. Meanwhile the window has resized to the monitor, which takes the
+     * room background's canvas with it: a backing store up to the full screen at 2x, cleared
+     * and redrawn sixty times a second with a shadow-blurred stroke per person online. That
+     * is affordable beside a 172px thumbnail and not beside a 1440p video, and it is what
+     * made the picture stutter and the window stop answering. They are decoration, and they
+     * are behind an opaque video at that moment regardless.
+     */
     function onFullscreenChange() {
-        if (document.fullscreenElement || !stagePaintDeferred) return;
+        applyMotionPrefs();
+        if (document.fullscreenElement) return;
+        clearFullscreenHold();
+        if (!stagePaintDeferred) return;
         stagePaintDeferred = false;
         paintStage();
     }
@@ -1030,7 +1097,9 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
      * reads as a photograph of a living thing rather than as its absence.
      */
     function applyMotionPrefs() {
-        if (prefs.staticBackground) {
+        // A tile in fullscreen is the second reason to stop, and it is not a preference:
+        // see onFullscreenChange for what these cost over a full-screen video.
+        if (prefs.staticBackground || document.fullscreenElement) {
             background?.stop();
             loom?.stop();
             return;
@@ -1407,6 +1476,17 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         setTimeout(() => voice.sync(roomPeers()).catch(() => {}), 3000);
 
         if (channel?.allowVoice === false) {
+            // The server has already closed the microphone producer on its side — that is
+            // what a room forbidding voice MEANS, and hiding a mic button would only be a
+            // suggestion. It does not say so, though, and mediasoup-client is not told
+            // either, so this side agrees explicitly. Without it the stale handle survives
+            // the visit and enableMic() hands it back on the way out, leaving somebody who
+            // was moved here by the idle sweep silent for the rest of the session.
+            voice.releaseMicProducer();
+            // Deafen is about what reaches you, and the away room still carries video and its
+            // audio. Reasserting it here rather than only past this return is the difference
+            // between "silence, as asked for" and sound coming back on a move.
+            voice.setDeafened(Boolean(state.toShell().me.deafened));
             voiceState = { state: 'unavailable', message: `Voice is off in ${channel.name}.` };
             paint();
             return;
@@ -2143,6 +2223,11 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
 
         window.addEventListener('keydown', (event) => {
             if (event.key !== 'Escape') return;
+            // In fullscreen, Escape is the browser's own way out and it has already been
+            // handled. Acting on it again would both leave fullscreen AND drop the viewer
+            // back to the thumbnail grid — two things for one press, only one of them asked
+            // for. Leaving fullscreen alone is enough.
+            if (document.fullscreenElement) return;
             if (stageFocus) { stageFocus = null; paintStage(); return; }
             setDrawer(false);
         });
@@ -2673,6 +2758,7 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
 
         destroy() {
             document.removeEventListener('fullscreenchange', onFullscreenChange);
+            clearTimeout(fullscreenHoldTimer);
             clearInterval(syncTimer);
             clearInterval(statsTimer);
             clearInterval(streamDiagTimer);

@@ -1031,8 +1031,28 @@
 .mark-watch:hover { background: var(--accent-tint-hi); color: var(--accent-hi); }
 
 /* Fullscreen strips the chrome and keeps the picture. */
-.tile:fullscreen { border: 0; border-radius: 0; }
+.tile:fullscreen { border: 0; border-radius: 0; box-shadow: none; transition: none; }
 .tile:fullscreen video { object-fit: contain; }
+
+/* NO BLUR OVER A FULLSCREEN VIDEO.
+ *
+ * This is the whole reason a shared screen stuttered full-window while the very same stream
+ * was smooth as a thumbnail. The badge and the pill both sit INSIDE the tile, and both ask
+ * for backdrop-filter — and a backdrop-filter descendant forces the browser to copy each
+ * decoded video frame into a surface and blur it, instead of handing the frame to the
+ * compositor as an overlay. At 172px that costs nothing. At 1440p or 4K, sixty times a
+ * second, it is the difference between smooth and broken.
+ *
+ * The pill is the worse of the two: it is hidden by opacity until .tile:hover, and in
+ * fullscreen the pointer is inside the tile by definition, so it is permanently visible.
+ *
+ * Both stay on screen. They simply stop being made of blurred video. */
+.tile:fullscreen .live-badge,
+.tile:fullscreen .stream-pill,
+.tile:fullscreen .tile-chip {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
 
 /* The header buttons while sending: lit, and honest about what a second press does. */
 .media-btn[aria-pressed="true"] {

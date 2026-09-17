@@ -31,6 +31,7 @@ const decide = (over = {}) => {
         lastSignature: over.lastSignature ?? null,
         hasChildren: over.hasChildren ?? true,
         fullscreenKey: over.fullscreenKey ?? null,
+        hold: over.hold ?? false,
         tiles,
     });
 };
@@ -95,6 +96,48 @@ test('an unchanged stage skips even while fullscreen', () => {
             fullscreenKey: 'peer-a:screen', tiles,
         }),
         'skip',
+    );
+});
+
+// ---- a blip is not the end of a stream ------------------------------------------------
+
+test('a fullscreen tile whose stream blinks out is HELD, not ejected', () => {
+    // The second bug, and the harder one. A consumer dropped for a moment — a reconcile
+    // against a roster in flux, an ICE rebuild — looks exactly like a share that ended, and
+    // ejecting somebody for it is experienced as the picture throwing them out at random.
+    assert.equal(
+        decide({ fullscreenKey: 'peer-a:screen', hold: true, tiles: [tile({ live: false })] }),
+        'defer',
+    );
+    // Same for the tile vanishing from the roster entirely for a beat.
+    assert.equal(decide({ fullscreenKey: 'peer-a:screen', hold: true, tiles: [] }), 'defer');
+});
+
+test('holding ends, and then the honest paint lands', () => {
+    // The hold is a short grace, not a veto: a share that really ended must still drop the
+    // viewer out, or they are left staring at a frozen frame forever.
+    assert.equal(
+        decide({ fullscreenKey: 'peer-a:screen', hold: false, tiles: [tile({ live: false })] }),
+        'paint',
+    );
+});
+
+test('holding changes nothing when there is nothing to protect', () => {
+    // A hold must not become a way to stop the stage repainting in general.
+    assert.equal(decide({ fullscreenKey: null, hold: true, tiles: [tile({ live: false })] }), 'paint',
+        'nobody is in fullscreen');
+    assert.equal(decide({ fullscreenKey: 'peer-a:screen', hold: true, tiles: [tile()] }), 'defer',
+        'still live: deferred for the ordinary reason, with or without a hold');
+
+    const tiles = [tile({ live: false })];
+    const signature = stageSignature({ tiles, focus: null, heightPx: null });
+    assert.equal(
+        stagePaintDecision({
+            signature, lastSignature: signature, hasChildren: true,
+            fullscreenKey: 'peer-a:screen', hold: true, tiles,
+        }),
+        'skip',
+        'nothing moved, so nothing is owed',
     );
 });
 

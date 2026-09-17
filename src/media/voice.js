@@ -715,7 +715,18 @@ export function createVoice({
     async function enableMic() {
         micProducerWanted = true;
         if (!device?.loaded) throw new Error('Voice is not ready yet.');
-        if (micProducer) return micProducer;
+        // A producer is only worth keeping if the path under it is still there. A closed one
+        // is obvious; one whose send transport has gone is the same thing wearing a healthy
+        // face, and returning it here is how somebody ends up silent with everything looking
+        // right. Re-producing when unsure is cheap — the server replaces an occupied slot —
+        // and being wrong the other way costs the whole session.
+        if (micProducer && !micProducer.closed && sendTransport && !sendTransport.closed) {
+            return micProducer;
+        }
+        if (micProducer) {
+            try { micProducer.close(); } catch { /* already closed */ }
+            micProducer = null;
+        }
 
         await ensureSend();
 
@@ -1473,6 +1484,29 @@ export function createVoice({
 
         getListen(cid, slot) {
             return { muted: false, volume: 1, ...(audioPrefs.get(`${cid}:${slot}`) ?? {}) };
+        },
+
+        /**
+         * Let go of a microphone producer the SERVER has already closed.
+         *
+         * Moving somebody into a room that forbids voice — the away room, most often, by way
+         * of the idle sweep — closes their audio producer on the server. Nothing announces
+         * it: no producer_closed reaches the owner, and mediasoup-client is only ever told
+         * when a TRANSPORT closes, so this side goes on holding a producer that reports
+         * itself perfectly healthy. enableMic() then returns that handle on the way back
+         * instead of producing, no produce is ever sent, and the person is silent for the
+         * rest of the session while their own meter bounces and their mic button looks on.
+         *
+         * The track and the stream are kept, deliberately. They are still good, the
+         * permission is already granted, and reopening the device risks coming back with a
+         * different one — the same reasoning as the cross-worker move in enableMic. So
+         * coming back is a re-produce from the microphone that never stopped being open.
+         */
+        releaseMicProducer() {
+            if (!micProducer) return;
+            try { micProducer.close(); } catch { /* already closed */ }
+            micProducer = null;
+            onChange({ state: 'live', talking: false });
         },
 
         /** Stop sending entirely, as distinct from muting. */

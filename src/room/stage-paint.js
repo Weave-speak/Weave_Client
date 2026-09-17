@@ -41,15 +41,25 @@ export function stageSignature({ tiles = [], focus = null, heightPx = null } = {
  * A fullscreen tile that is no longer live returns 'paint' deliberately: the stream it was
  * showing has ended, and dropping out of fullscreen is then the honest outcome rather than
  * leaving someone staring at a frozen frame.
+ *
+ * `hold` is the exception to that, and it exists because "no longer live" arrives for two
+ * very different reasons. A share that ENDED should drop the viewer out. A share whose
+ * consumer was dropped and is about to be re-made — a reconcile against a roster in flux, an
+ * ICE rebuild — looks identical for a fraction of a second, and ejecting somebody for that is
+ * a bug they experience as the picture throwing them out at random. While the caller holds,
+ * that momentary gap defers instead; when the stream really has gone the caller stops
+ * holding, and the paint it was owed lands then.
  */
 export function stagePaintDecision({
     signature,
     lastSignature = null,
     hasChildren = false,
     fullscreenKey = null,
+    hold = false,
     tiles = [],
 } = {}) {
     if (signature === lastSignature && hasChildren) return 'skip';
-    if (fullscreenKey && tiles.some((t) => t.key === fullscreenKey && t.live)) return 'defer';
-    return 'paint';
+    if (!fullscreenKey) return 'paint';
+    if (tiles.some((t) => t.key === fullscreenKey && t.live)) return 'defer';
+    return hold ? 'defer' : 'paint';
 }

@@ -24,6 +24,7 @@ import { screenShareSettings, normaliseShareChoice, cameraConstraints, cameraEnc
 import { settingsFor } from '../server/store.js';
 import { classify } from '../media/stream-report.js';
 import { captureProcessAudio } from '../media/process-audio.js';
+import { playCue } from '../media/cue.js';
 import { createSettings, readPrefs } from '../settings/index.js';
 import { createRoomBrowser } from '../rooms/browser.js';
 import { createPeerActions } from './peer-actions.js';
@@ -410,6 +411,7 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         onProfileChange: (next) => {
             if (next?.avatar) avatarCache.forget(next.avatar);
             state.setMyAvatar(next?.avatar ?? null);
+            if (next?.displayName) state.setMyDisplayName(next.displayName);
             paint();
         },
     });
@@ -1626,17 +1628,18 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
      * Play a join/leave sound by id. The server sends only the id — the bytes are
      * fetched and cached exactly like an auth-gated image, via the same `blobUrls`
      * map: a sound's id names immutable bytes, so once fetched it never needs asking
-     * for again.
+     * for again. Played on the room's output device, not the system default — see cue.js.
      */
     function playSound(soundId) {
         if (!soundId) return;
         const url = `/api/sounds/${encodeURIComponent(soundId)}/audio`;
+        const play = (src) => playCue(new Audio(src), prefs.audioOutput).catch(() => {});
         const held = blobUrls.get(url);
-        if (held) { new Audio(held).play().catch(() => {}); return; }
+        if (held) { play(held); return; }
         api.fetchBlob(url).then((blob) => {
             const obj = URL.createObjectURL(blob);
             blobUrls.set(url, obj);
-            new Audio(obj).play().catch(() => {});
+            play(obj);
         }).catch(() => { /* the sound may have been deleted since it was chosen */ });
     }
 

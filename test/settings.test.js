@@ -14,7 +14,7 @@ globalThis.__WEAVE_TARGET__ = 'desktop';
 import {
     SECTIONS, sectionById, joinedOn, profilePanel, voicePanel,
     appearancePanel, invitesPanel, inviteMessage, placeholderPanel, PLACEHOLDER_REASONS, settingsFrame, sessionsPanel,
-    securityPanel, lastActive, bugPanel,
+    securityPanel, lastActive, bugPanel, DISPLAY_NAME_MAX,
 } from '../src/settings/panels.js';
 import {
     adminUsersPanel, adminChannelsPanel, adminSoundsPanel, adminDangerPanel, adminBugsPanel, reversedName,
@@ -72,14 +72,46 @@ test('the profile panel shows who you are without offering controls that do noth
     assert.match(markup, /joined/);
 
     // The display name used to sit here as a disabled input explaining that the server had
-    // no route to change one — a control whose only function was to refuse. The name is on
-    // the card above, where it is a fact rather than an invitation to try.
+    // no route to change one — a control whose only function was to refuse. Against a
+    // server that does not advertise renaming, it is still simply absent.
     assert.ok(!markup.includes('id="displayName"'), 'no box that cannot be typed in');
     assert.ok(!markup.includes('no route to change it'));
 
     // Status is not here either: it lives behind your own name in the bottom bar, because
     // one buried in a preferences dialog is one nobody sets and nobody trusts.
     assert.ok(!/not-yet-what">Status/.test(markup));
+});
+
+test('the display name can be changed where the server advertises it, and only there', () => {
+    const markup = profilePanel({ me: ME, features: ['profile', 'profile.display-name'] });
+    assert.match(markup, /data-change-name/);
+    assert.match(markup, /id="displayName"[^>]*value="Ghostbyte"/s, 'starts from the current name');
+    assert.match(markup, new RegExp(`maxlength="${DISPLAY_NAME_MAX}"`));
+    assert.match(markup, /You still sign in as @ghostbyte/, 'what changes, and what does not');
+
+    // 'profile' alone is a server with pictures but no rename route. It answers a rename
+    // with 200 and changes nothing, so offering the box there would be a quiet lie.
+    const older = profilePanel({ me: ME, features: ['profile'] });
+    assert.ok(!older.includes('data-change-name'));
+});
+
+test('a display name is escaped in the box it is edited in', () => {
+    const markup = profilePanel({
+        me: { ...ME, displayName: '"><img src=x onerror=alert(1)>' },
+        features: ['profile.display-name'],
+    });
+    assert.ok(!markup.includes('<img src=x'), 'a name is text, never markup');
+    assert.match(markup, /value="&quot;&gt;&lt;img/);
+});
+
+test('an administrator rename is held to the same length as everybody else', () => {
+    // It used to allow 40 here while the server's own limit was 32.
+    const markup = adminUsersPanel({
+        members: [{ id: 'u1', username: 'kestrel', displayName: 'Kestrel', invitedBy: 'admin' }],
+        editingId: 'u1',
+    });
+    assert.match(markup, new RegExp(`data-rename-input[^>]*maxlength="${DISPLAY_NAME_MAX}"`, 's'));
+    assert.equal(DISPLAY_NAME_MAX, 32, "the server's LIMITS.DISPLAY_MAX");
 });
 
 test('the profile picture is offered only where the server can store one', () => {

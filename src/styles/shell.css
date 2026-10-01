@@ -1968,6 +1968,9 @@
     overflow: hidden;
     margin-bottom: var(--s-6);
 }
+/* The rename form sits between the card and the setting rows, and a row's padding is
+   inside its border — so without this the Save button touches the row beneath it. */
+.name-form { margin-bottom: var(--s-6); }
 .profile-banner {
     height: 84px;
     background:

@@ -30,10 +30,12 @@ const peer = (cid, userId, username, extra = {}) => ({
     muted: false, deafened: false, producers: [], ...extra,
 });
 
+// Copies, not the fixtures themselves: the state writes a rename or a new status straight
+// onto the records it was given, and one test's rename must not be the next test's start.
 function fresh() {
-    const state = createRoomState({ me: ME, server: { name: 'Weave Dev' } });
+    const state = createRoomState({ me: { ...ME }, server: { name: 'Weave Dev' } });
     state.setChannels(channels);
-    state.setUsers(users);
+    state.setUsers(users.map((u) => ({ ...u })));
     return state;
 }
 
@@ -500,6 +502,62 @@ test('a server mute lands on the account, not on one of its connections', () => 
     state.apply({ type: 'peer_force_muted', userId: 'u-kes', forceMuted: false });
     assert.equal(state.people.find((p) => p.username === 'kestrel').forceMuted, false);
     assert.equal(state.raw.peers.get('cid-k2').forceMutedUntil, null);
+});
+
+test('somebody else renaming themselves reaches every place their name is read', () => {
+    // The roster reads the user record, a stage tile reads the peer. The name used to stop
+    // at the user record, so a tile went on showing the old one until the next reconnect.
+    const state = fresh();
+    state.apply({
+        type: 'joined',
+        channel: channels[0],
+        self: peer('cid-me', 'u-me', 'ghostbyte'),
+        peers: [peer('cid-k1', 'u-kes', 'kestrel'), peer('cid-k2', 'u-kes', 'kestrel')],
+    });
+
+    state.apply({ type: 'peer_profile_changed', userId: 'u-kes', displayName: 'Kes' });
+
+    assert.equal(state.people.find((p) => p.id === 'u-kes').displayName, 'Kes');
+    for (const cid of ['cid-k1', 'cid-k2']) {
+        assert.equal(state.raw.peers.get(cid).displayName, 'Kes', 'every connection of theirs');
+    }
+    assert.equal(state.raw.peers.get('cid-me').displayName, 'ghostbyte', 'and nobody else');
+    assert.equal(state.toShell().me.displayName, 'Ghostbyte');
+});
+
+test('being renamed elsewhere reaches your own self bar', () => {
+    // By an administrator, or by yourself on your other machine: either way the frame is
+    // about YOU, and the self bar reads state.me, which nothing else updates.
+    const state = fresh();
+    state.apply({ type: 'joined', channel: channels[0], self: peer('cid-me', 'u-me', 'ghostbyte'), peers: [] });
+
+    state.apply({ type: 'peer_profile_changed', userId: 'u-me', displayName: 'Ghost' });
+    assert.equal(state.toShell().me.displayName, 'Ghost');
+    assert.equal(state.raw.peers.get('cid-me').displayName, 'Ghost');
+});
+
+test('a profile frame without a name leaves the name alone', () => {
+    // Status and picture changes ride the same frame. Older servers send no displayName.
+    const state = fresh();
+    state.apply({ type: 'joined', channel: channels[0], self: peer('cid-me', 'u-me', 'ghostbyte'), peers: [] });
+    state.apply({ type: 'peer_profile_changed', userId: 'u-me', status: 'away' });
+    assert.equal(state.toShell().me.displayName, 'Ghostbyte');
+});
+
+test('your own rename lands everywhere at once, before the server echoes it', () => {
+    const state = fresh();
+    state.apply({
+        type: 'joined',
+        channel: channels[0],
+        self: peer('cid-me', 'u-me', 'ghostbyte'),
+        peers: [peer('cid-k1', 'u-kes', 'kestrel')],
+    });
+
+    state.setMyDisplayName('Ghost');
+    assert.equal(state.toShell().me.displayName, 'Ghost', 'the self bar');
+    assert.equal(state.people.find((p) => p.id === 'u-me').displayName, 'Ghost', 'the member list');
+    assert.equal(state.raw.peers.get('cid-me').displayName, 'Ghost', 'a stage tile');
+    assert.equal(state.raw.peers.get('cid-k1').displayName, 'kestrel');
 });
 
 test('your own server mute reaches the self bar, and is not the same as self-mute', () => {

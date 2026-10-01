@@ -6,6 +6,7 @@
 
 import { esc } from '../ui/dom.js';
 import { avatar } from '../room/views/parts.js';
+import { DISPLAY_NAME_MAX } from './panels.js';
 
 /* ── shared bits ─────────────────────────────────────────────────────────── */
 
@@ -54,7 +55,7 @@ function userRow(m, { editing, armedKey }) {
           ${editing ? `
           <span class="adm-edit">
             <input data-rename-input value="${esc(m.displayName ?? m.username)}"
-                   maxlength="40" aria-label="Display name">
+                   maxlength="${DISPLAY_NAME_MAX}" aria-label="Display name">
             <button type="button" class="btn small primary" data-admin-rename-save="${esc(m.id)}">Save</button>
             <button type="button" class="btn small" data-admin-rename-cancel>Cancel</button>
           </span>` : `

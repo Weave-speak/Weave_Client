@@ -139,18 +139,23 @@ const avatarCropper = ({ busy = false, error = '' } = {}) => `
     </div>
   </div>`;
 
+/** The server's limit (LIMITS.DISPLAY_MAX). It decides; this only stops the typing early. */
+export const DISPLAY_NAME_MAX = 32;
+
 /*
- * There is deliberately no Display Name field here.
+ * The Display Name field appears only where the server advertises 'profile.display-name'.
  *
- * It existed as a disabled box explaining that the server had no route to change one, which
- * is a control that exists only to say no. The name is already on the card above, where it
- * is a fact rather than an invitation. If changing it ever becomes possible, the field comes
- * back as a working one.
+ * It once existed as a disabled box explaining that the server had no route to change one,
+ * which is a control that exists only to say no — so it was taken out, with a promise that
+ * it would come back as a working one when it could. Against an older server it is still
+ * absent rather than present and refusing: such a server answers a rename with 200 and
+ * changes nothing, which is worse than no field at all.
  */
 export function profilePanel({ me = {}, prefs = {}, features = [], avatarError = '', soundLibrary = [] } = {}) {
     const joined = joinedOn(me.createdAt);
     const hasSounds = features.includes('module.sounds');
     const canEdit = features.includes('profile');
+    const canRename = features.includes('profile.display-name');
 
     return `
     <h2 class="panel-title">My Profile</h2>
@@ -171,6 +176,19 @@ export function profilePanel({ me = {}, prefs = {}, features = [], avatarError =
         </div>
       </div>
     </div>
+
+    ${canRename ? `
+    <form class="sec-form name-form" data-change-name novalidate>
+      <div class="form-message"></div>
+      <div class="field">
+        <label for="displayName">Display name</label>
+        <input id="displayName" name="displayName" required autocomplete="nickname"
+               maxlength="${DISPLAY_NAME_MAX}" value="${esc(me.displayName ?? me.username ?? '')}">
+        <div class="field-help">What everyone sees. You still sign in as ${esc(me.username ? `@${me.username}` : 'your username')}.</div>
+        <div class="field-error"></div>
+      </div>
+      <button type="submit" class="btn">Save name</button>
+    </form>` : ''}
 
     ${canEdit ? `
     <div class="setting">

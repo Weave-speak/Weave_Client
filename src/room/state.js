@@ -192,6 +192,20 @@ export function createRoomState({ me = null, server = {} } = {}) {
         },
 
         /**
+         * Your own name, applied everywhere it is read from: the self bar reads state.me,
+         * the member list the user record, and a stage tile its peer.
+         */
+        setMyDisplayName(displayName) {
+            if (state.me) state.me.displayName = displayName;
+            for (const peer of state.peers.values()) {
+                if (peer.userId === state.me?.id) peer.displayName = displayName;
+            }
+            const mine = state.users.get(state.me?.id);
+            if (mine) mine.displayName = displayName;
+            emit();
+        },
+
+        /**
          * Apply a frame from the server.
          *
          * Unknown types are ignored rather than thrown on: a newer server may send events
@@ -273,10 +287,11 @@ export function createRoomState({ me = null, server = {} } = {}) {
                     }
                     break;
 
-                // Somebody changed their picture or their status. Applied to the user
-                // record AND to every live connection they hold: the roster reads the peer
-                // when there is one, and an account signed in twice must not show two
-                // different faces.
+                // Somebody changed their picture, their status or their name. Applied to the
+                // user record AND to every live connection they hold: the roster reads the
+                // peer when there is one, and an account signed in twice must not show two
+                // different faces. The name used to stop at the user record, so a stage tile
+                // and your own self bar kept the old one until the next reconnect.
                 case 'peer_profile_changed': {
                     const user = state.users.get(msg.userId);
                     if (user) {
@@ -288,10 +303,12 @@ export function createRoomState({ me = null, server = {} } = {}) {
                         if (peer.userId !== msg.userId) continue;
                         if (msg.avatar !== undefined) peer.avatar = msg.avatar;
                         if (msg.status !== undefined) peer.status = msg.status;
+                        if (msg.displayName !== undefined) peer.displayName = msg.displayName;
                     }
                     if (msg.userId === state.me?.id) {
                         if (msg.avatar !== undefined) state.me.avatar = msg.avatar;
                         if (msg.status !== undefined) state.me.status = msg.status;
+                        if (msg.displayName !== undefined) state.me.displayName = msg.displayName;
                     }
                     break;
                 }

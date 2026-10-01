@@ -19,6 +19,7 @@ import { VERSION, platform } from '../platform/index.js';
 import { DEFAULT_SHARE_QUALITY, DEFAULT_SHARE_CONTENT, legacyShareChoice } from '../media/presets.js';
 import { DEFAULT_LOOM_MODE } from '../ui/loom.js';
 import { dbToMeterPercent } from '../media/chain.js';
+import { playCue } from '../media/cue.js';
 import {
     adminUsersPanel, adminChannelsPanel, adminSoundsPanel, adminServerPanel, adminDangerPanel,
     adminBugsPanel,
@@ -640,6 +641,47 @@ export function createSettings({
         });
     }
 
+    /**
+     * Renaming yourself.
+     *
+     * The server is the only judge of whether a name is free — it knows every account, and
+     * what counts as the same name — so nothing here guesses. An empty box is caught before
+     * asking; everything else is the server's answer, shown under the box it is about.
+     */
+    function wireName() {
+        const form = $('[data-change-name]', modal.element);
+        if (!form) return;
+        const button = $('button[type="submit"]', form);
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            clearErrors(form);
+            const displayName = form.displayName.value.trim();
+            if (!displayName) {
+                setFieldError(form, 'displayName', 'Your display name cannot be empty.');
+                return;
+            }
+            if (displayName === (me.displayName ?? me.username)) return;
+
+            setBusy(button, true, 'Saving…');
+            try {
+                const result = await api.request('PATCH', '/api/me', { body: { displayName } });
+                me = { ...me, displayName: result?.user?.displayName ?? displayName };
+                onProfileChange(me);
+                // The whole frame, not just the panel: the breadcrumb carries the name too.
+                render();
+                // On the redrawn form: the card above already shows the new name, and this
+                // says it went further than this screen.
+                const redrawn = $('[data-change-name]', modal.element);
+                if (redrawn) setFormMessage(redrawn, 'Saved. Everyone now sees your new name.', 'ok');
+            } catch (err) {
+                setBusy(button, false);
+                if (err?.field === 'displayName') setFieldError(form, 'displayName', err.message);
+                else setFormMessage(form, err?.message ?? 'That did not work.');
+            }
+        });
+    }
+
     /* ── report a bug ────────────────────────────────────────────────────── */
 
     function wireBug() {
@@ -872,6 +914,7 @@ export function createSettings({
         paintActiveMic();
         wireAdminPanel();
         wireAvatar();
+        wireName();
         wireSecurity();
         wireSessions();
         wireBug();
@@ -1016,7 +1059,8 @@ export function createSettings({
             button._audio = audio;
             audio.addEventListener('ended', () => { button.textContent = '▶'; });
             button.textContent = '⏹';
-            await audio.play();
+            // Through the same device the room will use, or a preview is not a preview.
+            await playCue(audio, prefs.audioOutput);
         } catch {
             button.textContent = '▶';
         }

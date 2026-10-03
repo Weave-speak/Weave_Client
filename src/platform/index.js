@@ -155,6 +155,16 @@ const browserPlatform = {
      * keeps using the signal it already had.
      */
     power: { available: false, idleSeconds: null },
+
+    /**
+     * Something worth finding later. A browser has no log file, so its console is the
+     * nearest thing; the desktop build writes into the app log, which is what a bug report
+     * attaches — a failure that only reaches a console is one no report will ever contain.
+     */
+    log(level, message) {
+        const write = console[level] ?? console.log;
+        write.call(console, `[weave] ${message}`);
+    },
 };
 
 const desktopPlatform = {
@@ -215,6 +225,18 @@ const desktopPlatform = {
     power: (typeof window !== 'undefined' && window.weaveNative?.power)
         ? { available: true, ...window.weaveNative.power }
         : { available: false, idleSeconds: null },
+
+    // The preload's log channel, so a renderer failure lands in the same file as the main
+    // process's lines. The console fallback keeps the desktop UI runnable in a plain browser.
+    log(level, message) {
+        try {
+            if (typeof window !== 'undefined' && window.weaveNative?.log) {
+                window.weaveNative.log(level, String(message));
+                return;
+            }
+        } catch { /* a bridge on its way out; the console still works */ }
+        browserPlatform.log(level, message);
+    },
 };
 
 export const platform = isDesktop ? desktopPlatform : browserPlatform;

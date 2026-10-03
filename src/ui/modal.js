@@ -39,6 +39,13 @@ export function createModal({ className = '', label = 'Dialog', onClose = null }
         element: dialog,
 
         open({ from = null, content = '' } = {}) {
+            // Already showing: leave it exactly as it is. Going on would empty it, and
+            // re-appending an open dialog quietly demotes it to NON-modal, so showModal()
+            // then throws — leaving an empty, invisible dialog marked open, on which every
+            // later open throws the same way. That was "settings will not open at all",
+            // reached by clicking again while a slow open was still on its way.
+            if (dialog.open) return dialog;
+
             // Reset the latch. Without this, the second open of the same modal has a dead
             // close() — the ✕ button does nothing while Escape (the browser's own path)
             // still works, which is exactly how the bug was reported.

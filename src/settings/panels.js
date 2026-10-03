@@ -212,9 +212,17 @@ export function profilePanel({ me = {}, prefs = {}, features = [], avatarError =
          nobody trusts to be current. -->
 
     ${hasSounds
-        ? (soundLibrary.length
-            ? soundPicker({ soundLibrary, prefs })
-            : notYet('Join and leave sounds', 'No sounds have been uploaded to this server yet.'))
+        // null is "the server has not answered yet", which is not the same as "it has none".
+        ? (soundLibrary === null
+            ? `<div class="setting" data-sounds-reading>
+                 <span class="setting-text">
+                   <span class="setting-label">Join and leave sounds</span>
+                   <span class="setting-hint">Loading this server's sounds…</span>
+                 </span>
+               </div>`
+            : soundLibrary.length
+                ? soundPicker({ soundLibrary, prefs })
+                : notYet('Join and leave sounds', 'No sounds have been uploaded to this server yet.'))
         : notYet('Join and leave sounds', 'The sounds module is switched off on this server.')}
 
     <p class="panel-lead">Microphone and voice behaviour has moved to Voice &amp; Audio.</p>`;
@@ -590,7 +598,7 @@ export function invitesPanel({ invite = null, busy = false, error = null, origin
  * 404 is worse than being told plainly that the server is older than the app.
  */
 export function securityPanel({
-    question = null, questions = [], features = [], error = null, notice = null,
+    question = null, questions = [], features = [], error = null, notice = null, loading = false,
 } = {}) {
     const head = `
     <h2 class="panel-title">Security &amp; Recovery</h2>
@@ -645,6 +653,12 @@ export function securityPanel({
     </form>
 
     <h3 class="panel-section">Security question</h3>
+    ${loading
+        // Until the server has answered, say so. "No security question yet" would be a false
+        // alarm about the one thing that recovers this account, and a select with no
+        // questions in it is a form that cannot be filled in.
+        ? '<p class="panel-lead" data-security-reading>Reading your security question…</p>'
+        : `
     <form class="sec-form" data-change-question novalidate>
       <div class="form-message"></div>
       <p class="panel-lead">${esc(current)}</p>
@@ -667,7 +681,7 @@ export function securityPanel({
       </div>
 
       <button type="submit" class="btn">Save question</button>
-    </form>`;
+    </form>`}`;
 }
 
 /** Bytes, in the units somebody reads rather than the ones a computer counts in. */
@@ -692,7 +706,7 @@ const sizeOf = (text) => {
  */
 export function bugPanel({
     features = [], description = '', log = null, logAvailable = false, showLog = false,
-    sending = false, sent = false, error = null, serverName = '',
+    sending = false, sent = false, error = null, serverName = '', logLoading = false,
 } = {}) {
     const head = `
     <h2 class="panel-title">Report a Bug</h2>
@@ -718,7 +732,11 @@ export function bugPanel({
              tokens and passwords already removed on this machine.
              <button type="button" class="linkish" data-bug-toggle-log>${showLog ? 'Hide it' : 'Show me exactly what will be sent'}</button></p>
            ${showLog ? `<pre class="bug-log" tabindex="0">${esc(log)}</pre>` : ''}`
-        : `<p class="field-help">No log is attached — this build keeps none that it can read.
+        // Still being read is not the same as "this build keeps none": saying the second
+        // while the first is true would tell somebody their report will carry nothing.
+        : logAvailable && logLoading
+            ? '<p class="field-help" data-bug-log-reading>Reading this app\'s log…</p>'
+            : `<p class="field-help">No log is attached — this build keeps none that it can read.
              Your description is the report.</p>`;
 
     return `${head}

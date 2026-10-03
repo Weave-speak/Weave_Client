@@ -20,6 +20,7 @@ import { DEFAULT_SHARE_QUALITY, DEFAULT_SHARE_CONTENT, legacyShareChoice } from 
 import { DEFAULT_LOOM_MODE } from '../ui/loom.js';
 import { dbToMeterPercent } from '../media/chain.js';
 import { playCue } from '../media/cue.js';
+import { startLoads, settleWithin, singleFlight, LOAD_PANELS, OPEN_GRACE_MS } from './loading.js';
 import {
     adminUsersPanel, adminChannelsPanel, adminSoundsPanel, adminServerPanel, adminDangerPanel,
     adminBugsPanel,
@@ -134,7 +135,7 @@ export function createSettings({
     // Security & Recovery. The questions and the current choice come from the server when
     // the panel is opened; the rest is the working state of two forms, held here so a
     // repaint reproduces the same screen rather than losing what was typed.
-    const sec = { question: null, questions: [], error: null, notice: null };
+    const sec = { question: null, questions: [], error: null, notice: null, loading: false };
 
     // The account's signed-in devices. null means "not asked yet", which the panel draws
     // as reading rather than as an account with no devices — a distinction that matters,
@@ -144,8 +145,13 @@ export function createSettings({
     // A bug report in progress. The log is read when the dialog opens so it can be SHOWN;
     // nothing leaves until the button is pressed. Held here, like the cropper's state, so a
     // repaint reproduces the same screen rather than losing a half-written paragraph.
+    //
+    // logOffered records whether the panel has actually shown the log. Only then is it
+    // attached: a log that arrived while somebody was typing, and so was never drawn, is
+    // one they never got to look at before sending.
     const bug = {
         description: '', log: null, showLog: false, sending: false, sent: false, error: null,
+        logLoading: false, logOffered: false,
     };
 
     // The admin console's working state. Data is fetched when its panel is opened and
@@ -177,14 +183,17 @@ export function createSettings({
                 version: VERSION, features,
                 sessions: deviceList.sessions, error: deviceList.error, notice: deviceList.notice,
             });
-            case 'bug': return bugPanel({
-                ...bug, features,
-                logAvailable: platform.diagnostics.available,
-                serverName: server?.lastSeen?.name ?? '',
-            });
+            case 'bug':
+                // Drawn now, so from here on the log has been offered for inspection.
+                bug.logOffered = Boolean(bug.log);
+                return bugPanel({
+                    ...bug, features,
+                    logAvailable: platform.diagnostics.available,
+                    serverName: server?.lastSeen?.name ?? '',
+                });
             case 'security': return securityPanel({
                 question: sec.question, questions: sec.questions, features,
-                error: sec.error, notice: sec.notice,
+                error: sec.error, notice: sec.notice, loading: sec.loading,
             });
             case 'appearance': return appearancePanel({ prefs });
             case 'invites': return invitesPanel({
@@ -724,7 +733,7 @@ export function createSettings({
                         kind: 'bug',
                         description,
                         client: { version: VERSION, target: platform.target },
-                        ...(bug.log ? { log: bug.log } : {}),
+                        ...(bug.log && bug.logOffered ? { log: bug.log } : {}),
                     },
                 });
                 bug.sent = true;
@@ -1143,76 +1152,139 @@ export function createSettings({
         }
     }
 
+    /**
+     * Repaint for an answer that has just arrived — only on the panel it belongs to, and
+     * never under somebody's fingers. A focused box means they are typing, and a repaint
+     * would throw away what they typed; skipped, the answer shows on the next render.
+     */
+    function repaintFor(panel) {
+        if (!modal.isOpen || current !== panel) return;
+        const host = $('#settingsPanel', modal.element);
+        if (!host) return;
+        const focused = document.activeElement;
+        if (focused && host.contains(focused) && focused.matches('input, textarea, select')) return;
+        renderPanel();
+    }
+
+    /**
+     * Put each answer where its panel reads it, as it arrives.
+     *
+     * Attached before anything waits on the loads, so by the time the dialog opens every
+     * answer that has come back is already in place. `mine` is the open these answers
+     * belong to: one still arriving after a close and a reopen is dropped rather than
+     * painted over the newer answers.
+     */
+    function applyLoads(loads, mine) {
+        const when = (name, onValue, onError = () => {}) => {
+            loads[name]?.then(
+                (value) => { if (mine === generation) { onValue(value); repaintFor(LOAD_PANELS[name]); } },
+                (err) => { if (mine === generation) { onError(err); repaintFor(LOAD_PANELS[name]); } },
+            );
+        };
+
+        // The sign-in response carries a slimmer user than /api/me does — no createdAt,
+        // no lastSeenAt — so the profile panel asks for the full record. Until it lands,
+        // the panel renders from what sign-in gave us.
+        when('me', (r) => { me = { ...me, ...(r.user ?? r) }; });
+
+        // The server is the authority on these account-level preferences — the sounds a
+        // personal choice or the admin's default. Until it answers, or if it cannot, this
+        // device's memory stands in.
+        when('afk', (r) => { prefs = { ...prefs, afkExempt: Boolean(r.optedOut) }; });
+        when('soundLibrary', (r) => { soundLibrary = r.sounds ?? []; }, () => { soundLibrary = []; });
+        when('mySounds', (r) => {
+            prefs = { ...prefs, joinSound: r.joinSound ?? '', leaveSound: r.leaveSound ?? '' };
+        });
+
+        when('sessions', (r) => {
+            deviceList.sessions = r?.sessions ?? [];
+            deviceList.error = null;
+        }, (err) => {
+            deviceList.sessions = [];
+            deviceList.error = err?.message ?? 'Could not read your signed-in devices.';
+        });
+
+        // Both halves belong to the server: which questions it offers, and which one this
+        // account chose. The panel reads as loading until BOTH are in, because either one
+        // alone draws a screen that is wrong.
+        const securityLeft = new Set(['questions', 'myQuestion'].filter((name) => loads[name]));
+        const securityDone = (name) => {
+            securityLeft.delete(name);
+            if (!securityLeft.size) sec.loading = false;
+        };
+        when('questions', (r) => {
+            sec.questions = r.questions ?? [];
+            securityDone('questions');
+        }, () => {
+            sec.questions = [];
+            securityDone('questions');
+        });
+        when('myQuestion', (r) => {
+            sec.question = r.question ?? null;
+            securityDone('myQuestion');
+        }, () => {
+            sec.question = null;
+            sec.error = 'Could not read your current security question.';
+            securityDone('myQuestion');
+        });
+
+        // The log is read so the Bug panel can SHOW it. Redaction already happened in the
+        // main process, so this is the text itself rather than a promise about it — which is
+        // the whole basis on which somebody decides to press send.
+        when('appLog', (result) => {
+            bug.log = result?.text ?? null;
+            bug.logLoading = false;
+        }, () => {
+            bug.log = null;
+            bug.logLoading = false;
+        });
+    }
+
+    // Which open the answers now arriving belong to. See applyLoads.
+    let generation = 0;
+
+    /**
+     * Open the dialog.
+     *
+     * Everything is asked for at once, and the dialog waits at most OPEN_GRACE_MS for it:
+     * on a healthy connection that is all of it, and it opens complete; on a slow one it
+     * opens anyway, saying what it is still reading, and fills in as answers land. It used
+     * to wait for seven round trips in turn, which on a poor connection was long enough for
+     * people to give up — or to click again, which is what broke it (see modal.js).
+     *
+     * One open at a time: a second click while this is under way joins it, and a click on
+     * a dialog already showing changes nothing.
+     */
+    const open = singleFlight(async (from) => {
+        if (modal.isOpen) return;
+        const mine = ++generation;
+        prefs = readPrefs(server.id);
+
+        // null is "not answered yet", which each panel draws as reading — never as an
+        // account with no devices, no question or no sounds, all of which would be untrue.
+        soundLibrary = features.includes('module.sounds') ? null : [];
+        deviceList.sessions = null;
+        deviceList.error = null;
+        sec.error = null;
+        sec.notice = null;
+        sec.loading = features.includes('account.security');
+        bug.logLoading = platform.diagnostics.available;
+
+        const loads = startLoads({ api, features, diagnostics: platform.diagnostics });
+        applyLoads(loads, mine);
+        await settleWithin(loads, OPEN_GRACE_MS);
+
+        modal.open({ from, content: '' });
+        render();
+        loadDevices().then(() => repaintFor('voice'));
+        // Reopening onto an admin panel must show fresh truth, not last week's table.
+        loadAdminData();
+    });
+
     return {
         get prefs() { return prefs; },
 
-        async open(from) {
-            prefs = readPrefs(server.id);
-
-            // The sign-in response carries a slimmer user than /api/me does — no createdAt,
-            // no lastSeenAt — so the profile panel asks for the full record rather than
-            // quietly rendering a profile with its join date missing.
-            await api.me()
-                .then((r) => { me = { ...me, ...(r.user ?? r) }; })
-                .catch(() => { /* the panel still renders from what sign-in gave us */ });
-
-            // The server is the authority on the account-level preference.
-            if (features.includes('module.afk')) {
-                await api.request('GET', '/api/afk/opt-out')
-                    .then((r) => { prefs = { ...prefs, afkExempt: Boolean(r.optedOut) }; })
-                    .catch(() => { /* fall back to what this device remembers */ });
-            }
-
-            // Same principle: the server resolves the real value (a personal choice,
-            // or the admin's default if there is one) — nothing to guess here.
-            if (features.includes('module.sounds')) {
-                await api.request('GET', '/api/sounds')
-                    .then((r) => { soundLibrary = r.sounds ?? []; })
-                    .catch(() => { soundLibrary = []; });
-                await api.request('GET', '/api/sounds/me')
-                    .then((r) => {
-                        prefs = { ...prefs, joinSound: r.joinSound ?? '', leaveSound: r.leaveSound ?? '' };
-                    })
-                    .catch(() => { /* fall back to what this device remembers */ });
-            }
-
-            // Read here so the panel can SHOW it. Redaction already happened in the main
-            // process, so this is the text itself rather than a promise about it — which is
-            // the whole basis on which somebody decides to press send.
-            if (platform.diagnostics.available) {
-                await platform.diagnostics.readAppLog?.()
-                    .then((result) => { bug.log = result?.text ?? null; })
-                    .catch(() => { bug.log = null; });
-            }
-
-            // Asked on open rather than when the panel is first shown: the list is small,
-            // and a screen that draws itself empty and then fills in is a screen people
-            // click on before it is telling the truth.
-            if (features.includes('account.sessions')) await loadSessions();
-
-            // Both halves belong to the server: which questions it offers, and which one
-            // this account chose. Asked only where the routes exist, so an older server is
-            // never sent a request it can only 404.
-            if (features.includes('account.security')) {
-                sec.error = null;
-                sec.notice = null;
-                await api.securityQuestions()
-                    .then((r) => { sec.questions = r.questions ?? []; })
-                    .catch(() => { sec.questions = []; });
-                await api.request('GET', '/api/me/security-question')
-                    .then((r) => { sec.question = r.question ?? null; })
-                    .catch(() => {
-                        sec.question = null;
-                        sec.error = 'Could not read your current security question.';
-                    });
-            }
-
-            modal.open({ from, content: '' });
-            render();
-            loadDevices().then(() => { if (current === 'voice') renderPanel(); });
-            // Reopening onto an admin panel must show fresh truth, not last week's table.
-            loadAdminData();
-        },
+        open,
 
         close: () => modal.close(),
 

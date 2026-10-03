@@ -114,6 +114,47 @@ test('an administrator rename is held to the same length as everybody else', () 
     assert.equal(DISPLAY_NAME_MAX, 32, "the server's LIMITS.DISPLAY_MAX");
 });
 
+// ── while the server is still answering ──────────────────────────────────────
+//
+// The dialog now opens before every answer is in. Each panel has to say "still reading"
+// rather than draw the empty case, because every empty case here is a claim: no sounds, no
+// security question, no devices, no log. Each would be false, and some would be alarming.
+
+test('sounds still loading are not "no sounds on this server"', () => {
+    const loading = profilePanel({ me: ME, features: ['module.sounds'], soundLibrary: null });
+    assert.match(loading, /data-sounds-reading/);
+    assert.ok(!loading.includes('No sounds have been uploaded'));
+
+    const none = profilePanel({ me: ME, features: ['module.sounds'], soundLibrary: [] });
+    assert.match(none, /No sounds have been uploaded/, 'an answer of none still says so');
+});
+
+test('a security question still loading is not "you have none"', () => {
+    const loading = securityPanel({ features: ['account.security'], loading: true });
+    assert.match(loading, /Reading your security question/);
+    assert.ok(!loading.includes('no security question yet'), 'a false alarm about account recovery');
+    assert.ok(!loading.includes('data-change-question'), 'no select with nothing in it');
+    assert.match(loading, /data-change-password/, 'the password form needs no answer to be usable');
+
+    const answered = securityPanel({ features: ['account.security'], loading: false, questions: [{ id: 'q', text: 'Q?' }] });
+    assert.match(answered, /data-change-question/);
+});
+
+test('devices still loading are not "no devices"', () => {
+    const markup = sessionsPanel({ features: ['account.sessions'], sessions: null });
+    assert.match(markup, /Reading your devices/);
+});
+
+test('a log still being read is not "this build keeps no log"', () => {
+    const base = { features: ['diagnostics.bug-report'], logAvailable: true, log: null };
+    const reading = bugPanel({ ...base, logLoading: true });
+    assert.match(reading, /data-bug-log-reading/);
+    assert.ok(!reading.includes('No log is attached'), 'that would tell them their report carries nothing');
+
+    const absent = bugPanel({ ...base, logLoading: false });
+    assert.match(absent, /No log is attached/);
+});
+
 test('the profile picture is offered only where the server can store one', () => {
     const withIt = profilePanel({ me: ME, features: ['profile'] });
     assert.match(withIt, /Profile picture/);

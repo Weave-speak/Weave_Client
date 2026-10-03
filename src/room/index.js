@@ -2179,7 +2179,12 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
 
             if (event.target.closest('[data-open-settings]')) {
                 closeSelfMenu();
-                settings.open(event.target.closest('[data-open-settings]'));
+                // Caught and written down: an open that failed used to vanish as an unhandled
+                // rejection, which is why "settings will not open" never showed up in a
+                // single attached log.
+                settings.open(event.target.closest('[data-open-settings]')).catch((err) => {
+                    platform.log('error', `Settings failed to open: ${err?.name ?? 'Error'}: ${err?.message ?? err}`);
+                });
                 return;
             }
 

@@ -27,7 +27,7 @@ const tile = (over = {}) => ({
 const decide = (over = {}) => {
     const tiles = over.tiles ?? [tile()];
     return stagePaintDecision({
-        signature: stageSignature({ tiles, focus: over.focus ?? null, heightPx: null }),
+        signature: stageSignature({ tiles, spotlight: over.spotlight ?? null, heightPx: null }),
         lastSignature: over.lastSignature ?? null,
         hasChildren: over.hasChildren ?? true,
         fullscreenKey: over.fullscreenKey ?? null,
@@ -38,7 +38,7 @@ const decide = (over = {}) => {
 
 test('an unchanged stage is not redrawn', () => {
     const tiles = [tile()];
-    const signature = stageSignature({ tiles, focus: null, heightPx: null });
+    const signature = stageSignature({ tiles, spotlight: null, heightPx: null });
     // This is the heartbeat case: the pong re-delivers the same producer list every 25s.
     assert.equal(
         stagePaintDecision({ signature, lastSignature: signature, hasChildren: true, tiles }),
@@ -49,7 +49,7 @@ test('an unchanged stage is not redrawn', () => {
 test('an unchanged stage IS drawn when the slot is empty', () => {
     // A matching signature must never win over an empty stage, or a remount renders nothing.
     const tiles = [tile()];
-    const signature = stageSignature({ tiles, focus: null, heightPx: null });
+    const signature = stageSignature({ tiles, spotlight: null, heightPx: null });
     assert.equal(
         stagePaintDecision({ signature, lastSignature: signature, hasChildren: false, tiles }),
         'paint',
@@ -57,7 +57,7 @@ test('an unchanged stage IS drawn when the slot is empty', () => {
 });
 
 test('a real change is drawn', () => {
-    const before = stageSignature({ tiles: [tile()], focus: null, heightPx: null });
+    const before = stageSignature({ tiles: [tile()], spotlight: null, heightPx: null });
     assert.equal(decide({ lastSignature: before, tiles: [tile(), tile({ key: 'peer-b:webcam', slot: 'webcam' })] }), 'paint');
 });
 
@@ -89,7 +89,7 @@ test('nothing is deferred when the viewer is not in fullscreen', () => {
 test('an unchanged stage skips even while fullscreen', () => {
     // Skip is checked first: there is nothing to owe the viewer when nothing moved.
     const tiles = [tile()];
-    const signature = stageSignature({ tiles, focus: null, heightPx: null });
+    const signature = stageSignature({ tiles, spotlight: null, heightPx: null });
     assert.equal(
         stagePaintDecision({
             signature, lastSignature: signature, hasChildren: true,
@@ -130,7 +130,7 @@ test('holding changes nothing when there is nothing to protect', () => {
         'still live: deferred for the ordinary reason, with or without a hold');
 
     const tiles = [tile({ live: false })];
-    const signature = stageSignature({ tiles, focus: null, heightPx: null });
+    const signature = stageSignature({ tiles, spotlight: null, heightPx: null });
     assert.equal(
         stagePaintDecision({
             signature, lastSignature: signature, hasChildren: true,
@@ -158,10 +158,26 @@ test('the signature moves when audio is muted', () => {
     );
 });
 
-test('the signature moves when focus changes', () => {
+test('the signature moves when the spotlight changes', () => {
     assert.notEqual(
-        stageSignature({ tiles: [tile()], focus: null }),
-        stageSignature({ tiles: [tile()], focus: 'peer-a:screen' }),
+        stageSignature({ tiles: [tile()], spotlight: null }),
+        stageSignature({ tiles: [tile()], spotlight: 'peer-a:screen' }),
+    );
+});
+
+test('the signature moves when a tile is watched, even one that was already live', () => {
+    // Your own camera: a live mirror either way, but watching it moves it to the big area.
+    assert.notEqual(
+        stageSignature({ tiles: [tile({ self: true, slot: 'webcam', watched: false })] }),
+        stageSignature({ tiles: [tile({ self: true, slot: 'webcam', watched: true })] }),
+    );
+});
+
+test('the signature moves when the watch limit is reached', () => {
+    // The Watch buttons are drawn disabled at the limit, so the markup changes with it.
+    assert.notEqual(
+        stageSignature({ tiles: [tile()], watchLimitReached: false }),
+        stageSignature({ tiles: [tile()], watchLimitReached: true }),
     );
 });
 

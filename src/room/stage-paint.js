@@ -18,13 +18,17 @@
  * rather than its value. That is safe rather than merely cheap: a frame is only ever
  * captured when a tile stops being live, and `live` is in the signature already, so a
  * changed frame cannot slip through without some other field moving too.
+ *
+ * `watched` is separate from `live` because your own camera is live without being watched:
+ * a mirror in the compact row until you choose to put it in the big area.
  */
-export function stageSignature({ tiles = [], focus = null, heightPx = null } = {}) {
+export function stageSignature({ tiles = [], spotlight = null, heightPx = null, watchLimitReached = false } = {}) {
     return JSON.stringify([
-        focus,
+        spotlight,
         heightPx,
+        Boolean(watchLimitReached),
         tiles.map((t) => [
-            t.key, t.label, t.chipName, t.slot, Boolean(t.self), Boolean(t.live),
+            t.key, t.label, t.chipName, t.slot, Boolean(t.self), Boolean(t.live), Boolean(t.watched),
             t.frame ? t.frame.length : 0,
             t.audio ? [t.audio.slot, Boolean(t.audio.muted), t.audio.volume ?? null] : null,
         ]),

@@ -3,10 +3,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { stageView, orderTiles, tileKey, sharePickerView, shareSetupView } from '../src/room/views/stage.js';
+import { stageView, orderTiles, tileKey, sharePickerView, shareSetupView, MAX_WATCHED } from '../src/room/views/stage.js';
 import { SHARE_QUALITIES, SHARE_CONTENT } from '../src/media/presets.js';
 
 const t = (cid, slot, extra = {}) => ({ key: tileKey(cid, slot), cid, slot, label: cid, live: true, ...extra });
+/** A stream the person chose to watch. */
+const w = (cid, slot, extra = {}) => t(cid, slot, { watched: true, ...extra });
+const count = (markup, re) => (markup.match(re) ?? []).length;
 
 test('no video, no stage — the room looks exactly as it always did', () => {
     assert.equal(stageView({ tiles: [] }), '');
@@ -24,23 +27,78 @@ test('screens outrank cameras, and your own face comes last', () => {
         ['kes:screen', 'me:screen', 'kes:webcam', 'me:webcam']);
 });
 
-test('a grid without focus, a main-and-strip with one', () => {
-    const tiles = [t('kes', 'screen'), t('moth', 'webcam')];
-    const grid = stageView({ tiles });
+test('nothing watched is a compact row; something watched takes the big area', () => {
+    const grid = stageView({ tiles: [t('kes', 'screen'), t('moth', 'webcam')] });
     assert.match(grid, /stage-grid/);
     assert.ok(!grid.includes('stage-main'));
 
-    const focused = stageView({ tiles, focus: 'kes:screen' });
-    assert.match(focused, /stage-main/);
-    assert.match(focused, /stage-strip/);
-    assert.match(focused, /data-tile="kes:screen"[^>]*/);
-    assert.match(focused, /focused/);
+    const watching = stageView({ tiles: [w('kes', 'screen'), t('moth', 'webcam')] });
+    assert.match(watching, /stage has-focus/);
+    assert.match(watching, /stage-main/);
+    assert.match(watching, /stage-strip/);
+    assert.match(watching, /watch-grid" data-count="1"/);
+    assert.match(watching, /tile focused watched[^"]*"\s*data-tile="kes:screen"/);
 });
 
-test('a focus on a tile that left falls back to the grid', () => {
-    const view = stageView({ tiles: [t('moth', 'webcam')], focus: 'kes:screen' });
-    assert.match(view, /stage-grid/);
-    assert.ok(!view.includes('stage-main'));
+test('several watched streams share the big area, each with its own controls', () => {
+    const view = stageView({
+        tiles: [w('kes', 'screen', { audio: { muted: false, volume: 1 } }), w('moth', 'screen'), t('ash', 'webcam')],
+    });
+    assert.match(view, /watch-grid" data-count="2"/);
+    assert.equal(count(view, /class="stream-pill"/g), 2, 'one pill per watched stream');
+    assert.equal(count(view, /data-stop-watching/g), 2, 'each can be stopped on its own');
+    assert.equal(count(view, /data-tile-full/g), 2, 'and each can go fullscreen');
+    // The unwatched camera waits in the strip, still an invitation.
+    const strip = view.slice(view.indexOf('stage-strip'));
+    assert.match(strip, /data-watch-tile="ash:webcam"/);
+    assert.ok(!strip.includes('stream-pill'));
+});
+
+test('a spotlight makes one stream big; the other watched ones keep playing in the strip', () => {
+    const tiles = [w('kes', 'screen'), w('moth', 'screen'), t('ash', 'webcam', { live: false })];
+    const view = stageView({ tiles, spotlight: 'moth:screen' });
+    const main = view.slice(view.indexOf('stage-main'), view.indexOf('strip-shell'));
+    const strip = view.slice(view.indexOf('stage-strip'));
+
+    assert.ok(!main.includes('watch-grid'), 'one picture, not a grid of one');
+    assert.match(main, /data-tile="moth:screen"/);
+    assert.ok(!main.includes('kes:screen'));
+    assert.match(main, /data-spotlight[^>]*aria-pressed="true"/, 'and the way back to the grid');
+
+    assert.match(strip, /tile watched[^"]*"\s*data-tile="kes:screen"/);
+    assert.match(strip, /data-tile="kes:screen"[^]*?<video/, 'still live, not a placeholder');
+    assert.ok(!/data-watch-tile="kes:screen"/.test(strip), 'already watched: nothing to offer');
+    assert.match(strip, /data-watch-tile="ash:webcam"/);
+});
+
+test('a spotlight on a stream that is not watched falls back to the grid', () => {
+    const tiles = [w('kes', 'screen'), w('moth', 'screen'), t('ash', 'webcam')];
+    const gone = stageView({ tiles, spotlight: 'ghost:screen' });
+    assert.match(gone, /watch-grid" data-count="2"/);
+    const unwatched = stageView({ tiles, spotlight: 'ash:webcam' });
+    assert.match(unwatched, /watch-grid" data-count="2"/);
+    const none = stageView({ tiles: [t('moth', 'webcam')], spotlight: 'moth:webcam' });
+    assert.match(none, /stage-grid/);
+    assert.ok(!none.includes('stage-main'));
+});
+
+test('the spotlight is only offered when there is more than one stream to choose between', () => {
+    const one = stageView({ tiles: [w('kes', 'screen'), t('ash', 'webcam')] });
+    assert.ok(!one.includes('data-spotlight'));
+    const two = stageView({ tiles: [w('kes', 'screen'), w('moth', 'webcam')] });
+    assert.equal(count(two, /data-spotlight/g), 2);
+    assert.match(two, /data-spotlight[^>]*aria-pressed="false"/);
+});
+
+test('at the watch limit, the remaining Watch buttons are drawn disabled; your own are not', () => {
+    const tiles = [w('kes', 'screen'), t('ash', 'webcam'), t('self', 'screen', { self: true, live: false })];
+    const open = stageView({ tiles });
+    assert.ok(!/data-watch-tile="ash:webcam"\s+disabled/.test(open));
+
+    const full = stageView({ tiles, watchLimitReached: true });
+    assert.match(full, /data-watch-tile="ash:webcam"\s+disabled/);
+    assert.match(full, new RegExp(`Watching ${MAX_WATCHED} streams`));
+    assert.ok(!/data-watch-tile="self:screen"\s+disabled/.test(full), 'your own stream costs nothing to watch');
 });
 
 test('your own preview is muted and mirrored; a screen never is', () => {
@@ -108,10 +166,9 @@ test('nothing starts until "Choose screen", and there is a way out', () => {
     assert.ok(!/<button[^>]*name="quality"/.test(view), 'a quality is a choice, not a button that acts');
 });
 
-test('the FOCUSED stream carries the pill: listen controls, fullscreen, the way out', () => {
+test('a WATCHED stream carries the pill: listen controls, fullscreen, the way out', () => {
     const focused = stageView({
-        tiles: [t('kes', 'screen', { audio: { muted: false, volume: 0.8 } })],
-        focus: 'kes:screen',
+        tiles: [w('kes', 'screen', { audio: { muted: false, volume: 0.8 } })],
     });
     assert.match(focused, /stream-pill/);
     assert.match(focused, /data-listen-mute/);
@@ -122,8 +179,7 @@ test('the FOCUSED stream carries the pill: listen controls, fullscreen, the way 
 
     // A thumbnail beside it wears its identity chip, never the pill.
     const withThumb = stageView({
-        tiles: [t('kes', 'screen', { audio: { muted: false, volume: 1 } }), t('moth', 'webcam')],
-        focus: 'kes:screen',
+        tiles: [w('kes', 'screen', { audio: { muted: false, volume: 1 } }), t('moth', 'webcam')],
     });
     assert.equal((withThumb.match(/stream-pill/g) ?? []).length, 1);
     assert.match(withThumb, /tile-chip/);
@@ -131,14 +187,13 @@ test('the FOCUSED stream carries the pill: listen controls, fullscreen, the way 
 
 test('a muted-for-you stream says so on the pill', () => {
     const view = stageView({
-        tiles: [t('kes', 'screen', { audio: { muted: true, volume: 1 } })],
-        focus: 'kes:screen',
+        tiles: [w('kes', 'screen', { audio: { muted: true, volume: 1 } })],
     });
     assert.match(view, /data-listen-mute[^>]*aria-pressed="true"/);
 });
 
-test('a focused stream without audio keeps fullscreen and the way out', () => {
-    const view = stageView({ tiles: [t('kes', 'webcam', { audio: null })], focus: 'kes:webcam' });
+test('a watched stream without audio keeps fullscreen and the way out', () => {
+    const view = stageView({ tiles: [w('kes', 'webcam', { audio: null })] });
     assert.ok(!view.includes('data-listen-mute'));
     assert.match(view, /data-tile-full/);
     assert.match(view, /data-stop-watching/);
@@ -150,10 +205,10 @@ test('grid tiles offer the centred Watch, screens declare LIVE, the divider offe
     assert.match(grid, /data-watch-tile="kes:screen"/);
     assert.match(grid, /live-badge small/);
     assert.ok(!grid.includes('data-stage-divider'),
-        'no divider without a focus — the compact row sizes itself');
-    assert.ok(!grid.includes('stream-pill'), 'no pill without a focus');
+        'no divider while nothing is watched — the compact row sizes itself');
+    assert.ok(!grid.includes('stream-pill'), 'no pill while nothing is watched');
 
-    const focused = stageView({ tiles: [t('kes', 'screen'), t('moth', 'webcam')], focus: 'kes:screen' });
+    const focused = stageView({ tiles: [w('kes', 'screen'), t('moth', 'webcam')] });
     assert.match(focused, /data-stage-divider/, 'the split brings the drag with it');
 
     const sized = stageView({ tiles: [t('kes', 'screen')], heightPx: 400 });
@@ -174,15 +229,13 @@ test('an unwatched stream is a placeholder: no video, no packets, just the invit
 
 test('the strip is a carousel: quiet at four, scroll buttons past it', () => {
     const four = stageView({
-        tiles: [t('a', 'screen'), t('b', 'webcam'), t('c', 'webcam'), t('d', 'webcam'), t('e', 'webcam')],
-        focus: 'a:screen',
+        tiles: [w('a', 'screen'), t('b', 'webcam'), t('c', 'webcam'), t('d', 'webcam'), t('e', 'webcam')],
     });
     assert.ok(!four.includes('strip-nav'), 'four thumbnails need no chrome');
 
     const six = stageView({
-        tiles: [t('a', 'screen'), t('b', 'webcam'), t('c', 'webcam'),
+        tiles: [w('a', 'screen'), t('b', 'webcam'), t('c', 'webcam'),
             t('d', 'webcam'), t('e', 'webcam'), t('f', 'webcam')],
-        focus: 'a:screen',
     });
     assert.match(six, /data-strip-nav="-1"/);
     assert.match(six, /data-strip-nav="1"/);

@@ -822,6 +822,33 @@
 .stage-grid[data-count="1"] { grid-template-columns: minmax(0, 1fr); }
 
 .stage-main { min-height: 0; display: grid; }
+
+/* Several watched streams share the big area side by side. Columns by count rather than
+   auto-fit: the area's HEIGHT is fixed by the split, so auto-fit would happily wrap three
+   tiles into a column of slivers. Each cell is filled and the picture letterboxed inside
+   it (object-fit: contain on the video), so nothing is cropped whatever the shapes. */
+.watch-grid {
+    display: grid;
+    gap: var(--s-2);
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr);
+    grid-auto-rows: minmax(0, 1fr);
+}
+.watch-grid[data-count="2"],
+.watch-grid[data-count="3"],
+.watch-grid[data-count="4"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.watch-grid[data-count="5"],
+.watch-grid[data-count="6"],
+.watch-grid[data-count="7"],
+.watch-grid[data-count="8"],
+.watch-grid[data-count="9"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+/* Half a stage is too narrow for the pill's words; the icons and titles carry it. */
+.watch-grid:not([data-count="1"]) .pill-word,
+.watch-grid:not([data-count="1"]) .pill-report-label,
+.watch-grid:not([data-count="1"]) .pill-report span { display: none; }
+.watch-grid:not([data-count="1"]) .pill-volume { width: 64px; }
+/* A watched stream playing in the strip beside the spotlight: marked as yours, click to swap. */
+.stage-strip .tile.watched { border-color: rgb(var(--accent-rgb) / 0.45); }
 .stage-strip {
     display: flex;
     gap: var(--s-2);
@@ -2693,6 +2720,8 @@
 }
 .stage-strip .watch-btn { padding: var(--s-1) var(--s-3); font-size: var(--t-xs); }
 .stage-strip .watch-btn svg { width: 11px; height: 11px; }
+/* At the limit: still there, so the tile still says what it is, but plainly not an offer. */
+.watch-btn[disabled] { background: var(--surface-3); color: var(--ink-faint); box-shadow: none; cursor: not-allowed; }
 
 /* The thumbnail carousel: four in view, the rest a press away. */
 .strip-shell {

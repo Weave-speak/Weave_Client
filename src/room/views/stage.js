@@ -1,8 +1,9 @@
 // The stage: everyone's video, above the chat that never leaves.
 //
-// Tiles for every live camera and screen in the room, yours included. Clicking a tile
-// focuses it — one big picture, the rest in a strip — because a shared screen is usually
-// THE thing and faces are company. The chat stays mounted below whatever happens here:
+// Tiles for every live camera and screen in the room, yours included. Watching is opt-in
+// and plural: every stream you choose shares the big area, and a spotlight makes one of them
+// THE picture with the rest in a strip — because a shared screen is usually the thing, but
+// not always the only one. The chat stays mounted below whatever happens here:
 // that is the requirement, and it is why the stage is a region of the room rather than a
 // mode that replaces it.
 //
@@ -38,8 +39,12 @@ const identityChip = (t) => `
 
 const initialsOf = (name) => String(name ?? '?').trim().slice(0, 2).toUpperCase();
 
-/** The focused stream's floating pill: listen controls, fullscreen, the way out. */
-const streamPill = (t, canReport = false) => `
+/**
+ * A watched stream's floating pill: listen controls, fullscreen, the way out — and, when
+ * there is more than one stream to choose between, the spotlight. `spot` is null when there
+ * is nothing to choose between, otherwise whether THIS tile holds the spotlight.
+ */
+const streamPill = (t, canReport = false, spot = null) => `
   <span class="stream-pill">
     ${canReport ? `
     <span class="pill-report-label" aria-hidden="true">Stream quality</span>
@@ -59,12 +64,17 @@ const streamPill = (t, canReport = false) => `
            value="${Math.round((t.audio.volume ?? 1) * 100)}"
            aria-label="Volume of this stream, for you only">
     <span class="pill-sep" aria-hidden="true"></span>`}
+    ${spot === null ? '' : `
+    <button type="button" class="pill-btn" data-spotlight
+            title="${spot ? 'Back to the grid' : 'Spotlight — make this one big'}"
+            aria-pressed="${spot ? 'true' : 'false'}"
+            aria-label="${spot ? 'Show every watched stream side by side' : 'Spotlight this stream'}">${spot ? icons.grid : icons.spotlight}</button>`}
     <button type="button" class="pill-btn" data-tile-full
             title="Fullscreen — press again to leave" aria-label="Toggle fullscreen">${icons.expand}</button>
     <span class="pill-sep" aria-hidden="true"></span>
     <button type="button" class="pill-btn pill-stop" data-stop-watching
-            aria-label="Stop watching — show all streams as thumbnails">
-      <span aria-hidden="true">✕</span>Stop watching
+            title="Stop watching" aria-label="Stop watching this stream">
+      <span aria-hidden="true">✕</span><span class="pill-word">Stop watching</span>
     </button>
   </span>`;
 
@@ -82,24 +92,38 @@ const placeholder = (t) => (t.frame ? `
       <span class="ph-face" style="--av: hsl(${esc(userHue(t.chipName ?? t.label))}, 55%, 40%)">${esc(initialsOf(t.chipName ?? t.label))}</span>
     </div>`);
 
-const watchButton = (t) => `
+/**
+ * How many OTHER people's streams can be watched at once — the web app's limit. Each one is
+ * a full-rate consumer on the way down, and past this the downlink and the decoder give out
+ * before the person runs out of things to look at. Your own tiles are local and do not count.
+ */
+export const MAX_WATCHED = 6;
+
+const watchButton = (t, limited = false) => `
     <span class="watch-veil" aria-hidden="true"></span>
     <button type="button" class="watch-btn" data-watch-tile="${esc(t.key)}"
+            ${limited ? `disabled title="Watching ${MAX_WATCHED} streams — stop one to watch another"` : ''}
             aria-label="Watch ${esc(t.label)}">${icons.expand}<span>Watch</span></button>`;
 
-const tile = (t, focusKey, canReport = false) => {
-    const focused = t.key === focusKey;
+/**
+ * One tile, in one of three places:
+ *   main  — watched, in the big area: the LIVE badge and the pill
+ *   strip — watched, beside a spotlight: live pictures, the identity chip, click to swap
+ *   else  — not watched: the placeholder (or your own camera's mirror) and the Watch verb
+ */
+const tile = (t, { main = false, spot = null, canReport = false, limited = false } = {}) => {
+    const focused = main;   // `.focused` is the big-area styling the CSS already knows
     return `
-  <div class="tile${focused ? ' focused' : ''}${t.self ? ' self' : ''}${t.live ? '' : ' idle'}"
+  <div class="tile${focused ? ' focused' : ''}${t.watched ? ' watched' : ''}${t.self ? ' self' : ''}${t.live ? '' : ' idle'}"
        data-tile="${esc(t.key)}" role="${focused ? 'group' : 'button'}" tabindex="${focused ? '-1' : '0'}"
-       aria-label="${esc(t.label)}${t.slot === 'screen' ? "'s screen" : ''}${focused ? ', focused' : ''}">
+       aria-label="${esc(t.label)}${t.slot === 'screen' ? "'s screen" : ''}${focused ? ', watching' : ''}">
     ${t.live ? `<video autoplay playsinline ${t.self ? 'muted' : ''}></video>` : placeholder(t)}
     ${focused ? `
     <span class="live-badge"><i aria-hidden="true"></i>LIVE · ${esc(t.label)}</span>
-    ${streamPill(t, canReport)}` : `
+    ${streamPill(t, canReport, spot)}` : `
     ${t.slot === 'screen' ? '<span class="live-badge small"><i aria-hidden="true"></i>LIVE</span>' : ''}
     ${identityChip(t)}
-    ${watchButton(t)}`}
+    ${t.watched ? '' : watchButton(t, limited && !t.self)}`}
   </div>`;
 };
 
@@ -109,33 +133,55 @@ export const STRIP_VISIBLE = 4;
 /**
  * The stage. Empty tiles array renders nothing at all — the room looks exactly as it
  * always did until the first camera or screen arrives.
+ *
+ * Nothing watched: a compact row of thumbnails, each offering Watch. Something watched: the
+ * big area holds every watched stream side by side — or, with a spotlight, just that one,
+ * and the other watched streams keep playing as thumbnails in the strip beside the
+ * unwatched ones. A spotlight is only honoured on a watched tile, so one that has gone falls
+ * back to the grid rather than to a black box.
  */
-export function stageView({ tiles = [], focus = null, heightPx = null, canReport = false } = {}) {
+export function stageView({
+    tiles = [], spotlight = null, heightPx = null, canReport = false, watchLimitReached = false,
+} = {}) {
     if (!tiles.length) return '';
     const ordered = orderTiles(tiles);
-    const focusKey = ordered.some((t) => t.key === focus) ? focus : null;
+    const watched = ordered.filter((t) => t.watched);
+    const spotKey = watched.length > 1 && watched.some((t) => t.key === spotlight) ? spotlight : null;
+    const limited = Boolean(watchLimitReached);
+    // Choosing between streams needs more than one stream to choose between.
+    const spotFor = (t) => (watched.length > 1 ? t.key === spotKey : null);
 
-    const thumbs = ordered.filter((t) => t.key !== focusKey);
+    if (!watched.length) {
+        return `
+    <section class="stage" aria-label="Live video"${heightPx ? ` style="height: ${Math.round(heightPx)}px"` : ''}>
+      <div class="stage-grid" data-count="${Math.min(ordered.length, 9)}">
+        ${ordered.map((t) => tile(t, { canReport, limited })).join('')}
+      </div>
+    </section>`;
+    }
+
+    const inMain = spotKey ? watched.filter((t) => t.key === spotKey) : watched;
+    const thumbs = ordered.filter((t) => !inMain.includes(t));
     return `
-    <section class="stage${focusKey ? ' has-focus' : ''}" aria-label="Live video"${heightPx ? ` style="height: ${Math.round(heightPx)}px"` : ''}>
-      ${focusKey ? `
-      <div class="stage-main">${tile(ordered.find((t) => t.key === focusKey), focusKey, canReport)}</div>
+    <section class="stage has-focus" aria-label="Live video"${heightPx ? ` style="height: ${Math.round(heightPx)}px"` : ''}>
+      <div class="stage-main">${spotKey
+        ? tile(inMain[0], { main: true, spot: spotFor(inMain[0]), canReport })
+        : `
+        <div class="watch-grid" data-count="${Math.min(inMain.length, 9)}">
+          ${inMain.map((t) => tile(t, { main: true, spot: spotFor(t), canReport })).join('')}
+        </div>`}
+      </div>
       ${thumbs.length ? `
       <div class="strip-shell${thumbs.length > STRIP_VISIBLE ? ' scrollable' : ''}">
         ${thumbs.length > STRIP_VISIBLE ? `
         <button type="button" class="strip-nav" data-strip-nav="-1" aria-label="Earlier streams">‹</button>` : ''}
-        <div class="stage-strip">${thumbs.map((t) => tile(t, focusKey, canReport)).join('')}</div>
+        <div class="stage-strip">${thumbs.map((t) => tile(t, { canReport, limited })).join('')}</div>
         ${thumbs.length > STRIP_VISIBLE ? `
         <button type="button" class="strip-nav" data-strip-nav="1" aria-label="More streams">›</button>` : ''}
       </div>` : ''}
-      ` : `
-      <div class="stage-grid" data-count="${Math.min(ordered.length, 9)}">
-        ${ordered.map((t) => tile(t, focusKey, canReport)).join('')}
-      </div>`}
     </section>
-    ${focusKey ? `
     <div class="stage-divider" data-stage-divider role="separator" aria-orientation="horizontal"
-         title="Drag to resize"><span></span></div>` : ''}`;
+         title="Drag to resize"><span></span></div>`;
 }
 
 /* ── choosing what to share ───────────────────────────────────────────────── */

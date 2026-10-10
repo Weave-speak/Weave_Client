@@ -34,8 +34,9 @@ import { platform } from '../platform/index.js';
 import { userHue } from '../ui/hue.js';
 import { mentionQuery, matchMentions, insertMention } from './mentions.js';
 import { freshHistory, advanceHistory, nextPageQuery, shouldLoadOlder } from './history.js';
-import { stageView, tileKey, sharePickerView, shareSetupView } from './views/stage.js';
+import { stageView, tileKey, sharePickerView, shareSetupView, MAX_WATCHED } from './views/stage.js';
 import { stageSignature, stagePaintDecision } from './stage-paint.js';
+import { createStreamCues } from './stream-cues.js';
 import { extractUrls } from './embeds.js';
 import { avatar } from './views/parts.js';
 import { esc } from '../ui/dom.js';
@@ -71,6 +72,13 @@ const PAINT_FLOOR_MS = 100;
  * share which really ended does not leave somebody staring at a frozen frame wondering.
  */
 const FULLSCREEN_HOLD_MS = 2000;
+
+// The web app's stream chimes, bundled beside the app; under weave:// and vite alike these
+// resolve to real URLs, and vite emits the files with the build.
+const STREAM_CUE_URLS = {
+    start: new URL('../assets/sounds/stream_start.ogg', import.meta.url).href,
+    end: new URL('../assets/sounds/stream_end.ogg', import.meta.url).href,
+};
 
 export function createRoom({ mount, api, link, user, server, features = [], reportStream = () => Promise.resolve(false), onSignedOut }) {
     const state = createRoomState({
@@ -228,20 +236,23 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
 
     // key `${cid}:${slot}` -> MediaStream. 'self' is our own preview.
     const videoStreams = new Map();
-    // Your OWN screen tiles you have opted to view. Empty by default: there is no reason to be
-    // subscribed to your own share, so a self screen shows as a placeholder with a Watch button
-    // until you choose to look. (Your own camera stays a live mirror — that one people expect.)
+    // Your OWN tiles you have opted to put in the big area. Empty by default: there is no reason
+    // to be subscribed to your own share, so a self screen shows as a placeholder with a Watch
+    // button until you choose to look. (Your own camera stays a live mirror in the compact row —
+    // that one people expect — and joins the big area the same way, when asked.)
     const watchingSelf = new Set();
     // The source most recently chosen in the share picker, so the isolated-audio capture knows
     // which window/screen to follow. Recorded at pick time because the pick happens INSIDE the
     // getDisplayMedia call that voice.enableScreen makes, and voice reads it straight after.
     let lastShareSource = null;
-    let stageFocus = null;
+    // Several streams can be watched at once; they share the big area side by side. The
+    // spotlight is the one the person chose to make big, with the others in the strip — or
+    // null for the side-by-side grid. A remote tile is watched exactly when its stream is in
+    // videoStreams: watching is opt-in, so every remote stream that arrives was asked for.
+    let spotlight = null;
     // The user's own stream/chat split, in pixels, once they have dragged the divider.
     // Null means the CSS default share.
     let stageHeightPx = null;
-    // A watch clicked from another room: focus lands when the stream does.
-    let pendingFocus = null;
     // What the stage last rendered. Repainting writes innerHTML, which throws away every
     // tile and builds new ones -- so an identical repaint is not free: it re-creates each
     // <video> and re-attaches srcObject. The pong carries the room's producer truth every
@@ -256,6 +267,9 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
     // see stage-paint.js — so the difference is decided by waiting a beat.
     let fullscreenHoldUntil = 0;
     let fullscreenHoldTimer = 0;
+    // Which stream announcements are worth a chime, and the chimes themselves.
+    const streamCues = createStreamCues();
+    const streamCueAudio = {};
 
     const voice = createVoice({
         link,
@@ -305,15 +319,11 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
                 // attachStreams and they never notice, where ejecting them would be the whole
                 // picture vanishing for a hiccup.
                 const held = holdFullscreen(key);
-                if (!held && stageFocus === key) stageFocus = null;
+                if (!held && spotlight === key) spotlight = null;
             } else {
+                // Watching is opt-in, so every remote stream that arrives here was ASKED for,
+                // and arriving is what puts it in the big area beside the others.
                 videoStreams.set(key, stream);
-                // Watching is opt-in now, so every remote stream that arrives here was
-                // ASKED for — pendingFocus carries the click that asked.
-                if (pendingFocus === key) {
-                    stageFocus = key;
-                    pendingFocus = null;
-                }
             }
             paintStage();
         },
@@ -644,7 +654,7 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
      *
      * Deliberately not part of repaint(): rebuilding <video> elements on every chat
      * message or presence blink would visibly restart the pictures. The stage answers to
-     * onVideo, focus clicks and room moves, nothing else.
+     * onVideo, watch and spotlight clicks and room moves, nothing else.
      */
     function paintStage() {
         const slot = $('#stageSlot', mount);
@@ -659,10 +669,12 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         for (const [key, stream] of videoStreams) {
             const [cid, slotName] = key.split(':');
             if (cid !== 'self') continue;
-            const watched = slotName !== 'screen' || watchingSelf.has(key);
+            const watched = watchingSelf.has(key);
+            // A camera is live either way — the mirror — but only WATCHED takes the big area.
+            const live = slotName !== 'screen' || watched;
             tiles.push({
                 key, cid, slot: slotName, label: 'You', self: true,
-                live: watched, stream: watched ? stream : null,
+                live, watched, stream: live ? stream : null,
                 chipName: me?.username ?? 'You',
             });
         }
@@ -687,6 +699,7 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
                     chipName: peer.username,
                     self: false,
                     live: Boolean(stream),
+                    watched: Boolean(stream),
                     stream,
                     frame: stream ? null : lastFrames.get(key) ?? null,
                     audio: stream && hasAudio
@@ -699,15 +712,16 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         const fullscreenKey = document.fullscreenElement?.dataset?.tile ?? null;
         const hold = Boolean(fullscreenKey) && Date.now() < fullscreenHoldUntil;
 
-        // Focus may only rest on a live tile; a placeholder in focus would be a black box.
-        // Except while the fullscreen tile is being held: dropping the focus there would
-        // survive the hold and put the viewer back in the grid anyway.
-        if (stageFocus && !tiles.some((t) => t.key === stageFocus && t.live)
-            && !(hold && stageFocus === fullscreenKey)) stageFocus = null;
+        // The spotlight may only rest on a watched tile; a placeholder in it would be a black
+        // box. Except while the fullscreen tile is being held: dropping the spotlight there
+        // would survive the hold and put the viewer back in the grid anyway.
+        if (spotlight && !tiles.some((t) => t.key === spotlight && t.watched)
+            && !(hold && spotlight === fullscreenKey)) spotlight = null;
         // A dragged height belongs to the SPLIT; the compact indication row sizes itself.
-        if (!stageFocus) stageHeightPx = null;
+        if (!tiles.some((t) => t.watched)) stageHeightPx = null;
+        const watchLimitReached = remoteWatchCount() >= MAX_WATCHED;
 
-        const signature = stageSignature({ tiles, focus: stageFocus, heightPx: stageHeightPx });
+        const signature = stageSignature({ tiles, spotlight, heightPx: stageHeightPx, watchLimitReached });
         const decision = stagePaintDecision({
             signature,
             lastSignature: lastStageSignature,
@@ -729,7 +743,9 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         }
 
         lastStageSignature = signature;
-        slot.innerHTML = stageView({ tiles, focus: stageFocus, heightPx: stageHeightPx, canReport: Boolean(user?.isTester) });
+        slot.innerHTML = stageView({
+            tiles, spotlight, heightPx: stageHeightPx, watchLimitReached, canReport: Boolean(user?.isTester),
+        });
         attachStreams(slot);
         paintMediaButtons();
     }
@@ -798,11 +814,6 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
     }
     document.addEventListener('fullscreenchange', onFullscreenChange);
 
-    /**
-     * Put one stream in the big frame — the SWAP the carousel promises. Whatever held
-     * focus before goes back to being a thumbnail; if it was a remote stream, watching
-     * it ends too, so exactly one remote stream is consumed at a time.
-     */
     // The last thing a stream showed, kept as a small JPEG per tile key. When someone
     // stops watching, the placeholder wears this frame BLURRED — "there is a picture
     // here, you are just not receiving it" — instead of falling back to stripes.
@@ -821,32 +832,58 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         } catch { /* a tainted or dead frame just means the plain placeholder */ }
     }
 
-    function focusTileKey(key) {
-        if (!key || key === stageFocus) return;
-        const previous = stageFocus;
-        if (previous && !previous.startsWith('self:') && previous !== key) {
-            snapshotTile(previous);
-            const [prevCid, prevSlot] = previous.split(':');
-            voice.setWatching(prevCid, prevSlot, false);
-        }
+    /** Other people's streams asked for, arrived or still on their way. */
+    function remoteWatchCount() {
+        return voice.watchedKeys().filter((key) => !key.startsWith('self:')).length;
+    }
+
+    /**
+     * Add one stream to the big area, beside whatever is already there. Nothing else stops:
+     * watching is plural. A remote stream's picture lands through onVideo, which is what
+     * moves it into the big area; your own is local and lands at once.
+     */
+    function watchTile(key) {
+        if (!key) return;
         if (key.startsWith('self:')) {
-            // Your own preview is local. Viewing your SCREEN is opt-in, so choosing to focus it
-            // is also choosing to watch it; a camera is already a live mirror. Focus is immediate.
-            if (key.endsWith(':screen')) watchingSelf.add(key);
-            stageFocus = key;
-            pendingFocus = null;
-        } else {
-            const [cid, slot] = key.split(':');
-            if (videoStreams.has(key)) {
-                stageFocus = key;
-                pendingFocus = null;
-            } else {
-                pendingFocus = key;
-                // The account rides along so the choice can be re-aimed after a
-                // reconnection, when every cid in the room is a different string.
-                voice.setWatching(cid, slot, true, state.raw.peers.get(cid)?.userId ?? null);
-            }
+            watchingSelf.add(key);
+            paintStage();
+            return;
         }
+        const [cid, slot] = key.split(':');
+        if (videoStreams.has(key) || voice.watchedKeys().includes(key)) return;
+        // Past the limit the Watch buttons are drawn disabled; this is for the paths that
+        // are not a button — a sidebar mark, a keyboard activation on the tile itself.
+        if (remoteWatchCount() >= MAX_WATCHED) return;
+        // The account rides along so the choice can be re-aimed after a reconnection,
+        // when every cid in the room is a different string.
+        voice.setWatching(cid, slot, true, state.raw.peers.get(cid)?.userId ?? null);
+        paintStage();
+    }
+
+    /**
+     * Stop watching one stream, and only that one. Stopping means stopping: the
+     * subscription ends server-side and the tile becomes a BLURRED still of the last frame
+     * received. Your own returns to a placeholder — unsubscribed again.
+     */
+    function stopWatchingTile(key) {
+        if (!key) return;
+        const holder = $(`[data-tile="${key}"]`, mount);
+        if (holder && document.fullscreenElement === holder) document.exitFullscreen().catch(() => {});
+        if (spotlight === key) spotlight = null;
+        if (key.startsWith('self:')) {
+            watchingSelf.delete(key);
+        } else {
+            snapshotTile(key);
+            const [cid, slot] = key.split(':');
+            voice.setWatching(cid, slot, false);
+        }
+        paintStage();
+    }
+
+    /** Make one watched stream THE picture, or (null) go back to them side by side. */
+    function setSpotlight(key) {
+        if (spotlight === key) return;
+        spotlight = key;
         paintStage();
     }
 
@@ -1339,9 +1376,21 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             return;
         }
 
+        // A stream starting or stopping in this room is heard, as on the web app. Asked
+        // before anything applies the frame: the decision needs the roster as it stood.
+        // stream-cues.js decides which announcements are real starts and stops.
+        if (['producer_new', 'producer_closed', 'peer_joined', 'peer_left', 'moved', 'joined'].includes(msg.type)) {
+            const cue = streamCues.observe(msg, {
+                peer: state.raw.peers.get(msg.cid ?? msg.peer?.cid) ?? null,
+                currentChannelId: state.raw.currentChannelId,
+                selfUserId: state.raw.me?.id ?? null,
+            });
+            if (cue) playStreamCue(cue);
+        }
+
         if (msg.type === 'moved' || msg.type === 'joined') {
             msgNoise.reset();
-            stageFocus = null;
+            spotlight = null;
             // Stepping INTO a call room remembers the room being left, so ending the
             // call puts you back where you stood rather than nowhere.
             if (msg.channel?.system && !state.raw.channels.some((c) => c.id === msg.channel.id)) {
@@ -1651,6 +1700,18 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             blobUrls.set(url, obj);
             play(obj);
         }).catch(() => { /* the sound may have been deleted since it was chosen */ });
+    }
+
+    /**
+     * The stream start/stop chime. One element per cue, loaded on first use and CLONED per
+     * play, so two streams starting together both sound rather than the second restarting
+     * the first. Same output device as everything else the room plays — see cue.js.
+     */
+    function playStreamCue(kind) {
+        const url = STREAM_CUE_URLS[kind];
+        if (!url) return;
+        streamCueAudio[kind] ??= new Audio(url);
+        playCue(streamCueAudio[kind].cloneNode(), prefs.audioOutput).catch(() => { /* autoplay; a missed chime is harmless */ });
     }
 
     /**
@@ -1988,11 +2049,10 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
                 const peer = state.raw.peers.get(cid);
                 if (!peer) return;
                 if (peer.channelId === state.raw.currentChannelId) {
-                    focusTileKey(key);
+                    watchTile(key);
                 } else if (peer.channelId) {
-                    // Elsewhere: participate — join their room, and focus their stream
-                    // the moment it lands.
-                    pendingFocus = key;
+                    // Elsewhere: participate — join their room, where their stream waits
+                    // as a placeholder like any other.
                     link.noteChannel(peer.channelId);
                     link.send('move', { channelId: peer.channelId });
                 }
@@ -2001,7 +2061,13 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
 
             const watchBtn = event.target.closest('[data-watch-tile]');
             if (watchBtn) {
-                focusTileKey(watchBtn.dataset.watchTile);
+                watchTile(watchBtn.dataset.watchTile);
+                return;
+            }
+            const spot = event.target.closest('[data-spotlight]');
+            if (spot) {
+                const key = spot.closest('[data-tile]')?.dataset.tile;
+                if (key) setSpotlight(spotlight === key ? null : key);
                 return;
             }
             const nav = event.target.closest('[data-strip-nav]');
@@ -2027,21 +2093,10 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
                 return;
             }
 
-            if (event.target.closest('[data-stop-watching]')) {
-                if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-                const key = stageFocus;
-                stageFocus = null;
-                // Stopping means stopping: the subscription ends server-side and the tile
-                // becomes a BLURRED still of the last frame received — no live feed.
-                if (key && !key.startsWith('self:')) {
-                    snapshotTile(key);
-                    const [cid, slot] = key.split(':');
-                    voice.setWatching(cid, slot, false);
-                } else if (key) {
-                    // Stopping your OWN screen returns it to a placeholder — unsubscribed again.
-                    watchingSelf.delete(key);
-                }
-                paintStage();
+            const stop = event.target.closest('[data-stop-watching]');
+            if (stop) {
+                // Its OWN tile: with several watched, stopping one leaves the rest playing.
+                stopWatchingTile(stop.closest('[data-tile]')?.dataset.tile);
                 return;
             }
             if (event.target.closest('[data-tile-full]')) {
@@ -2059,14 +2114,18 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
                 if (holder) reportStreamQuality(reportBtn.matches('[data-report-bad]'), holder, reportBtn);
                 return;
             }
-            if (event.target.closest('[data-listen-volume]')) return;   // the slider is not a focus click
+            if (event.target.closest('[data-listen-volume]')) return;   // the slider is not a watch click
 
             const tile = event.target.closest('[data-tile]');
             if (tile) {
-                // The focused window itself is inert — misclicks on a stream you are
-                // reading must not tear the layout down. Thumbnails and grid tiles focus.
+                // The big area itself is inert — misclicks on a stream you are reading must
+                // not tear the layout down; the pill's buttons are the way to change it.
+                // Elsewhere, a watched thumbnail beside the spotlight swaps into it, and an
+                // unwatched one starts being watched.
                 if (tile.closest('.stage-main')) return;
-                focusTileKey(tile.dataset.tile);
+                const key = tile.dataset.tile;
+                if (tile.classList.contains('watched')) setSpotlight(key);
+                else watchTile(key);
                 return;
             }
 
@@ -2243,10 +2302,10 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             if (event.key !== 'Escape') return;
             // In fullscreen, Escape is the browser's own way out and it has already been
             // handled. Acting on it again would both leave fullscreen AND drop the viewer
-            // back to the thumbnail grid — two things for one press, only one of them asked
-            // for. Leaving fullscreen alone is enough.
+            // back to the grid — two things for one press, only one of them asked for.
+            // Leaving fullscreen alone is enough.
             if (document.fullscreenElement) return;
-            if (stageFocus) { stageFocus = null; paintStage(); return; }
+            if (spotlight) { setSpotlight(null); return; }
             setDrawer(false);
         });
 
@@ -2765,13 +2824,13 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
          * and for a video playing in another application nothing can — but when the stream
          * is being consumed HERE, we know.
          *
-         * A focused tile rather than merely a visible one: a thumbnail nobody is looking at
-         * is not evidence of anything. The visibility check keeps a minimised window from
-         * claiming attention it does not have.
+         * A watched tile rather than merely a visible one: a placeholder nobody asked for,
+         * or your own camera's mirror, is not evidence of anything. The visibility check
+         * keeps a minimised window from claiming attention it does not have.
          */
         isWatchingVideo() {
             if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return false;
-            return Boolean(stageFocus);
+            return [...videoStreams.keys()].some((key) => !key.startsWith('self:') || watchingSelf.has(key));
         },
 
         destroy() {

@@ -1801,6 +1801,15 @@ export function createVoice({
         },
 
         /**
+         * Every `cid:slot` currently asked for — including ones whose pictures have not
+         * arrived yet, which is what a limit on watching has to count: a click that is still
+         * in flight is already a consumer on its way.
+         */
+        watchedKeys() {
+            return [...watching];
+        },
+
+        /**
          * Re-arm what this person was watching, against a roster where every cid is new.
          *
          * Only for a reconnection: entering a DIFFERENT room deliberately starts from

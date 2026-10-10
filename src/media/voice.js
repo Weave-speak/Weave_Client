@@ -36,8 +36,9 @@ import { micCodecOptions, screenAudioCodecOptions } from './audio-options.js';
 import { listenOutput, MAX_LISTEN_GAIN } from './listen-policy.js';
 import { bestFitFramerate } from './presets.js';
 import { createStallDetector, readFlow } from './stall.js';
-import { buildStreamSample } from './stream-report.js';
+import { buildStreamSample, pickTransport } from './stream-report.js';
 import { watchesToRestore } from './watch-resume.js';
+import { consumeVerdict, reconcileConsumers, wantedStreams, createFlights } from './consume-plan.js';
 
 // Bundled beside the app; under weave:// and vite alike this resolves to a real URL.
 const GATE_WORKLET_URL = new URL('./gate-worklet.js', import.meta.url);
@@ -131,6 +132,13 @@ export function createVoice({
      * Weave's own call out of the share. Null means "use loopback", the safe fallback.
      */
     getIsolatedShareAudio = async () => null,
+    /**
+     * Where voice says what it did, as (level, message). The room points this at the app
+     * log. A decision that only reaches a console is one no bug report will ever contain:
+     * the report that led here had a server log full of re-announcements and an app log
+     * without a single line about voice.
+     */
+    log = () => {},
 } = {}) {
     let device = null;
     let sendTransport = null;
@@ -340,11 +348,38 @@ export function createVoice({
         // lives in the detector instead of becoming an instant rebuild.
         transport.on('connectionstatechange', (statev) => {
             transportState[direction] = statev;
-            if (statev === 'connected') watchdog.start();
+            if (statev === 'connected') {
+                watchdog.start();
+                notePath(direction, transport);
+            }
             assess(direction).catch(() => { /* the next tick tries again */ });
         });
 
         return transport;
+    }
+
+    // The ICE path each transport is on, as last written to the log. The server offers TCP
+    // on the media port as a fallback, and an ICE restart after a blip can land there, so
+    // when a call starts sounding wrong the first question is which path it is on. Until
+    // this was logged, nothing could answer it. Written on change only: the moment a path
+    // moves is the signal, and a line for every reconnect to the same place would bury it.
+    const lastPath = { send: null, recv: null };
+
+    async function notePath(direction, transport) {
+        let path = null;
+        try {
+            if (!transport || transport.closed) return;
+            path = pickTransport(await transport.getStats());
+        } catch {
+            return;   // stats are a diagnostic, never a dependency
+        }
+        if (!path) return;
+        // Candidate types and protocol only, never an address: this goes into a file that
+        // gets attached to bug reports.
+        const label = `${path.protocol ?? '?'} ${path.localType ?? '?'}→${path.remoteType ?? '?'}`;
+        if (lastPath[direction] === label) return;
+        lastPath[direction] = label;
+        log('info', `${direction} path: ${label}${path.rttMs != null ? `, rtt ${path.rttMs} ms` : ''}`);
     }
 
     // Bumped on every teardown; a transport that finishes creating under a stale epoch
@@ -600,6 +635,7 @@ export function createVoice({
         if (!transport || transport.closed) return undefined;
 
         onChange({ state: 'recovering', reason: `restoring the ${direction} connection` });
+        log('info', `restarting ICE on ${direction}`);
 
         repairInFlight = (async () => {
             link.send('restartIce', { direction });
@@ -607,6 +643,10 @@ export function createVoice({
             if (transport.closed) return;
             await transport.restartIce({ iceParameters: reply.iceParameters });
             onChange({ state: 'live', repaired: true });
+            // The restart is where a path can change without the connection state ever
+            // saying so, so look again once the new checks have had time to settle.
+            const look = setTimeout(() => notePath(direction, transport), 4_000);
+            look.unref?.();
         })().catch(async (err) => {
             // A server too old to know the message, or one that could not restart: the
             // rebuild is still there, and it is what used to happen every time.
@@ -666,6 +706,7 @@ export function createVoice({
 
     async function runRecovery(reason) {
         if (recoverAttempts >= MAX_RECOVER) {
+            log('error', `gave up rebuilding after ${MAX_RECOVER} attempts (${reason})`);
             onChange({
                 state: 'failed',
                 reason,
@@ -674,6 +715,7 @@ export function createVoice({
             return;
         }
         recoverAttempts += 1;
+        log('warn', `rebuilding the media path, attempt ${recoverAttempts} of ${MAX_RECOVER} (${reason})`);
         onChange({ state: 'recovering', reason, attempt: recoverAttempts, of: MAX_RECOVER });
 
         teardownMedia();
@@ -689,6 +731,7 @@ export function createVoice({
             watchdog.start();
             onChange({ state: 'live', recovered: true });
         } catch (err) {
+            log('warn', `rebuild attempt failed: ${err.message}`);
             onChange({ state: 'recovering', reason: err.message, attempt: recoverAttempts, of: MAX_RECOVER });
             // Re-arm. teardownMedia() has already closed both transports and with them the
             // connectionstatechange listeners that would have triggered another attempt,
@@ -1075,35 +1118,86 @@ export function createVoice({
 
     /* ── consuming ───────────────────────────────────────────────────────── */
 
-    async function consume(cid, slot) {
+    // Every consume in flight, one per stream, shared by whoever asks meanwhile.
+    //
+    // The duplicate guard in consumeNow reads `consumers`, and a consumer only lands there
+    // after a full round trip and a local transport.consume(). Anything else that asked in
+    // that window saw nothing, passed, and asked again — and plenty asks: producer_new, the
+    // roster beat, the pong's truth, the server's re-announce, both syncs after a join, and
+    // the link's outage queue flushing on reconnect, which is when they all ask at once.
+    // Every extra answer was a second consumer of the same voice, played through its own
+    // jitter buffer a few milliseconds behind the first: a comb filter, which is the "tin
+    // can" one listener heard while the rest of the room heard nothing wrong. A server log
+    // caught one: the same listener consuming the same speaker twice, 41ms apart.
+    const flights = createFlights();
+
+    /**
+     * Receive one of a peer's streams.
+     *
+     * `producerId` is the producer the caller was told about, when it was told. It is what
+     * lets a consumer of a REPLACED producer be told apart from a live one; see consumeNow.
+     */
+    function consume(cid, slot, producerId = null) {
+        return flights.run(`${cid}:${slot}`, producerId, () => consumeNow(cid, slot, producerId));
+    }
+
+    async function consumeNow(cid, slot, producerId) {
         if (!device?.loaded) return null;
         // Never consume our OWN producer. Hearing your own shared audio back is a feedback
         // loop; the server refuses it too, but there is no reason to even ask. link.cid is
         // this peer's own id, so a stray self-announcement never turns into a self-consumer.
         if (cid && cid === link.cid) return null;
-        // A LIVE duplicate. The guard used to test only for the presence of a map entry,
-        // so a consumer that had died — its transport closed, or the server closing it
-        // without a frame we understood — blocked its own replacement for ever. That is
-        // what defeated the server's reconciler: it re-announced the producer every five
-        // seconds, this line returned null every time, and the listener stayed silently
-        // deaf to one particular person until they rejoined.
+        // A LIVE duplicate is refused; anything else in the way is cleared. The guard used
+        // to test only for the presence of a map entry, so a consumer that had died blocked
+        // its own replacement for ever. Testing `closed` fixed half of that. The other half
+        // is a consumer of a producer the server has since closed or replaced: nothing tells
+        // mediasoup-client about that, so it reports itself open. While this guard asked only
+        // "do we have their audio?", the server re-announced the new producer every five
+        // seconds for ten minutes and this returned null every time, until the speaker
+        // restarted and came back under a new cid. Asking "do we have THIS producer?" is
+        // what the announcement's producerId is for.
+        const held = [];
         for (const [id, entry] of consumers) {
             if (entry.cid !== cid || entry.slot !== slot) continue;
-            if (!entry.consumer?.closed) return null;
-            dropConsumer(id);
+            held.push({
+                id,
+                producerId: entry.consumer?.producerId ?? null,
+                closed: Boolean(entry.consumer?.closed),
+            });
         }
+        const verdict = consumeVerdict(held, producerId);
+        for (const gone of verdict.drop) {
+            if (gone.reason === 'stale') {
+                log('warn', `replaced a stale consumer of ${cid}:${slot} `
+                    + `(it was receiving producer ${gone.producerId}; the room now has ${producerId})`);
+            }
+            dropConsumer(gone.id);
+        }
+        if (verdict.skip) return null;
         if (isWatchable(slot) && !watching.has(watchKey(cid, slot))) return null;
 
-        await ensureRecv();
+        // A teardown can land in any of the awaits below. What was asked for before one
+        // belongs to a path that no longer exists, so it is never adopted after it — and
+        // its waiter stops matching, so the answer to the ask that replaced it cannot be
+        // taken by this one and thrown away, leaving the new ask to time out.
+        const generation = flights.generation;
+        const current = () => generation === flights.generation;
+        const transport = await ensureRecv();
+        if (!current()) return null;
         link.send('consume', { cid, slot, rtpCapabilities: device.rtpCapabilities });
-        const info = await waitFor('consumed', (m) => m.cid === cid && m.slot === slot);
+        const info = await waitFor('consumed', (m) => current() && m.cid === cid && m.slot === slot);
+        if (!current() || transport.closed) return null;
 
-        const consumer = await recvTransport.consume({
+        const consumer = await transport.consume({
             id: info.consumerId,
             producerId: info.producerId,
             kind: info.kind,
             rtpParameters: info.rtpParameters,
         });
+        if (!current()) {
+            try { consumer.close(); } catch { /* already gone */ }
+            return null;
+        }
 
         const stream = new MediaStream([consumer.track]);
 
@@ -1341,6 +1435,11 @@ export function createVoice({
         watchdog.stop();
         if (chainRecheck) { clearTimeout(chainRecheck); chainRecheck = null; }
         for (const id of [...consumers.keys()]) dropConsumer(id);
+        // So is every consume still in flight, and the next ask must not queue behind one.
+        flights.reset();
+        // The rebuilt transports get their own first path line.
+        lastPath.send = null;
+        lastPath.recv = null;
 
         try { micProducer?.close(); } catch { /* already closed */ }
         micProducer = null;
@@ -1613,7 +1712,7 @@ export function createVoice({
         /** Consume everything a peer is currently sending that we can play or show. */
         async consumePeer(peer) {
             for (const producer of peer?.producers ?? []) {
-                await consume(peer.cid, producer.slot).catch(() => {});
+                await consume(peer.cid, producer.slot, producer.id ?? null).catch(() => {});
             }
         },
 
@@ -1624,29 +1723,43 @@ export function createVoice({
          * blip. The production client ran exactly this heal on its heartbeat, and the
          * lesson survived for a reason: one missed frame otherwise becomes one person
          * silently unable to hear one other person until someone rejoins.
+         *
+         * `authoritative` means the list is the SERVER's memory — the pong's truth, a join's
+         * snapshot — and only then is a consumer of some other producer treated as stale and
+         * replaced. The roster beat passes its own bookkeeping, which can lag a frame it
+         * never saw; acting on that would drop a good consumer and re-make it every beat.
+         * See consume-plan.js for the whole decision.
          */
-        async sync(peersInRoom = []) {
+        async sync(peersInRoom = [], { authoritative = false } = {}) {
             if (!device?.loaded || !running) return;
 
-            const want = new Set();
-            for (const peer of peersInRoom) {
-                for (const producer of peer.producers ?? []) {
-                    want.add(`${peer.cid}:${producer.slot}`);
-                }
-            }
+            const plan = reconcileConsumers({
+                entries: [...consumers].map(([id, entry]) => ({
+                    id,
+                    cid: entry.cid,
+                    slot: entry.slot,
+                    producerId: entry.consumer?.producerId ?? null,
+                    closed: Boolean(entry.consumer?.closed),
+                })),
+                want: wantedStreams(peersInRoom),
+                authoritative,
+            });
 
-            const have = new Set();
-            for (const entry of consumers.values()) have.add(`${entry.cid}:${entry.slot}`);
-
-            for (const [id, entry] of [...consumers]) {
-                if (!want.has(`${entry.cid}:${entry.slot}`)) dropConsumer(id);
+            for (const { id, key, reason, closeOnServer } of plan.drop) {
+                if (reason === 'stale') log('warn', `replaced a stale consumer of ${key}`);
+                // Should never be seen again now that consumes are single-flight. If it is,
+                // something found another way to ask twice, and this line is how we hear.
+                if (reason === 'duplicate') log('warn', `closed a duplicate consumer of ${key}`);
+                if (closeOnServer) link.send('closeConsumer', { consumerId: id });
+                dropConsumer(id);
             }
-            for (const key of want) {
-                if (have.has(key)) continue;
-                const [cid, slot] = key.split(':');
+            for (const { cid, slot, producerId } of plan.consume) {
+                const key = `${cid}:${slot}`;
                 if (isWatchable(slot) && !watching.has(watchKey(cid, slot))) continue;
                 try {
-                    await consume(cid, slot);
+                    // The roster's producer id is not trusted to judge a consumer by, for the
+                    // same reason the plan does not trust it.
+                    await consume(cid, slot, authoritative ? producerId : null);
                     consumeFails.delete(key);
                     // The banner said a specific stream was stuck; once nothing is stuck
                     // any more, say so too. onChange REPLACES the whole displayed voice
@@ -1663,7 +1776,7 @@ export function createVoice({
                     // and it is SAID, on screen, while the retrying continues.
                     const n = (consumeFails.get(key) ?? 0) + 1;
                     consumeFails.set(key, n);
-                    console.warn(`[voice] consume ${key} failed (attempt ${n}):`, err?.message ?? err);
+                    log('warn', `consume ${key} failed (attempt ${n}): ${err?.message ?? err}`);
                     if (n === 3) {
                         failureSignaled = true;
                         onChange({
@@ -1758,7 +1871,10 @@ export function createVoice({
 
             switch (msg.type) {
                 case 'producer_new':
-                    consume(msg.cid, msg.slot).catch(() => {});
+                    // The server's own word on which producer is current — from the
+                    // speaker's produce or from its reconciler's re-announce — so it may
+                    // replace a consumer of any other.
+                    consume(msg.cid, msg.slot, msg.producerId ?? null).catch(() => {});
                     return true;
 
                 case 'producer_closed':
@@ -1822,6 +1938,9 @@ export function createVoice({
          */
         async onMoved({ rtpCapabilities, mediaReset = false, reconnect = false } = {}) {
             for (const id of [...consumers.keys()]) dropConsumer(id);
+            // A consume still in flight was asked of the room we just left. Its answer must
+            // not land in this one, and nothing here should wait on it.
+            flights.reset();
             // A different room is a different audience: everything starts as a
             // placeholder again.
             //

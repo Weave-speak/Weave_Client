@@ -259,6 +259,9 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
 
     const voice = createVoice({
         link,
+        // Voice's own account of what it did — a stale consumer replaced, a rebuild and why,
+        // the ICE path each transport settled on — written where a bug report finds it.
+        log: (level, message) => platform.log(level, `[voice] ${message}`),
         // Which speakers/headset the room's voices play out of; '' is the system default.
         getAudioOutput: () => prefs.audioOutput,
         // Render-side truth for a watched video, read off the stage's own <video> element:
@@ -1165,7 +1168,9 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             // hand the same list straight to the media layer, so the heal runs on what
             // the server knows rather than on whatever frames happened to survive.
             state.applyProducersTruth(msg.producers);
-            voice.sync(msg.producers).catch(() => {});
+            // Authoritative: these are the server's producer ids, so a consumer of any
+            // other producer is one the server has already closed, and is replaced.
+            voice.sync(msg.producers, { authoritative: true }).catch(() => {});
             paintStage();
             return;
         }
@@ -1474,7 +1479,12 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         // above was awaiting is caught now rather than at the next beat — and once more
         // shortly after, for the peer whose arrival raced this very join (the second
         // party of a call answering while the first was still setting up).
-        voice.sync(roomPeers()).catch(() => {});
+        //
+        // The first is authoritative because the roster was replaced by the server's
+        // snapshot a moment ago. After a RESUME that matters most: every consumer was
+        // kept, and any of them whose producer changed while the socket was down is a
+        // consumer of nothing — the frames that would have said so went to the old socket.
+        voice.sync(roomPeers(), { authoritative: true }).catch(() => {});
         setTimeout(() => voice.sync(roomPeers()).catch(() => {}), 3000);
 
         if (channel?.allowVoice === false) {

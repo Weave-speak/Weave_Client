@@ -55,9 +55,9 @@ const find = (stats, pred) => rowsOf(stats).find(pred) ?? null;
  * `currentRoundTripTime` is the latency of the leg to the Pi; the candidate types and
  * protocol are how we tell a direct UDP path from a TCP fallback or a relay — a share that
  * freezes only over TCP is a firewall story, not an encoder one, and this is where that
- * shows.
+ * shows. Voice reads it too, to put each transport's path in the app log.
  */
-function pickTransport(stats) {
+export function pickTransport(stats) {
     const rows = rowsOf(stats);
     // 'succeeded' + nominated is the pair actually carrying media; some engines only mark
     // one as selected, so fall back to the first succeeded pair rather than reporting none.

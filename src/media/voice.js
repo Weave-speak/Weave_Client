@@ -718,7 +718,8 @@ export function createVoice({
         log('warn', `rebuilding the media path, attempt ${recoverAttempts} of ${MAX_RECOVER} (${reason})`);
         onChange({ state: 'recovering', reason, attempt: recoverAttempts, of: MAX_RECOVER });
 
-        teardownMedia();
+        // The captures stay up: a rebuild replaces the path, not the person's choice to share.
+        teardownMedia({ keepCaptures: true });
         try {
             await ensureRecv();
             if (micProducerWanted) await enableMic();
@@ -728,6 +729,12 @@ export function createVoice({
             // off — burned all four attempts across a session's ordinary blips and then
             // met "rejoin the room to try again" for a hiccup everyone else survived.
             if (!micProducerWanted) recoverAttempts = 0;
+            // enableMic() restores video on its own once its produce has proven the path.
+            // Somebody sharing with no microphone never gets there, so their share would
+            // otherwise be the one thing a successful rebuild left behind.
+            if (!micProducerWanted) {
+                await restoreVideo().catch((err) => log('warn', `video not restored: ${err.message}`));
+            }
             watchdog.start();
             onChange({ state: 'live', recovered: true });
         } catch (err) {
@@ -809,9 +816,11 @@ export function createVoice({
         onChange({ state: 'live', talking: true });
 
         // The proven path is the moment to restore anything video the user still wants:
-        // after a cross-worker move or a recovery the producers are gone but the TRACKS
-        // survive, so this re-produces without a single new permission prompt.
-        await restoreVideo().catch(() => { /* voice is up; video can be retried by hand */ });
+        // after a cross-worker move, a recovery or a reconnect the server could not resume,
+        // the producers are gone but the TRACKS survive — see restoreVideo() for what that
+        // took — so this re-produces without a single new permission prompt. A failure is
+        // logged rather than thrown: voice is up, and a share can be restarted by hand.
+        await restoreVideo().catch((err) => log('warn', `video not restored: ${err.message}`));
         return micProducer;
     }
 
@@ -906,6 +915,8 @@ export function createVoice({
             // capture was squeezed into a 720p budget, so "sharper" made it softer.
             encodings: getVideoEncodings(),
             codecOptions: { videoGoogleStartBitrate: 800 },
+            // The camera is ours to stop, not the producer's; see restoreVideo().
+            stopTracks: false,
         });
         onVideo({ cid: 'self', slot: SLOTS.WEBCAM, stream: camStream });
         onChange({ state: 'live', webcam: true });
@@ -1034,12 +1045,15 @@ export function createVoice({
         if (!live) {
             // On desktop the app's own picker answers this; in a browser, the browser's.
             screenStream = await navigator.mediaDevices.getDisplayMedia(getScreenConstraints());
+            // The OS's own "stop sharing", or the shared window closing, ends the share
+            // honestly. Attached once per capture: a re-produce after a rebuild comes back
+            // through here with the same track, and used to stack another listener each time.
+            screenStream.getVideoTracks()[0]?.addEventListener('ended', () => disableScreenInner());
         }
         const [video] = screenStream.getVideoTracks();
         // 'text' keeps glyphs legible when the encoder has to choose; 'motion' keeps
         // frame rate. Chosen by the person in the share chooser, just before this share.
         try { video.contentHint = getScreenContentHint(); } catch { /* advisory only */ }
-        video.addEventListener('ended', () => disableScreenInner());
 
         // The router's first video codec, which is H264 — NOT VP9. Asking for VP9 by
         // name here (0.1.41) gave every viewer a black picture: the share negotiated,
@@ -1052,6 +1066,8 @@ export function createVoice({
             appData: { slot: SLOTS.SCREEN },
             encodings: getScreenEncodings(),
             codecOptions: { videoGoogleStartBitrate: 1200 },
+            // The capture is ours to stop, not the producer's; see restoreVideo().
+            stopTracks: false,
         });
 
         applyDegradationPreference(screenProducer, getScreenContentHint());
@@ -1060,8 +1076,14 @@ export function createVoice({
         // The default share audio is the system's whole output mix, which contains Weave's own
         // call — a viewer hears themselves returned through the share. Prefer a process-isolated
         // track carrying ONLY the shared program's audio; the loopback track is the fallback.
+        //
+        // The loopback track's PRESENCE is what says the person asked for share audio; its
+        // state is a separate question. Once isolation has stood in for it, it was stopped
+        // below — so a re-produce after a rebuild finds it ended, still wants audio, asks for
+        // isolation again, and must not fall back to a dead track: producing one throws,
+        // which took the share's sound with it and said nothing.
         const [loopbackAudio] = screenStream.getAudioTracks();
-        let shareAudio = loopbackAudio ?? null;
+        let shareAudio = loopbackAudio?.readyState === 'live' ? loopbackAudio : null;
         if (loopbackAudio) {
             const iso = await getIsolatedShareAudio().catch(() => null);
             if (iso?.track) {
@@ -1070,6 +1092,8 @@ export function createVoice({
                 // The loopback capture is replaced, not carried alongside — stop it so it is
                 // not also feeding the share.
                 try { loopbackAudio.stop(); } catch { /* the isolated track stands in */ }
+            } else if (!shareAudio) {
+                log('warn', 'screen share audio could not be re-captured; sharing the picture only');
             }
         }
         if (shareAudio) {
@@ -1080,6 +1104,9 @@ export function createVoice({
                 track: shareAudio,
                 appData: { slot: SLOTS.SCREEN_AUDIO },
                 codecOptions: screenAudioCodecOptions(),
+                // Ours to stop; see restoreVideo(). The isolated track is stopped with its
+                // isolation, the loopback one with the stream.
+                stopTracks: false,
             });
         }
 
@@ -1106,13 +1133,28 @@ export function createVoice({
         onChange({ state: 'live', screen: false });
     }
 
-    /** Re-produce whatever video the user still wants, on a freshly proven path. */
+    /**
+     * Re-produce whatever video the user still wants, on a freshly proven path.
+     *
+     * This only works because the captures OUTLIVE their producers, and for a long time they
+     * did not. mediasoup-client's produce() defaults to stopTracks: true, so closing a
+     * producer — or the transport under it — stopped the very track this was meant to pick
+     * back up. Every rebuild therefore ended the screen share outright: a reconnect the
+     * server could not resume closed the producer, this found an ended track and did
+     * nothing, and the person had to notice and pick their window again. On 2026-10-12 that
+     * happened twice in one evening to somebody streaming to the room. So every video and
+     * share-audio producer is made with stopTracks: false, and the tracks are stopped where
+     * a share is actually meant to end — disableScreenInner(), disableWebcamInner(), and a
+     * teardown that is not keeping its captures.
+     */
     async function restoreVideo() {
         if (camWanted && !camProducer && camStream?.getVideoTracks?.().some((t) => t.readyState === 'live')) {
             await enableWebcam();
+            log('info', 'camera restored after rebuild');
         }
         if (screenWanted && !screenProducer && screenStream?.getVideoTracks?.().some((t) => t.readyState === 'live')) {
             await enableScreen();
+            log('info', 'screen share restored after rebuild');
         }
     }
 
@@ -1430,7 +1472,15 @@ export function createVoice({
 
     /* ── teardown ────────────────────────────────────────────────────────── */
 
-    function teardownMedia() {
+    /**
+     * Close every producer, consumer and transport.
+     *
+     * `keepCaptures` is for a rebuild: the path is being replaced, not the person's
+     * choices, so the camera and screen captures stay running for restoreVideo() to put
+     * straight back — no picker, and no share ended for everybody watching it. Stopping
+     * voice entirely leaves it false and releases them.
+     */
+    function teardownMedia({ keepCaptures = false } = {}) {
         // Everything the detectors know describes a path that is about to stop existing.
         watchdog.stop();
         if (chainRecheck) { clearTimeout(chainRecheck); chainRecheck = null; }
@@ -1452,12 +1502,14 @@ export function createVoice({
         try { screenAudioIsolation?.stop(); } catch { /* already gone */ }
         screenAudioIsolation = null;
         stopScreenFramerateWatch();
-        for (const track of camStream?.getTracks() ?? []) track.stop();
-        camStream = null;
-        for (const track of screenStream?.getTracks() ?? []) track.stop();
-        screenStream = null;
-        onVideo({ cid: 'self', slot: SLOTS.WEBCAM, stream: null });
-        onVideo({ cid: 'self', slot: SLOTS.SCREEN, stream: null });
+        if (!keepCaptures) {
+            for (const track of camStream?.getTracks() ?? []) track.stop();
+            camStream = null;
+            for (const track of screenStream?.getTracks() ?? []) track.stop();
+            screenStream = null;
+            onVideo({ cid: 'self', slot: SLOTS.WEBCAM, stream: null });
+            onVideo({ cid: 'self', slot: SLOTS.SCREEN, stream: null });
+        }
 
         for (const track of micStream?.getTracks() ?? []) track.stop();
         micStream = null;
@@ -1996,6 +2048,11 @@ export function createVoice({
                 // The microphone track itself is kept. It is still a perfectly good track,
                 // the permission is already granted, and reopening it risks coming back
                 // with a different device.
+                //
+                // So are the camera and screen captures, for the same reasons and one more:
+                // enableMic() puts them straight back through restoreVideo(), which is what
+                // keeps a reconnect the server could not resume from ending a screen share.
+                // Closing the producers above does not stop them; see restoreVideo().
             }
 
             if (rtpCapabilities && device && !device.loaded) {
@@ -2011,19 +2068,29 @@ export function createVoice({
          * standing — including a screen share, which a rebuild would have stopped and
          * announced to the room as "stopped streaming" for the sake of a blip.
          *
-         * The one thing that may not have survived is the ICE path, because it usually
-         * died of the same network fault the socket did. So repair it in place: fresh
-         * credentials on the transports that are already there, which disturbs nothing
-         * riding on them. Sequentially, because repairIce single-flights on one shared
-         * promise and a concurrent second call would quietly return the first one's and
-         * leave that direction unrepaired.
+         * The ICE path is repaired only where it actually says it is broken. This used to
+         * restart ICE on both transports after every resume, on the theory that the path
+         * had died of the same fault the socket did. The socket and the media take different
+         * roads — the socket through the server's proxy or tunnel, the media straight to it
+         * over UDP — and the 2026-10-12 log shows ten resumes in one evening, each followed
+         * by a restart, with the media path the same both sides of every one. A restart
+         * is not free: it gathers new candidates, the selected pair changes, and the
+         * engine starts its bandwidth estimate again, so a screen share went soft for
+         * everybody watching it each time the socket blinked.
          *
-         * A repair that cannot be made falls back, inside repairIce, to the full rebuild
-         * that used to happen on every single reconnection.
+         * A transport that still says 'connected' is left to the watchdog, which reads
+         * the bytes every two seconds and catches the path that died without saying so
+         * (fault B, in stall.js) within STALL_MS. Sequentially, because repairIce
+         * single-flights on one shared promise and a concurrent second call would quietly
+         * return the first one's and leave that direction unrepaired. A repair that cannot
+         * be made falls back, inside repairIce, to the full rebuild.
          */
         async onResumed() {
-            if (sendTransport && !sendTransport.closed) await repairIce('send');
-            if (recvTransport && !recvTransport.closed) await repairIce('recv');
+            for (const [direction, transport] of [['send', sendTransport], ['recv', recvTransport]]) {
+                if (!transport || transport.closed) continue;
+                if (transport.connectionState === 'connected') continue;
+                await repairIce(direction);
+            }
         },
 
         stop() {

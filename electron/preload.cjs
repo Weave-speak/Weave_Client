@@ -13,7 +13,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 /** Channels the main process may push on. Anything else is ignored. */
-const PUSH = new Set(['weave:update']);
+const PUSH = new Set(['weave:update', 'weave:hotkey']);
 
 contextBridge.exposeInMainWorld('weaveNative', {
     /**
@@ -122,6 +122,25 @@ contextBridge.exposeInMainWorld('weaveNative', {
             const wrapped = (_e, info) => cb(info ?? {});
             ipcRenderer.once(ch, wrapped);
             return () => ipcRenderer.removeListener(ch, wrapped);
+        },
+    },
+
+    /**
+     * Shortcuts that reach Weave while another program is in front.
+     *
+     * `set` answers { ok } or { ok: false, error: 'taken' | 'invalid' }; null releases the
+     * key. A press arrives as `{ name }`, wrapped so the Electron event object never
+     * reaches the page — the same reason as updates.onChange.
+     */
+    hotkeys: {
+        available: true,
+        set: (name, accelerator) => ipcRenderer.invoke('weave:hotkeys.set',
+            String(name), accelerator == null ? null : String(accelerator)),
+        onPress(handler) {
+            if (typeof handler !== 'function') return () => {};
+            const wrapped = (_event, payload) => handler({ name: String(payload?.name ?? '') });
+            ipcRenderer.on('weave:hotkey', wrapped);
+            return () => ipcRenderer.removeListener('weave:hotkey', wrapped);
         },
     },
 

@@ -2023,6 +2023,8 @@
 .setting-label { display: block; font-weight: 550; }
 .setting-hint, .setting-note { display: block; font-size: var(--t-sm); color: var(--ink-faint); margin-top: 2px; }
 .setting-note { color: var(--ink-ghost); }
+/* A setting the operating system refused, e.g. a shortcut another program already holds. */
+.setting-note.setting-refused { color: var(--bad-text); }
 
 /* A switch built from a checkbox, so it keeps every keyboard and screen-reader behaviour
    the native control already has. */

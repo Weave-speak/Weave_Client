@@ -12,6 +12,7 @@
 // and the gaps are the roadmap. Showing them is how the shape of the thing stays visible.
 
 import { esc } from '../ui/dom.js';
+import { labelFor } from '../ui/hotkey.js';
 import { LOOM_MODES } from '../ui/loom.js';
 import { icons } from '../room/icons.js';
 import { avatar } from '../room/views/parts.js';
@@ -358,7 +359,50 @@ const soundPicker = ({ soundLibrary, prefs }) => {
     })}`;
 };
 
-export function voicePanel({ prefs = {}, devices = [], cameras = [], outputs = [], features = [] } = {}) {
+/**
+ * The push-to-mute switch and its shortcut.
+ *
+ * Greyed under push-to-talk, for the reason the mute button is: the push-to-talk key owns the
+ * microphone while it is on, and a second control over the same stream is how two controls
+ * end up fighting. The shortcut says where it works, because the desktop app takes it from
+ * every program and a browser tab only hears it while the tab is in front — and it says so
+ * when the operating system refused it, rather than showing a shortcut that will never fire.
+ */
+function pushToMuteRows({ prefs = {}, hotkeysGlobal = false, status = null } = {}) {
+    const blocked = Boolean(prefs.pushToTalk);
+    const on = Boolean(prefs.pushToMute) && !blocked;
+    const refused = on && status && status.ok === false
+        ? (status.error === 'taken'
+            ? 'Another program is already using this shortcut — pick a different one.'
+            : 'This shortcut could not be set — pick a different one.')
+        : '';
+    return `
+    ${toggle({
+        id: 'pushToMute',
+        label: 'Push to mute',
+        hint: 'Press a shortcut to mute or unmute, with a sound so you know which — even with Weave out of sight.',
+        checked: Boolean(prefs.pushToMute),
+        disabled: blocked,
+        note: blocked ? 'Push to talk owns your microphone while it is on.' : '',
+    })}
+
+    <div class="setting${on ? '' : ' is-disabled'}">
+      <label class="setting-text" for="ptmKey">
+        <span class="setting-label">Push-to-mute shortcut</span>
+        <span class="setting-hint">${hotkeysGlobal
+        ? 'Works in every program, so it needs Ctrl, Alt or an F-key. Click, then press it.'
+        : 'Works while Weave is the window in front. Click, then press it.'}</span>
+        ${refused ? `<span class="setting-note setting-refused" role="alert">${esc(refused)}</span>` : ''}
+      </label>
+      <button type="button" class="key-capture" id="ptmKey" data-capture-key="pushToMuteKey" data-capture-combo
+              ${on ? '' : 'disabled'}>${esc(labelFor(prefs.pushToMuteKey))}</button>
+    </div>`;
+}
+
+export function voicePanel({
+    prefs = {}, devices = [], cameras = [], outputs = [], features = [],
+    hotkeysGlobal = false, pushToMuteStatus = null,
+} = {}) {
     const hasAfk = features.includes('module.afk');
     return `
     <h2 class="panel-title">Voice &amp; Audio</h2>
@@ -401,9 +445,11 @@ export function voicePanel({ prefs = {}, devices = [], cameras = [], outputs = [
         <span class="setting-label">Push-to-talk key</span>
         <span class="setting-hint">Click, then press the key you want.</span>
       </label>
-      <button type="button" class="key-capture" id="pttKey" data-capture-key
+      <button type="button" class="key-capture" id="pttKey" data-capture-key="pushToTalkKey"
               ${prefs.pushToTalk ? '' : 'disabled'}>${esc(prefs.pushToTalkKey ?? 'Space')}</button>
     </div>
+
+    ${pushToMuteRows({ prefs, hotkeysGlobal, status: pushToMuteStatus })}
 
     <h3 class="panel-section">Processing</h3>
 

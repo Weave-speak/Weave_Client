@@ -56,3 +56,24 @@ export function onPushToTalkChange({ turnedOn, deafened = false }) {
  */
 export const muteButtonDisabled = (prefs = {}) =>
     Boolean(prefs.pushToTalk) || Boolean(prefs.forceMuted);
+
+/**
+ * What one press of the push-to-mute shortcut should do, or null for nothing at all.
+ *
+ * It is the mute button on a key, so it refuses wherever the button is disabled: under
+ * push-to-talk the other key owns the stream, and under a server mute nothing this person
+ * presses owns it. It also refuses while deafened, which the button does not. The server
+ * holds a deafened person muted whatever they ask for, so a press there would play the
+ * "you are live" sound to somebody who is not — and the sound is the only thing they have
+ * to go on, because the point of the shortcut is that Weave is not on screen.
+ *
+ * @returns {{muted: boolean, cue: 'mute'|'unmute'}|null}
+ */
+export function pushToMuteAction({
+    pushToTalk = false, muted = false, deafened = false, forceMuted = false,
+} = {}) {
+    if (muteButtonDisabled({ pushToTalk, forceMuted })) return null;
+    if (deafened) return null;
+    const next = !muted;
+    return { muted: next, cue: next ? 'mute' : 'unmute' };
+}

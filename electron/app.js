@@ -17,7 +17,7 @@
 // what that server sends back. Treating the window as a general-purpose browser would mean
 // a hostile server could navigate it somewhere and inherit whatever the page can do.
 
-import { app, BrowserWindow, ipcMain, shell, safeStorage, nativeTheme, protocol, net, desktopCapturer, powerMonitor } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, safeStorage, nativeTheme, protocol, net, desktopCapturer, powerMonitor, globalShortcut } from 'electron';
 import crypto from 'node:crypto';
 // Both of these are CommonJS. A named import from CJS depends on Node's module lexer
 // spotting the export in compiled output, which is not something to rely on in a process
@@ -604,6 +604,60 @@ function registerBridge() {
         try { child.stdin.end(); } catch { /* already gone */ }
         try { child.kill(); } catch { /* already gone */ }
     });
+
+    registerHotkeys();
+}
+
+/* ── global shortcuts ─────────────────────────────────────────────────────── */
+
+/**
+ * The shortcuts the page may hold, by name. Anything else is refused.
+ *
+ * A global shortcut takes its key from every program on the machine, so which ones exist is
+ * a decision made here rather than a channel the page can use for anything it likes.
+ */
+const HOTKEY_NAMES = new Set(['pushToMute']);
+
+/** name -> the accelerator currently registered for it. */
+const hotkeys = new Map();
+
+function registerHotkeys() {
+    /**
+     * Point a named shortcut at an accelerator, or release it with null.
+     *
+     * The previous one is always let go first, so a rebind never leaves the old combination
+     * taken. `register` answering false is the operating system saying another program
+     * already owns the combination — reported, so settings can ask for a different one
+     * instead of showing a shortcut that will never fire.
+     */
+    ipcMain.handle('weave:hotkeys.set', (_e, name, accelerator) => {
+        if (!HOTKEY_NAMES.has(name)) return { ok: false, error: 'invalid' };
+        const previous = hotkeys.get(name);
+        if (previous) {
+            try { globalShortcut.unregister(previous); } catch { /* already gone */ }
+            hotkeys.delete(name);
+        }
+        if (!accelerator) return { ok: true };
+
+        let taken;
+        try {
+            taken = !globalShortcut.register(String(accelerator), () => toRenderer('weave:hotkey', { name }));
+        } catch (err) {
+            log.warn({ evt: 'hotkey.invalid', name, accelerator, err: String(err) });
+            return { ok: false, error: 'invalid' };
+        }
+        if (taken) {
+            log.info({ evt: 'hotkey.taken', name, accelerator }, `${accelerator} is held by another program`);
+            return { ok: false, error: 'taken' };
+        }
+        hotkeys.set(name, String(accelerator));
+        log.info({ evt: 'hotkey.registered', name, accelerator }, `${name} bound to ${accelerator}`);
+        return { ok: true };
+    });
+
+    // Held keys go back to the machine when Weave does. The OS frees them on exit anyway;
+    // this is for the window between quitting and the process actually ending.
+    app.on('will-quit', () => globalShortcut.unregisterAll());
 }
 
 /**

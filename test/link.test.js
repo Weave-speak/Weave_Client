@@ -10,7 +10,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createLink, LINK, CLIENT_PROTOCOL } from '../src/net/link.js';
+import { createLink, LINK, CLIENT_PROTOCOL, describeLink } from '../src/net/link.js';
 
 /** A WebSocket the test drives by hand. */
 class FakeSocket {
@@ -649,4 +649,79 @@ test('a deliberate leave gives up the peer, not just the socket', () => {
     h.sock.accept();
     h.sock.deliver({ type: 'hello', cid: 'CID2' });
     assert.equal('resume' in h.sock.lastOf('join'), false, 'leaving a room means leaving it');
+});
+
+/* ── what the link tells the app log ──────────────────────────────────────── */
+
+test('a drop says how the socket closed, in the report that schedules the retry', () => {
+    // The evening that prompted this: nine disconnects, and an app log without one of them.
+    // The close code is the one clue to whether the path died (1006) or somebody decided.
+    const h = harness({ random: () => 0.5 });
+    h.goLive();
+    h.sock.dropByServer(1006);
+
+    const report = h.states.at(-1);
+    assert.equal(report.state, LINK.RETRYING);
+    assert.equal(report.closeCode, 1006);
+    assert.equal(report.attempt, 1);
+    assert.equal(typeof report.retryInMs, 'number');
+
+    const line = describeLink(report, LINK.LIVE);
+    assert.equal(line.level, 'warn');
+    assert.match(line.message, /closed with 1006/);
+    assert.match(line.message, /attempt 1/);
+});
+
+test('a heartbeat give-up is one report, carrying both the reason and the retry', () => {
+    const h = harness({ random: () => 1 });
+    h.goLive();
+    h.clock.advance(75_000);
+
+    const retrying = h.states.filter((s) => s.state === LINK.RETRYING);
+    assert.equal(retrying.length, 1, 'one line in the log, not a reason and then a retry');
+    assert.equal(retrying[0].reason, 'heartbeat');
+    assert.equal(typeof retrying[0].retryInMs, 'number');
+    assert.match(describeLink(retrying[0], LINK.DEGRADED).message, /heartbeats went unanswered/);
+});
+
+test('a join says whether the server kept the peer, or the room was rebuilt', () => {
+    const h = harness();
+    const live = () => h.states.filter((s) => s.state === LINK.LIVE).at(-1);
+    const comeBack = (joined) => {
+        h.sock.dropByServer();
+        h.clock.advance(60_000);
+        h.sock.accept();
+        h.sock.deliver({ type: 'hello', cid: 'CIDX' });
+        h.sock.deliver({ type: 'joined', channel: { id: 'hall' }, peers: [], ...joined });
+    };
+
+    h.goLive();
+    assert.equal(live().resumed, false);
+    assert.equal(live().rejoined, false, 'the first join is not a rejoin');
+    assert.match(describeLink(live(), LINK.CONNECTING).message, /^live as /);
+
+    comeBack({ resumed: true, self: { cid: 'CID1' } });
+    assert.equal(live().resumed, true);
+    assert.match(describeLink(live(), LINK.CONNECTING).message, /resumed as CID1/);
+
+    // The costly one: the server had already let the peer go, so everything was rebuilt.
+    comeBack({ self: { cid: 'CID9' } });
+    assert.equal(live().resumed, false);
+    assert.equal(live().rejoined, true);
+    const line = describeLink(live(), LINK.CONNECTING);
+    assert.equal(line.level, 'warn');
+    assert.match(line.message, /rejoined as CID9, a new peer/);
+});
+
+test('the log hears about changes, not about every report', () => {
+    assert.equal(describeLink({ state: LINK.DEGRADED }, LINK.DEGRADED), null);
+    assert.equal(describeLink({ state: LINK.LIVE }, LINK.LIVE), null);
+    assert.equal(describeLink({ state: LINK.CLOSED }, LINK.CLOSED), null);
+    assert.equal(describeLink({ state: LINK.CONNECTING }, LINK.RETRYING), null);
+    assert.equal(describeLink({ state: LINK.RETRYING }, LINK.LIVE), null, 'no retry scheduled, nothing to say');
+
+    assert.match(describeLink({ state: LINK.LIVE }, LINK.DEGRADED).message, /^recovered/);
+    assert.match(describeLink({ state: LINK.DEGRADED }, LINK.LIVE).message, /^degraded/);
+    assert.match(describeLink({ state: LINK.FAILED, failure: { code: 'unauthenticated' } }, LINK.CONNECTING).message,
+        /failed: unauthenticated/);
 });

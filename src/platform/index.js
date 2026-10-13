@@ -118,6 +118,19 @@ const noCredentials = {
     async clear() { return false; },
 };
 
+/**
+ * Global shortcuts.
+ *
+ * A web page cannot hear a key pressed in another program, and there is no permission that
+ * changes that. `available: false` is what tells the room to listen for the key itself,
+ * which works exactly as long as the page has focus.
+ */
+const noHotkeys = {
+    available: false,
+    async set() { return { ok: false, error: 'unsupported' }; },
+    onPress() { return () => {}; },
+};
+
 const browserPlatform = {
     target: 'browser',
     version: VERSION,
@@ -125,6 +138,7 @@ const browserPlatform = {
     credentials: noCredentials,
 
     updates: noUpdates,
+    hotkeys: noHotkeys,
     // A browser has no log file to offer. A bug report from one is the description alone,
     // which is still worth sending — most of a report is what the person says anyway.
     diagnostics: {
@@ -225,6 +239,12 @@ const desktopPlatform = {
     power: (typeof window !== 'undefined' && window.weaveNative?.power)
         ? { available: true, ...window.weaveNative.power }
         : { available: false, idleSeconds: null },
+
+    // Shortcuts that work while another program is in front. Absent in a plain browser,
+    // where the room falls back to listening for the key itself while the page has focus.
+    hotkeys: (typeof window !== 'undefined' && window.weaveNative?.hotkeys)
+        ? { available: true, ...window.weaveNative.hotkeys }
+        : noHotkeys,
 
     // The preload's log channel, so a renderer failure lands in the same file as the main
     // process's lines. The console fallback keeps the desktop UI runnable in a plain browser.

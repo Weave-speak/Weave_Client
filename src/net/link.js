@@ -144,6 +144,9 @@ export function createLink({
     let cid = null;
     let wantOpen = false;
     let joined = false;
+    // Whether this link has ever been joined, so a later join can be told apart from the
+    // first: only a REjoin that was not resumed means the server had already let us go.
+    let joinedBefore = false;
     // What the server issued last time we joined, presented on the next join to claim the
     // SAME peer back rather than standing up a second one beside it. Null until a server
     // that supports it says otherwise, which is what makes this safe against an older one.
@@ -184,9 +187,10 @@ export function createLink({
             // rather than waiting on its close event is the only way to start NOW: there is
             // no promise one arrives this side of a TCP timeout, and until it did, this
             // link sat in RETRYING with no socket, no heartbeat and no timer at all.
-            setState(LINK.RETRYING, { reason: 'heartbeat' });
             abandon(4001, 'heartbeat timeout');
-            scheduleRetry();
+            // The reason rides the retry's own report, so the one state change says both
+            // why the link was lost and when it will try again.
+            scheduleRetry(undefined, { reason: 'heartbeat' });
             return;
         }
         lastPingAt = now();
@@ -219,12 +223,13 @@ export function createLink({
         return Math.round(random() * ceiling);
     }
 
-    function scheduleRetry(overrideBase) {
+    /** `why` is what lost the link — a close code or a reason — carried into the report. */
+    function scheduleRetry(overrideBase, why = {}) {
         if (!wantOpen) return;
         const delay = retryDelay(overrideBase);
         attempt += 1;
         armRetry(delay);
-        setState(LINK.RETRYING, { retryInMs: delay, attempt, force: true });
+        setState(LINK.RETRYING, { ...why, retryInMs: delay, attempt, force: true });
     }
 
     /**
@@ -248,12 +253,12 @@ export function createLink({
      * kick into a handful of pointless attempts. The margin covers clock skew between the
      * two machines.
      */
-    function scheduleAfterCooldown(ms) {
+    function scheduleAfterCooldown(ms, why = {}) {
         if (!wantOpen) return;
         const delay = Math.max(1000, Math.round(ms) + COOLDOWN_MARGIN_MS);
         attempt += 1;
         armRetry(delay);
-        setState(LINK.RETRYING, { retryInMs: delay, attempt, force: true });
+        setState(LINK.RETRYING, { ...why, retryInMs: delay, attempt, force: true });
     }
 
     /**
@@ -364,12 +369,16 @@ export function createLink({
                 // were removed from, and re-sending it would undo the kick.
                 nowhere = true;
                 kicked = null;
-                scheduleAfterCooldown(wait);
+                scheduleAfterCooldown(wait, { closeCode: event.code });
                 return;
             }
             // 1008 is the server's policy close, which here means the rate limiter. Coming
             // straight back is precisely what it is asking us not to do.
-            scheduleRetry(event?.code === 1008 ? RATE_LIMIT_BACKOFF_MS : undefined);
+            //
+            // The code travels with the report because it is the one clue to WHY the link
+            // went: a 1006 is the path dying under us, anything else is somebody deciding.
+            scheduleRetry(event?.code === 1008 ? RATE_LIMIT_BACKOFF_MS : undefined,
+                { closeCode: event?.code ?? null });
         };
     }
 
@@ -404,8 +413,10 @@ export function createLink({
                 handleEvent(msg);
                 return;
 
-            case 'joined':
+            case 'joined': {
                 joined = true;
+                const rejoined = joinedBefore;
+                joinedBefore = true;
                 attempt = 0;                      // a real success, so the ladder resets
                 failure = null;
                 // Single use, and only ever as fresh as the last join: a key that has been
@@ -419,9 +430,12 @@ export function createLink({
                 cid = msg.self?.cid ?? cid;
                 lastChannelId = msg.channel?.id ?? lastChannelId;
                 startHeartbeat();
-                setState(LINK.LIVE, { force: true });
+                // Whether the server kept the peer we were, or this is somebody new to it —
+                // the difference between a blip nobody noticed and a rebuilt room.
+                setState(LINK.LIVE, { force: true, resumed: msg.resumed === true, rejoined });
                 flush();
                 break;
+            }
 
             case 'pong':
                 outstandingPings = 0;
@@ -521,4 +535,54 @@ export function createLink({
             setState(LINK.CLOSED, { force: true });
         },
     };
+}
+
+/**
+ * One line for the app log about a change in the link, or null if nothing worth a line did.
+ *
+ * The app log used to say nothing at all about the link. A report of an evening full of
+ * drops came with a client log showing a handful of ICE restarts and none of the nine
+ * disconnects behind them, and the cause had to be rebuilt from the SERVER's log — the one
+ * log a person reporting a bug usually cannot send. Pure, so what it says is tested.
+ *
+ * @param {object} report  what the link's onState was handed
+ * @param {string} previous the state before this report
+ * @returns {{level: 'info'|'warn', message: string}|null}
+ */
+export function describeLink(report, previous) {
+    switch (report?.state) {
+        case LINK.RETRYING: {
+            // Every attempt is a line: how far up the ladder it got is the story of an outage.
+            if (report.retryInMs == null) return null;
+            const why = report.reason === 'heartbeat' ? 'two heartbeats went unanswered'
+                : report.closeCode != null ? `closed with ${report.closeCode}`
+                    : 'could not connect';
+            return {
+                level: 'warn',
+                message: `lost (${why}); retrying in ${report.retryInMs} ms, attempt ${report.attempt}`,
+            };
+        }
+        case LINK.DEGRADED:
+            return previous === LINK.DEGRADED ? null
+                : { level: 'warn', message: 'degraded: a heartbeat went unanswered' };
+        case LINK.LIVE:
+            if (previous === LINK.DEGRADED) return { level: 'info', message: 'recovered: the heartbeat was answered' };
+            if (previous === LINK.LIVE) return null;
+            if (report.resumed) return { level: 'info', message: `live: resumed as ${report.cid}, nothing rebuilt` };
+            if (report.rejoined) {
+                // The case that costs something: the server had already let this peer go, so
+                // every transport is rebuilt and the room saw a departure and an arrival.
+                return {
+                    level: 'warn',
+                    message: `live: rejoined as ${report.cid}, a new peer (the server no longer held the old one)`,
+                };
+            }
+            return { level: 'info', message: `live as ${report.cid}` };
+        case LINK.FAILED:
+            return { level: 'warn', message: `failed: ${report.failure?.code ?? 'unknown'}` };
+        case LINK.CLOSED:
+            return previous === LINK.CLOSED ? null : { level: 'info', message: 'closed' };
+        default:
+            return null;
+    }
 }

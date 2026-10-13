@@ -257,6 +257,44 @@ test('push-to-talk reveals its key only when it is on', () => {
     const on = voicePanel({ prefs: { pushToTalk: true, pushToTalkKey: 'KeyV' } });
     assert.match(on, /KeyV/);
     assert.ok(!/id="pttKey"[^>]*disabled/.test(on));
+    // Two capture buttons now share one handler, so each says which preference it binds.
+    assert.match(on, /id="pttKey"[^>]*data-capture-key="pushToTalkKey"/);
+});
+
+test('push to mute shows its shortcut as keys, and only takes one while it is on', () => {
+    const off = voicePanel({ prefs: { pushToMute: false, pushToMuteKey: 'Control+Shift+KeyM' } });
+    assert.match(off, /id="ptmKey"[^>]*disabled/);
+
+    const on = voicePanel({ prefs: { pushToMute: true, pushToMuteKey: 'Control+Shift+KeyM' }, hotkeysGlobal: true });
+    assert.match(on, /Ctrl \+ Shift \+ M/);
+    assert.ok(!/id="ptmKey"[^>]*disabled/.test(on));
+    assert.match(on, /data-capture-key="pushToMuteKey" data-capture-combo/);
+    assert.match(on, /Works in every program/);
+});
+
+test('push to mute is greyed, with the reason, while push to talk owns the microphone', () => {
+    const markup = voicePanel({ prefs: { pushToTalk: true, pushToMute: true } });
+    assert.match(markup, /id="pushToMute"[^>]*disabled/);
+    assert.match(markup, /id="ptmKey"[^>]*disabled/);
+    assert.match(markup, /Push to talk owns your microphone while it is on/);
+});
+
+test('a shortcut another program holds is said, not shown as if it will work', () => {
+    const taken = voicePanel({
+        prefs: { pushToMute: true }, hotkeysGlobal: true, pushToMuteStatus: { ok: false, error: 'taken' },
+    });
+    assert.match(taken, /Another program is already using this shortcut/);
+
+    const fine = voicePanel({ prefs: { pushToMute: true }, hotkeysGlobal: true, pushToMuteStatus: { ok: true } });
+    assert.ok(!/already using/.test(fine));
+    // A refusal from before it was switched off is not news once it is off.
+    const offNow = voicePanel({ prefs: { pushToMute: false }, pushToMuteStatus: { ok: false, error: 'taken' } });
+    assert.ok(!/already using/.test(offNow));
+});
+
+test('in a browser the shortcut says it only works while Weave is in front', () => {
+    const markup = voicePanel({ prefs: { pushToMute: true }, hotkeysGlobal: false });
+    assert.match(markup, /while Weave is the window in front/);
 });
 
 test('audio switches default to on, matching what the microphone already does', () => {

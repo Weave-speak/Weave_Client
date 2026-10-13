@@ -7,7 +7,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { effectiveMute, onPushToTalkChange, muteButtonDisabled } from '../src/media/mute-policy.js';
+import {
+    effectiveMute, onPushToTalkChange, muteButtonDisabled, pushToMuteAction,
+} from '../src/media/mute-policy.js';
 
 test('without push-to-talk, the standing choice is the whole story', () => {
     assert.equal(effectiveMute({ muted: false }), false);
@@ -66,4 +68,28 @@ test('lifting a server mute returns the microphone to whatever the person had ch
     assert.equal(effectiveMute({ forceMuted: false, muted: false }), false);
     assert.equal(effectiveMute({ forceMuted: false, muted: true }), true,
         'their own mute is still theirs, and survives the administrator lifting theirs');
+});
+
+/* ── push to mute ─────────────────────────────────────────────────────────── */
+
+test('push to mute closes an open microphone, and says so with the mute sound', () => {
+    assert.deepEqual(pushToMuteAction({ muted: false }), { muted: true, cue: 'mute' });
+});
+
+test('push to mute opens a muted microphone, and says so with the unmute sound', () => {
+    assert.deepEqual(pushToMuteAction({ muted: true }), { muted: false, cue: 'unmute' });
+});
+
+test('push to mute does nothing at all where the mute button could not either', () => {
+    // Under push-to-talk the other key owns the stream; under a server mute nobody but an
+    // administrator does. A sound here would tell somebody in a game something untrue.
+    assert.equal(pushToMuteAction({ pushToTalk: true, muted: false }), null);
+    assert.equal(pushToMuteAction({ forceMuted: true, muted: true }), null);
+});
+
+test('push to mute does nothing while deafened, where an unmute would be a lie', () => {
+    // The server holds a deafened person muted whatever they ask for. Playing "you are live"
+    // with the microphone still closed is worse than doing nothing.
+    assert.equal(pushToMuteAction({ deafened: true, muted: true }), null);
+    assert.equal(pushToMuteAction({ deafened: true, muted: false }), null);
 });

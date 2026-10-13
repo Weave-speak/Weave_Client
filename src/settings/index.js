@@ -20,6 +20,7 @@ import { DEFAULT_SHARE_QUALITY, DEFAULT_SHARE_CONTENT, legacyShareChoice } from 
 import { DEFAULT_LOOM_MODE } from '../ui/loom.js';
 import { dbToMeterPercent } from '../media/chain.js';
 import { playCue } from '../media/cue.js';
+import { bindingFromKeydown, bindingError, labelFor } from '../ui/hotkey.js';
 import { startLoads, settleWithin, singleFlight, LOAD_PANELS, OPEN_GRACE_MS } from './loading.js';
 import {
     adminUsersPanel, adminChannelsPanel, adminSoundsPanel, adminServerPanel, adminDangerPanel,
@@ -44,6 +45,10 @@ import {
 export const DEFAULTS = {
     pushToTalk: false,
     pushToTalkKey: 'Space',
+    // A shortcut that works in every program, so it has to be a combination nobody types
+    // with — see ui/hotkey.js. Ctrl+Shift+M is what people expect a mute toggle to be.
+    pushToMute: false,
+    pushToMuteKey: 'Control+Shift+KeyM',
     noiseSuppression: true,
     echoCancellation: true,
     autoGainControl: true,
@@ -115,7 +120,14 @@ export function createSettings({
     // Avatars live behind the session, so an <img> cannot fetch one on its own. The room
     // owns the cache that turns an id into something renderable; without it this panel
     // could only ever draw initials — which is exactly what it did.
-    avatars = null }) {
+    avatars = null,
+    // Whether the push-to-mute shortcut is actually held, as { ok, error }. The room owns the
+    // registration; only the operating system knows whether another program got there first,
+    // and a shortcut shown as set that can never fire is worse than none.
+    pushToMuteStatus = () => null,
+    // Let the shortcut go while a new one is being chosen. Returns the function that takes
+    // it back, which resolves once the operating system has answered.
+    pausePushToMute = () => () => Promise.resolve() }) {
     const store = settingsFor(server.id);
     let me = signedInAs;
     let current = 'profile';
@@ -178,7 +190,11 @@ export function createSettings({
                 me: { ...me, avatarUrl: avatars?.urlFor(me.avatar) ?? null },
                 prefs, features, avatarError, soundLibrary,
             });
-            case 'voice': return voicePanel({ prefs, devices, cameras, outputs, features });
+            case 'voice': return voicePanel({
+                prefs, devices, cameras, outputs, features,
+                hotkeysGlobal: Boolean(platform.hotkeys?.available),
+                pushToMuteStatus: pushToMuteStatus(),
+            });
             case 'sessions': return sessionsPanel({
                 version: VERSION, features,
                 sessions: deviceList.sessions, error: deviceList.error, notice: deviceList.notice,
@@ -258,7 +274,10 @@ export function createSettings({
     async function set(key, value) {
         prefs = { ...prefs, [key]: value };
         store.set(key, value);
-        onPrefsChange(prefs, key);
+        // Awaited, because some changes only finish elsewhere: a push-to-mute shortcut is not
+        // set until the operating system has agreed to hand it over, and the panel redrawn
+        // after this must say whether it did.
+        await onPrefsChange(prefs, key);
         // The truth line under the mic picker follows the switch it may have caused.
         if (key === 'micDevice') setTimeout(() => paintActiveMic(), 600);
 
@@ -931,8 +950,10 @@ export function createSettings({
             input.addEventListener('change', async () => {
                 const value = input.type === 'checkbox' ? input.checked : input.value;
                 await set(input.dataset.setting, value);
-                // Controls that reveal or grey other controls redraw the panel.
-                if (['pushToTalk', 'noiseGate'].includes(input.dataset.setting)) renderPanel();
+                // Controls that reveal or grey other controls redraw the panel. Push-to-talk
+                // greys push-to-mute too, and push-to-mute's redraw carries whether the
+                // operating system actually handed its shortcut over.
+                if (['pushToTalk', 'pushToMute', 'noiseGate'].includes(input.dataset.setting)) renderPanel();
             });
             // Sliders apply LIVE while dragging: a gain you cannot hear moving and a
             // threshold you cannot see against the meter would both be guesses.
@@ -991,8 +1012,10 @@ export function createSettings({
             modal.element.addEventListener('close', () => window.removeEventListener('weave:mic-level', onLevel), { once: true });
         }
 
-        $('[data-capture-key]', modal.element)?.addEventListener('click', (event) => {
-            captureKey(event.currentTarget);
+        // Every capture button, not the first: there are two now, and `$` wired only the
+        // push-to-talk one.
+        $$('[data-capture-key]', modal.element).forEach((button) => {
+            button.addEventListener('click', (event) => captureKey(event.currentTarget));
         });
 
         $('[data-check-updates]', modal.element)?.addEventListener('click', async (event) => {
@@ -1088,35 +1111,69 @@ export function createSettings({
     }
 
     /**
-     * Read one keypress and use it as the push-to-talk key.
+     * Read one keypress and bind it to the preference the button names.
      *
      * `event.code` rather than `event.key`: code is the physical key, so a bind made on one
      * keyboard layout still works on another, and it does not change when a modifier is
      * held. Binding "v" and finding it stops working under a different layout is a bug
      * nobody enjoys diagnosing.
+     *
+     * A `data-capture-combo` button takes a whole shortcut instead — modifiers and a key,
+     * held together — and only one that is safe to take from every other program; see
+     * ui/hotkey.js. While it listens, the shortcut it is replacing is let go: a global
+     * shortcut reaches the operating system before this page, so pressing the current one
+     * would toggle the microphone and never arrive here.
      */
     function captureKey(button) {
+        const pref = button.dataset.captureKey || 'pushToTalkKey';
+        const combo = 'captureCombo' in button.dataset;
         const previous = button.textContent;
-        button.textContent = 'Press a key…';
+        button.textContent = combo ? 'Press the shortcut…' : 'Press a key…';
         button.classList.add('capturing');
+        const resume = combo ? pausePushToMute() : () => Promise.resolve();
 
         const done = (label) => {
             button.textContent = label;
             button.classList.remove('capturing');
             window.removeEventListener('keydown', onKey, true);
+            modal.element.removeEventListener('close', cancel);
         };
+        const cancel = () => { done(previous); resume(); };
 
         const onKey = (event) => {
             event.preventDefault();
             event.stopPropagation();
             // Escape cancels rather than binding itself — Escape also closes this dialog,
             // and a key that does both would be impossible to use.
-            if (event.code === 'Escape') return done(previous);
-            set('pushToTalkKey', event.code);
-            done(event.code);
+            if (event.code === 'Escape') {
+                cancel();
+                return;
+            }
+            if (!combo) {
+                set(pref, event.code);
+                done(event.code);
+                return;
+            }
+
+            const read = bindingFromKeydown(event);
+            // Ctrl on its own is somebody part-way through Ctrl+Shift+M.
+            if (read.pending) return;
+            if (read.error) {
+                done(previous);
+                flash(button, bindingError(read.error));
+                resume();
+                return;
+            }
+            done(labelFor(read.binding));
+            // Stored first, then handed back to the operating system, so the registration
+            // that answers is the new shortcut's. The redraw carries what it said.
+            set(pref, read.binding).then(resume).then(() => renderPanel());
         };
 
         window.addEventListener('keydown', onKey, true);
+        // Closing the dialog mid-capture is a cancel. Left listening, the next key pressed
+        // anywhere would become the binding — and a paused shortcut would stay let go.
+        modal.element.addEventListener('close', cancel, { once: true });
     }
 
     async function createInvite() {

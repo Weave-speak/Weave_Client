@@ -19,7 +19,9 @@ import { WeaveBackground, createMessageNoise, voiceNoise } from '../ui/weave-bac
 import { LoomRenderer } from '../ui/loom.js';
 import { createVoiceTraces } from '../ui/voice-trace.js';
 import { createVoice } from '../media/voice.js';
-import { effectiveMute, onPushToTalkChange, muteButtonDisabled } from '../media/mute-policy.js';
+import { describeLink } from '../net/link.js';
+import { effectiveMute, onPushToTalkChange, muteButtonDisabled, pushToMuteAction } from '../media/mute-policy.js';
+import { acceleratorFor, matchesKeydown } from '../ui/hotkey.js';
 import { screenShareSettings, normaliseShareChoice, cameraConstraints, cameraEncodings } from '../media/presets.js';
 import { settingsFor } from '../server/store.js';
 import { classify } from '../media/stream-report.js';
@@ -73,11 +75,16 @@ const PAINT_FLOOR_MS = 100;
  */
 const FULLSCREEN_HOLD_MS = 2000;
 
-// The web app's stream chimes, bundled beside the app; under weave:// and vite alike these
-// resolve to real URLs, and vite emits the files with the build.
-const STREAM_CUE_URLS = {
+// The sounds the app ships with, bundled beside it; under weave:// and vite alike these
+// resolve to real URLs, and vite emits the files with the build. The stream chimes are the
+// web app's. The mute pair answers the push-to-mute shortcut, and is the app's own rather
+// than anybody's chosen join or leave sound: it is the only thing telling somebody in a
+// game which way they just switched their microphone, so it must mean one thing everywhere.
+const BUNDLED_CUE_URLS = {
     start: new URL('../assets/sounds/stream_start.ogg', import.meta.url).href,
     end: new URL('../assets/sounds/stream_end.ogg', import.meta.url).href,
+    mute: new URL('../assets/sounds/mic_mute.ogg', import.meta.url).href,
+    unmute: new URL('../assets/sounds/mic_unmute.ogg', import.meta.url).href,
 };
 
 export function createRoom({ mount, api, link, user, server, features = [], reportStream = () => Promise.resolve(false), onSignedOut }) {
@@ -199,6 +206,12 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
     // Replaced only when the share chooser commits; see openShareSetup.
     let activeShare = screenShareSettings({ quality: prefs.shareQuality, content: prefs.shareContent });
     let pttHeld = false;
+    // What the operating system last said about the push-to-mute shortcut, { ok, error } or
+    // null before anything was asked; and whether settings has it let go while a new one is
+    // chosen. See syncPushToMute.
+    let pushToMuteStatus = null;
+    let pushToMutePaused = false;
+    let unwirePushToMute = () => {};
     // Text channels are openable-from-anywhere only when the server broadcasts chat
     // that way; against an older server every click is still a move.
     const canBrowse = features.includes('chat.browse');
@@ -267,9 +280,9 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
     // see stage-paint.js — so the difference is decided by waiting a beat.
     let fullscreenHoldUntil = 0;
     let fullscreenHoldTimer = 0;
-    // Which stream announcements are worth a chime, and the chimes themselves.
+    // Which stream announcements are worth a chime, and the app's own sounds themselves.
     const streamCues = createStreamCues();
-    const streamCueAudio = {};
+    const bundledCueAudio = {};
 
     const voice = createVoice({
         link,
@@ -427,6 +440,12 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             if (next?.displayName) state.setMyDisplayName(next.displayName);
             paint();
         },
+        pushToMuteStatus: () => pushToMuteStatus,
+        pausePushToMute: () => {
+            pushToMutePaused = true;
+            syncPushToMute();
+            return () => { pushToMutePaused = false; return syncPushToMute(); };
+        },
     });
 
     /**
@@ -438,6 +457,7 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
     function applyPrefs(next, changedKey) {
         const wasPushToTalk = prefs.pushToTalk;
         const wasMicDevice = prefs.micDevice;
+        const wasShortcut = [prefs.pushToMute, prefs.pushToMuteKey, prefs.pushToTalk].join('|');
         prefs = next;
         // A device change cannot ride applyConstraints — it needs a fresh capture,
         // swapped into the live producer.
@@ -467,6 +487,13 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         }
         loom?.setMode(prefs.loomMode);
         applyMotionPrefs();
+
+        // Returned, so settings can wait for the operating system's answer before it says
+        // whether the shortcut is set. Push-to-talk is in the list because it switches the
+        // shortcut off: see syncPushToMute.
+        const isShortcut = [prefs.pushToMute, prefs.pushToMuteKey, prefs.pushToTalk].join('|');
+        if (isShortcut !== wasShortcut) return syncPushToMute();
+        return undefined;
     }
 
     /**
@@ -1385,7 +1412,7 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
                 currentChannelId: state.raw.currentChannelId,
                 selfUserId: state.raw.me?.id ?? null,
             });
-            if (cue) playStreamCue(cue);
+            if (cue) playBundledCue(cue);
         }
 
         if (msg.type === 'moved' || msg.type === 'joined') {
@@ -1484,20 +1511,21 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             // transport, producer and consumer we hold is still the real one and nobody in
             // the room was told anything happened. Rebuilding here would throw away
             // precisely what the resume saved — a running screen share included — so the
-            // only thing to mend is the ICE path that died with the socket.
+            // most there can be to mend is an ICE path, and only one that says it is broken.
             await voice.onResumed();
         } else if (frame.type === 'joined') {
             // A 'joined' frame is a BRAND-NEW server-side peer — which is what a reconnect
             // produces when the resume is refused (an outage longer than the server's
-            // grace, or a server that restarted), and what every client gets after the
-            // server restarts. The server has no transports, producers or consumers for us
+            // grace, a server too old to hold a dropped peer at all, or one that
+            // restarted). The server has no transports, producers or consumers for us
             // at all, but the local objects survive the socket drop: ensureSend()/
             // ensureRecv() see them, hand them straight back without asking for
             // replacements, and every produce and consume against those zombies is refused
             // with 'no_transport' for the rest of the session. The room looks joined, the
             // roster is right, and no audio moves in either direction. Rebuild from nothing
             // instead — but keep what this person had chosen to watch, which is about
-            // people rather than about connections.
+            // people rather than about connections, and what they were sharing: the
+            // captures outlive the rebuild, and enableMic() below puts them back.
             await voice.onMoved({
                 rtpCapabilities: frame.rtpCapabilities, mediaReset: true, reconnect: true,
             });
@@ -1703,15 +1731,16 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
     }
 
     /**
-     * The stream start/stop chime. One element per cue, loaded on first use and CLONED per
-     * play, so two streams starting together both sound rather than the second restarting
-     * the first. Same output device as everything else the room plays — see cue.js.
+     * One of the app's own sounds: a stream starting or stopping, a microphone toggled by
+     * its shortcut. One element per cue, loaded on first use and CLONED per play, so two
+     * streams starting together both sound rather than the second restarting the first.
+     * Same output device as everything else the room plays — see cue.js.
      */
-    function playStreamCue(kind) {
-        const url = STREAM_CUE_URLS[kind];
+    function playBundledCue(kind) {
+        const url = BUNDLED_CUE_URLS[kind];
         if (!url) return;
-        streamCueAudio[kind] ??= new Audio(url);
-        playCue(streamCueAudio[kind].cloneNode(), prefs.audioOutput).catch(() => { /* autoplay; a missed chime is harmless */ });
+        bundledCueAudio[kind] ??= new Audio(url);
+        playCue(bundledCueAudio[kind].cloneNode(), prefs.audioOutput).catch(() => { /* autoplay; a missed chime is harmless */ });
     }
 
     /**
@@ -2361,6 +2390,7 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         });
 
         wirePushToTalk();
+        unwirePushToMute = wirePushToMute();
         peerActions = createPeerActions({
             mount,
             state,
@@ -2706,10 +2736,11 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         $('.app-shell', mount)?.classList.toggle('drawer-open', Boolean(open));
     }
 
-    function wirePushToTalk() {
-        const typing = (target) => target instanceof HTMLElement
-            && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
+    /** Whether a typed character, rather than a shortcut, is what this key press is for. */
+    const isTyping = (target) => target instanceof HTMLElement
+        && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
 
+    function wirePushToTalk() {
         const setTalking = (talking) => {
             if (!prefs.pushToTalk || pttHeld === talking) return;
             pttHeld = talking;
@@ -2724,7 +2755,7 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
 
         window.addEventListener('keydown', (event) => {
             if (!prefs.pushToTalk || event.repeat) return;
-            if (event.code !== prefs.pushToTalkKey || typing(event.target)) return;
+            if (event.code !== prefs.pushToTalkKey || isTyping(event.target)) return;
             event.preventDefault();
             setTalking(true);
         }, true);
@@ -2737,6 +2768,86 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         // Releasing the key while the window is not focused never reaches us, so a peer
         // would be left permanently unmuted after alt-tabbing mid-sentence.
         window.addEventListener('blur', () => setTalking(false));
+    }
+
+    /**
+     * The mute button, on a key that works with Weave out of sight — and a sound saying
+     * which way it went, because with Weave out of sight the sound is all there is.
+     *
+     * The UI is updated here rather than on the server's answer, which is the other thing
+     * the button does not do. Two quick presses would otherwise both read the state from
+     * before the first one, and send "mute" twice with two mute sounds. The server's
+     * muteChanged still arrives and has the last word.
+     */
+    function togglePushToMute() {
+        // A press already on its way when the setting was switched off.
+        if (!prefs.pushToMute) return;
+        const me = state.toShell().me;
+        const action = pushToMuteAction({
+            pushToTalk: Boolean(prefs.pushToTalk),
+            muted: Boolean(me.muted),
+            deafened: Boolean(me.deafened),
+            forceMuted: Boolean(me.forceMuted),
+        });
+        if (!action) return;
+        state.apply({ type: 'muteChanged', muted: action.muted, deafened: false });
+        paint();
+        voice.setMuted(action.muted);
+        link.send('setMute', { muted: action.muted, deafened: false });
+        playBundledCue(action.cue);
+    }
+
+    /**
+     * Hand the push-to-mute shortcut to the operating system, or take it back.
+     *
+     * Held only while it would do something. Under push-to-talk the shortcut is inert, and a
+     * global shortcut that does nothing still takes its key from every other program on the
+     * machine. Settings pauses it while a new one is chosen; see createSettings.
+     *
+     * Never rejects: the answer is a status for settings to show, not an error to handle.
+     */
+    async function syncPushToMute() {
+        if (!platform.hotkeys.available) return pushToMuteStatus;
+        const wanted = prefs.pushToMute && !prefs.pushToTalk && !pushToMutePaused
+            ? acceleratorFor(prefs.pushToMuteKey)
+            : null;
+        try {
+            pushToMuteStatus = await platform.hotkeys.set('pushToMute', wanted);
+        } catch (err) {
+            pushToMuteStatus = { ok: false, error: 'invalid' };
+            platform.log('warn', `[hotkey] push-to-mute could not be set: ${err?.message ?? err}`);
+        }
+        if (wanted && !pushToMuteStatus?.ok) {
+            platform.log('warn', `[hotkey] push-to-mute ${wanted} refused (${pushToMuteStatus?.error})`);
+        } else if (wanted) {
+            platform.log('info', `[hotkey] push-to-mute on ${wanted}`);
+        }
+        return pushToMuteStatus;
+    }
+
+    /**
+     * Listen for the push-to-mute shortcut.
+     *
+     * In the desktop app the operating system delivers it, from any program. A browser tab
+     * cannot hear keys pressed anywhere else, so there it listens for itself — exactly as
+     * push-to-talk does, and with the same rule about text being typed.
+     */
+    function wirePushToMute() {
+        if (platform.hotkeys.available) {
+            const off = platform.hotkeys.onPress(({ name }) => {
+                if (name === 'pushToMute') togglePushToMute();
+            });
+            syncPushToMute();
+            return off;
+        }
+        const onKey = (event) => {
+            if (!prefs.pushToMute || pushToMutePaused || event.repeat) return;
+            if (!matchesKeydown(event, prefs.pushToMuteKey) || isTyping(event.target)) return;
+            event.preventDefault();
+            togglePushToMute();
+        };
+        window.addEventListener('keydown', onKey, true);
+        return () => window.removeEventListener('keydown', onKey, true);
     }
 
     function sendMessage() {
@@ -2788,7 +2899,13 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         state.subscribe(paint);
 
         link.onEvent = applyFrame;
+        let linkWas = link.state;
         link.onState = (conn) => {
+            // Into the app log, so the next report of "it kept disconnecting" carries the
+            // disconnects — what closed, how, and whether the server kept us. See describeLink.
+            const line = describeLink(conn, linkWas);
+            if (line) platform.log(line.level, `[link] ${line.message}`);
+            linkWas = conn?.state ?? linkWas;
             state.setConnection(conn);
             // An administrator ended this session — kicked, banned, or wiped the server.
             // Staying in a dead room with a spinner would be dishonest; walk back to the
@@ -2839,6 +2956,10 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             clearInterval(syncTimer);
             clearInterval(statsTimer);
             clearInterval(streamDiagTimer);
+            // Signed out: the shortcut goes back to every other program, and a press that
+            // arrives on the way out has nothing left to mute.
+            unwirePushToMute();
+            if (platform.hotkeys.available) platform.hotkeys.set('pushToMute', null).catch(() => {});
             voice.stop();
             background?.destroy();
             loom?.destroy();

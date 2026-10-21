@@ -50,6 +50,15 @@ export function resolveMentions(body, usernames) {
 }
 
 /**
+ * How close together two messages from one person must be to read as one turn.
+ *
+ * The web app grouped at five minutes and nobody asked for different: long enough to hold
+ * a burst of short lines together under one name, short enough that coming back to the
+ * conversation after a coffee starts a fresh header with a fresh time on it.
+ */
+export const GROUP_WINDOW_MS = 5 * 60_000;
+
+/**
  * Records to timeline items, with day separators inserted.
  *
  * Sorted by (createdAt, id). The timestamp alone is not a total order — two messages can
@@ -65,33 +74,47 @@ export function toTimelineItems(records = [], { users = new Map(), me = null, no
 
     const items = [];
     let lastDay = null;
+    // The message this one might continue. Anything else in between — a new day, a
+    // "started streaming" line — is a break in the turn, and the next message gets its
+    // name back so it is never orphaned under somebody else's event.
+    let previous = null;
 
     for (const record of sorted) {
         const day = dayKey(record.createdAt);
         if (day !== lastDay) {
             items.push({ kind: 'day', id: `day-${day}`, label: dayLabel(record.createdAt, now) });
             lastDay = day;
+            previous = null;
         }
 
         // A locally minted system line ("Alex started streaming") is already an item;
         // it needs the day separator logic above but none of the message shaping below.
         if (record.kind === 'system') {
             items.push({ ...record, at: clockTime(record.createdAt) });
+            previous = null;
             continue;
         }
 
         const author = users.get(record.userId);
         const mentions = resolveMentions(record.body, usernames);
+        const continued = Boolean(previous)
+            && record.userId != null
+            && previous.userId === record.userId
+            && record.createdAt - previous.createdAt < GROUP_WINDOW_MS;
+        previous = record;
 
         items.push({
             kind: 'message',
             id: record.id,
             at: clockTime(record.createdAt),
+            continued,
             author: author ?? {
                 // Someone who has left the server still wrote what they wrote. The stored
-                // author name is the only record of who that was.
+                // author name is the only record of who that was, and the face they wore
+                // when they said it is the only picture of them left.
                 username: record.authorName ?? 'unknown',
                 displayName: record.authorName ?? 'Unknown',
+                avatar: record.avatar ?? null,
             },
             text: record.body,
             reactions: record.reactions ?? [],

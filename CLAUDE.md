@@ -6,7 +6,7 @@ a protocol needs clients, and nobody should have to open-source their app to tal
 Weave server. One source tree, two builds — browser (`npm run build`) and Electron desktop
 (`npm run build:desktop`).
 
-Current release: **0.1.64**. Windows installers are published to GitHub Releases, unsigned,
+Current release: **0.1.69**. Windows installers are published to GitHub Releases, unsigned,
 so SmartScreen warns until a certificate exists.
 
 ## Commands
@@ -64,6 +64,11 @@ holds the app log. Fatal startup errors go to `%TEMP%\weave\startup-crash.log`.
 | Colors, spacing, radii | `src/styles/tokens.css` |
 | The strands — speaking strings, the room background, the sign-in screen | `src/ui/loom.js`, `src/ui/weave-background.js`, `src/ui/join-background.js` |
 | Screen share quality, and the chooser that asks for it | `src/media/presets.js`, `shareSetupView` in `src/room/views/stage.js` |
+| Slash commands (`/roll`), the offer while typing one | `src/room/commands.js` |
+| Priority speaker ducking, per-person volume | `src/media/listen-policy.js` (decides), `applyListen` in `src/media/voice.js` (writes) |
+| "Test my setup" in Voice & Audio | `src/media/mic-test.js` |
+| Message chimes | `src/room/notify.js` |
+| What's New after an update | `src/updates/changelog.js` (pure), `src/updates/whats-new.js` (dialog) |
 
 ## Conventions
 
@@ -116,7 +121,9 @@ holds the app log. Fatal startup errors go to `%TEMP%\weave\startup-crash.log`.
 
 ## Releasing
 
-Bump `version` in `package.json` (a one-line edit — do not reformat the file), commit,
+Rename `## [Unreleased]` in `CHANGELOG.md` to the new version first: the app shows those
+notes as What's New after it updates, and `test/changelog.test.js` fails a version with no
+entry. Bump `version` in `package.json` (a one-line edit — do not reformat the file), commit,
 tag `vX.Y.Z`, push both, then `npm run release` with `GH_TOKEN` in the environment. The
 tag must be pushed explicitly: `--follow-tags` skips lightweight tags. `ensure-release.mjs`
 creates the GitHub release first, deliberately, so electron-builder's concurrent

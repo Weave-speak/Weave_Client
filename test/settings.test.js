@@ -14,7 +14,7 @@ globalThis.__WEAVE_TARGET__ = 'desktop';
 import {
     SECTIONS, sectionById, joinedOn, profilePanel, voicePanel,
     appearancePanel, invitesPanel, inviteMessage, placeholderPanel, PLACEHOLDER_REASONS, settingsFrame, sessionsPanel,
-    securityPanel, lastActive, bugPanel, DISPLAY_NAME_MAX,
+    securityPanel, lastActive, bugPanel, DISPLAY_NAME_MAX, notificationsPanel,
 } from '../src/settings/panels.js';
 import {
     adminUsersPanel, adminChannelsPanel, adminSoundsPanel, adminDangerPanel, adminBugsPanel, reversedName,
@@ -40,6 +40,50 @@ test('a placeholder panel says what it is and why it is empty', () => {
     assert.match(markup, /Privacy &amp; Blocking/);
     assert.match(markup, /Not built yet/);
     assert.match(markup, /only cosmetic/);
+});
+
+test('message sounds are on unless switched off, each on its own switch', () => {
+    const fresh = notificationsPanel({ prefs: {} });
+    assert.match(fresh, /data-setting="soundMessages"\s*checked/);
+    assert.match(fresh, /data-setting="soundMentions"\s*checked/);
+
+    const quiet = notificationsPanel({ prefs: { soundMessages: false, soundMentions: true } });
+    assert.ok(!/data-setting="soundMessages"\s*checked/.test(quiet));
+    assert.match(quiet, /data-setting="soundMentions"\s*checked/);
+});
+
+test('the setup test is offered without being in a voice room', () => {
+    const idle = voicePanel({ prefs: {} });
+    assert.match(idle, /data-mic-test/);
+    assert.match(idle, /Test my setup/);
+    assert.ok(!idle.includes('data-mic-test-play'), 'nothing to replay before a run');
+});
+
+test('a running test says what it is doing and cannot be started twice', () => {
+    const speaking = voicePanel({ prefs: {}, micTest: { phase: 'speak' } });
+    assert.match(speaking, /Speak now/);
+    assert.match(speaking, /data-mic-test\s+disabled/);
+});
+
+test('a finished test shows each finding, escaped, and offers the replay', () => {
+    const done = voicePanel({
+        prefs: {},
+        micTest: {
+            phase: 'done',
+            hasRecording: true,
+            result: { verdict: 'bad', findings: [{ tone: 'bad', text: '"<b>Stereo Mix</b>" records…' }] },
+        },
+    });
+    assert.match(done, /verdict-bad/);
+    assert.match(done, /class="tone-bad"/);
+    assert.match(done, /&lt;b&gt;Stereo Mix/);
+    assert.match(done, /data-mic-test-play/);
+    assert.match(done, /Test again/);
+});
+
+test('notifications is a real screen now, not a placeholder', () => {
+    const item = SECTIONS.flatMap((s) => s.items).find((i) => i.id === 'notifications');
+    assert.ok(item && !item.placeholder);
 });
 
 test('an unknown section falls back rather than rendering nothing', () => {
@@ -493,6 +537,7 @@ test('every control the settings panels persist survives a round trip', async ()
     const markup = [
         voicePanel({ prefs, devices: [], cameras: [], features: [] }),
         appearancePanel({ prefs }),
+        notificationsPanel({ prefs }),
         profilePanel({
             me: ME, prefs, features: ['module.sounds'],
             soundLibrary: [{ id: 's1', name: 'Arrival' }],

@@ -81,17 +81,26 @@ const reactions = (list = [], canReact = false) => ((list.length || canReact) ? 
  * Every field is fetched by the server from a third-party page, which makes it the least
  * trustworthy string in the whole timeline. It is also never a link here — the preview is
  * a description of a destination, and the message text above it carries the actual link.
+ *
+ * Dismissable, as on the web app: a preview is the server's guess at what a link is worth
+ * showing, and a card nobody wanted is a lot of timeline for one URL. The button sits
+ * beside the card rather than inside it, because a button inside a link is not valid and
+ * a click on it would follow the link.
  */
-const linkPreview = (p) => (p ? `
-  <a class="link-preview" href="${esc(p.url ?? '#')}" target="_blank" rel="noreferrer noopener">
-    ${p.image ? `<img class="preview-thumb" src="${esc(p.image)}" alt="" loading="lazy">`
+const linkPreview = (p, messageId) => (p ? `
+  <div class="link-preview-wrap">
+    <a class="link-preview" href="${esc(p.url ?? '#')}" target="_blank" rel="noreferrer noopener">
+      ${p.image ? `<img class="preview-thumb" src="${esc(p.image)}" alt="" loading="lazy">`
         : `<span class="preview-icon">${icons.doc}</span>`}
-    <span class="preview-body">
-      <span class="preview-site">${esc(p.site ?? '')}</span>
-      <span class="preview-title">${esc(p.title ?? '')}</span>
-      <span class="preview-desc">${esc(p.description ?? '')}</span>
-    </span>
-  </a>` : '');
+      <span class="preview-body">
+        <span class="preview-site">${esc(p.site ?? '')}</span>
+        <span class="preview-title">${esc(p.title ?? '')}</span>
+        <span class="preview-desc">${esc(p.description ?? '')}</span>
+      </span>
+    </a>
+    ${messageId ? `<button type="button" class="preview-dismiss" data-dismiss-preview="${esc(messageId)}"
+            title="Hide this preview" aria-label="Hide this preview">✕</button>` : ''}
+  </div>` : '');
 
 /**
  * A recognised video link: a click-to-play card, never an auto-loaded iframe. The
@@ -150,20 +159,30 @@ const attachment = (a) => {
   </div>`;
 };
 
+/**
+ * One message. A CONTINUED one — the same person again within a few minutes — drops the
+ * face and the name and keeps only a time in the gutter, so a burst of short lines reads
+ * as one turn rather than a column of identical headers. The name stays for anyone
+ * listening rather than looking.
+ */
 function message(m) {
-    const classes = ['msg', m.mentionsMe ? 'mentions-me' : ''].filter(Boolean).join(' ');
+    const classes = ['msg', m.continued ? 'continued' : '', m.mentionsMe ? 'mentions-me' : '']
+        .filter(Boolean).join(' ');
     return `
     <li class="${classes}" data-message="${esc(m.id)}">
-      ${avatar(m.author, { size: 'lg', presence: false })}
+      ${m.continued
+        ? `<span class="msg-gutter-time" aria-hidden="true">${esc(m.at)}</span>`
+        : avatar(m.author, { size: 'lg', presence: false })}
       <div>
+        ${m.continued ? `<span class="sr-only">${displayName(m.author)}, ${esc(m.at)}</span>` : `
         <div class="msg-head">
           <span class="msg-author">${displayName(m.author)}</span>
           ${adminBadge(m.author)}
           <span class="msg-time">${esc(m.at)}</span>
-        </div>
+        </div>`}
         <div class="msg-body">${messageText(m.text, m.mentions)}</div>
         ${videoEmbed(m)}
-        ${m.embed ? '' : linkPreview(m.preview)}
+        ${m.embed || m.previewDismissed ? '' : linkPreview(m.preview, m.id)}
         ${attachment(m.attachment)}
         ${reactions(m.reactions, m.canReact)}
       </div>

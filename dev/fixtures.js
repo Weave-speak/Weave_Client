@@ -76,6 +76,12 @@ export const items = [
         reactions: [{ emoji: '🎉', count: 6 }, { emoji: '👀', count: 2, mine: true }],
     },
     {
+        // The same person again a moment later: grouped under the line above.
+        kind: 'message', id: 'm3b', at: '21:04', continued: true,
+        author: people.find((p) => p.username === 'kestrel'),
+        text: 'Watch the memory line on the left, that is the whole story.',
+    },
+    {
         kind: 'message', id: 'm4', at: '21:05',
         author: people.find((p) => p.username === 'vaporwave_dan'),
         text: 'Finally. Runbook is updated so nobody has to dig through logs again.',
@@ -92,6 +98,8 @@ export const items = [
         attachment: { id: 'a1', name: 'sfu-memory-24h.png', mime: 'image/png', size: 1_258_291 },
         reactions: [{ emoji: '📈', count: 4 }],
     },
+    // A slash command's result: a line about the person, never a message from them.
+    { kind: 'system', id: 's2', at: '21:08', icon: 'dice', who: 'Moth', text: 'rolled 73 (1–100)' },
     {
         kind: 'message', id: 'm6', at: '21:09',
         author: people.find((p) => p.username === 'kestrel'),

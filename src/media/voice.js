@@ -33,7 +33,7 @@
 import { Device } from 'mediasoup-client';
 import { createMicChain, sensitivityToDb, gainToLinear, levelToDb } from './chain.js';
 import { micCodecOptions, screenAudioCodecOptions } from './audio-options.js';
-import { listenOutput, MAX_LISTEN_GAIN } from './listen-policy.js';
+import { listenOutput, duckState, MAX_LISTEN_GAIN, DUCK_FACTOR } from './listen-policy.js';
 import { bestFitFramerate } from './presets.js';
 import { createStallDetector, readFlow } from './stall.js';
 import { buildStreamSample, pickTransport } from './stream-report.js';
@@ -77,6 +77,16 @@ const REPLY_TIMEOUT_MS = 12_000;
 
 /** How often the level meter samples. Fast enough to look live, slow enough to be free. */
 const LEVEL_INTERVAL_MS = 100;
+
+/**
+ * How often the priority-speaker duck looks at the starred voices. A timer and not an
+ * animation frame: frames stop when the window is in the background, which is exactly when
+ * somebody is in a game and needs the duck to work.
+ */
+const DUCK_POLL_MS = 50;
+
+/** The duck fades rather than snaps, so it reads as the room hushing rather than a glitch. */
+const DUCK_RAMP_S = 0.15;
 
 /** How long a healthy mic chain goes unquestioned before it is measured again. */
 const CHAIN_RECHECK_MS = 15_000;
@@ -221,8 +231,20 @@ export function createVoice({
     // button promises not to happen.
     let deafened = false;
 
+    // Priority speaker. The connections this listener has starred, and whether everyone
+    // else is ducked right now. Local only, like a per-person volume: it changes what THIS
+    // machine hears and nothing about anybody else's call.
+    let priorityCids = new Set();
+    let ducked = false;
+    let duckHoldUntil = 0;
+    let duckTimer = null;
+
+    /** The duck applies to voices, never to a starred one, and never to shared system audio. */
+    const duckFor = (entry) => (ducked && entry.slot === SLOTS.AUDIO && !priorityCids.has(entry.cid)
+        ? DUCK_FACTOR : 1);
+
     /** Carry out what listen-policy.js decided for one stream. */
-    function applyListen(entry, key) {
+    function applyListen(entry, key, { ramp = false } = {}) {
         const audio = entry?.audio;
         if (!audio) return;
         const out = listenOutput({
@@ -230,17 +252,57 @@ export function createVoice({
             pref: audioPrefs.get(key) ?? { muted: false, volume: 1 },
             hasGain: Boolean(entry.gain),
             contextRunning: audioContext?.state === 'running',
+            duck: duckFor(entry),
         });
-        if (out.gain !== null) entry.gain.gain.value = out.gain;
+        if (out.gain !== null) {
+            const param = entry.gain.gain;
+            // A ramp is only ever the duck coming or going. Anything a person did — a
+            // slider, a mute, deafen — is applied at once, and cancels a ramp in flight so
+            // the two never fight over where the gain ends up.
+            const at = audioContext?.currentTime ?? 0;
+            try { param.cancelScheduledValues(at); } catch { /* nothing scheduled */ }
+            if (ramp && audioContext) param.setTargetAtTime(out.gain, at, DUCK_RAMP_S);
+            else param.value = out.gain;
+        }
         audio.muted = out.elementMuted;
         audio.volume = out.elementVolume;
     }
 
     /** Re-decide every stream's output. Cheap, and idempotent by construction. */
-    function reapplyListening() {
+    function reapplyListening(options) {
         for (const entry of consumers.values()) {
-            if (entry.kind === 'audio') applyListen(entry, `${entry.cid}:${entry.slot}`);
+            if (entry.kind === 'audio') applyListen(entry, `${entry.cid}:${entry.slot}`, options);
         }
+    }
+
+    /** One look at the starred voices; re-applies only when the duck actually changes. */
+    function duckTick() {
+        const levels = [];
+        for (const entry of consumers.values()) {
+            if (entry.meter && priorityCids.has(entry.cid)) levels.push(entry.meter.read());
+        }
+        const next = duckState(levels, Date.now(), duckHoldUntil);
+        duckHoldUntil = next.holdUntil;
+        if (next.ducked === ducked) return;
+        ducked = next.ducked;
+        reapplyListening({ ramp: true });
+    }
+
+    /** Start or stop watching, as the starred set fills or empties. */
+    function setPriority(cids = []) {
+        const next = new Set(cids);
+        if (next.size === priorityCids.size && [...next].every((cid) => priorityCids.has(cid))) return;
+        priorityCids = next;
+        if (priorityCids.size && !duckTimer) {
+            duckTimer = setInterval(duckTick, DUCK_POLL_MS);
+        } else if (!priorityCids.size && duckTimer) {
+            clearInterval(duckTimer);
+            duckTimer = null;
+        }
+        // Whoever was just starred or unstarred stops (or starts) being ducked now, not at
+        // the next change of state — and with nobody starred there is no duck at all.
+        if (!priorityCids.size) { ducked = false; duckHoldUntil = 0; }
+        reapplyListening();
     }
     const waiters = new Set();
     const levels = new Map();      // cid -> 0..1
@@ -1633,6 +1695,13 @@ export function createVoice({
 
         get deafened() { return deafened; },
 
+        /**
+         * The connections whose voices duck everybody else while they talk — the priority
+         * speakers, as connection ids. Idempotent: the room states it on every paint and
+         * only a real change does anything.
+         */
+        setPriority,
+
         getListen(cid, slot) {
             return { muted: false, volume: 1, ...(audioPrefs.get(`${cid}:${slot}`) ?? {}) };
         },
@@ -2100,6 +2169,13 @@ export function createVoice({
             if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
             clearInterval(levelTimer);
             levelTimer = null;
+            // Forgotten, not just paused: the room re-states who is starred on its next
+            // paint, which is also the first moment there is anybody to duck again.
+            clearInterval(duckTimer);
+            duckTimer = null;
+            priorityCids = new Set();
+            ducked = false;
+            duckHoldUntil = 0;
             teardownMedia();
             levels.clear();
             waiters.clear();

@@ -4,6 +4,92 @@ All notable changes to Weave Client are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+The newest entries are what the app shows under **What's new** after it updates, so they are
+written for the people using it rather than for the people building it.
+
+## [Unreleased]
+
+### Added
+- **What's new.** After an update, the app tells you what changed — this list, in fact. It
+  shows once per version, and Settings → Sessions & Devices has it again whenever you want it.
+
+- **Slash commands.** Type `/roll` or `/flip` in a channel and the result appears for
+  everyone there, as a line about you rather than as something you typed. Start with a slash
+  to see what the server offers. To send a line that starts with a command name as plain text,
+  begin it with two slashes.
+
+- **Priority speaker.** Right-click somebody and choose **Priority speaker**: while they
+  talk, everyone else drops to a third of their volume, so a shot-caller cuts through a busy
+  room. It is your choice for your own ears — nobody else hears any difference — and it is
+  remembered on this device. A star beside their name shows who you have picked.
+
+- **Test my setup.** Settings → Voice & Audio can now record five seconds of you and play it
+  back exactly as the room hears it: after your input gain, noise gate and sound
+  optimisation. It works without joining a room and sends nothing anywhere. It also tells you
+  if you are too quiet or clipping, if the noise gate never opened, if your microphone hears
+  your speakers, or if the input you picked is really your computer's own output.
+
+- **Message sounds.** A chime when somebody writes in the conversation you have open, and
+  when a message names you or a direct message arrives anywhere else. Each has its own switch
+  in the new **Notifications** settings, and nothing plays while you are deafened.
+
+- **Faces in the chat.** Messages show the writer's picture rather than only their initials,
+  and several messages in a row from the same person within a few minutes are grouped under
+  one name.
+
+- **Paste a picture.** A screenshot pasted into the message box is attached, the same as
+  choosing it with the + button.
+
+- **Hide a link preview.** The ✕ on a preview card hides it for the rest of the session.
+
+### Fixed
+- **Scrolling up in a text channel loads older messages again.** While you were reading a
+  text channel and standing in a voice room, scrolling to the top asked for the voice room's
+  history instead, so nothing older ever appeared.
+
+## [0.1.69] - 2026-10-13
+
+### Added
+- **A mute shortcut that works from anywhere.** Settings → Voice & Audio can set a key that
+  mutes and unmutes your microphone while Weave is behind a game or another program, with a
+  short sound to tell you which way it went.
+
+### Fixed
+- **Reconnecting is quieter and more reliable.** A dropped connection that comes back is
+  picked up where it left off far more often, and the app log now records why a connection
+  went and how it came back, which makes "it kept disconnecting" possible to diagnose.
+
+## [0.1.68] - 2026-10-10
+
+### Added
+- **Watch several streams at once.** Up to six shares and cameras can be on the stage side by
+  side, or one large with the rest along the bottom.
+- **A sound when a stream starts or stops** in your room — but not for somebody who only
+  reconnected or moved, which would teach everyone to ignore it.
+
+## [0.1.67] - 2026-10-10
+
+### Fixed
+- **Coming back after a silent reconnect no longer leaves you unheard.** Some people were
+  inaudible to part of the room after their connection recovered on its own, while everything
+  on their own screen looked normal.
+
+## [0.1.66] - 2026-10-03
+
+### Fixed
+- **Settings opens straight away.** It used to wait for every answer from the server in turn
+  before showing anything, and a second click while it waited could leave it unable to open
+  at all.
+
+## [0.1.65] - 2026-10-01
+
+### Added
+- **Change your display name** in Settings → My Profile, on servers that allow it.
+
+### Fixed
+- **Join and leave sounds play when people walk into your room** — they had gone missing for
+  most arrivals — and now come out of the speakers you chose rather than the system default.
+
 ## [0.1.64] - 2026-09-17
 
 ### Fixed

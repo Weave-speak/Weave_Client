@@ -62,6 +62,26 @@ export function micCodecOptions() {
 }
 
 /**
+ * What the microphone is opened with, from this device's preferences.
+ *
+ * Shared by the room and by the settings test, which must hear exactly what the room
+ * sends — a test of a differently-opened microphone tests something nobody will hear.
+ *
+ * NOTHING ELSE. sampleRate, latency and channelCount were all added in 0.1.41 and every one
+ * of them cost something: a 48 kHz request the device ignored while the graph was pinned to
+ * it (crackling), a 10 ms buffer with no headroom (popping), and a channel count the chain
+ * already handles. The three flags are what shipped for every version people liked.
+ */
+export function micConstraints(prefs = {}) {
+    return {
+        echoCancellation: prefs.echoCancellation !== false,
+        noiseSuppression: prefs.noiseSuppression !== false,
+        autoGainControl: prefs.autoGainControl !== false,
+        ...(prefs.micDevice ? { deviceId: { exact: prefs.micDevice } } : {}),
+    };
+}
+
+/**
  * A screen's system audio: music, games and film, not speech.
  *
  * Stereo, and no DTX -- silence suppression makes music gap and pump.

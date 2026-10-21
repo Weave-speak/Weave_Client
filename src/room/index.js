@@ -26,8 +26,10 @@ import { screenShareSettings, normaliseShareChoice, cameraConstraints, cameraEnc
 import { settingsFor } from '../server/store.js';
 import { classify } from '../media/stream-report.js';
 import { captureProcessAudio } from '../media/process-audio.js';
+import { micConstraints } from '../media/audio-options.js';
 import { playCue } from '../media/cue.js';
 import { createSettings, readPrefs } from '../settings/index.js';
+import { openWhatsNew } from '../updates/whats-new.js';
 import { createRoomBrowser } from '../rooms/browser.js';
 import { createPeerActions } from './peer-actions.js';
 import { createAvatarCache, withAvatars } from './avatars.js';
@@ -35,10 +37,14 @@ import { createModal } from '../ui/modal.js';
 import { platform } from '../platform/index.js';
 import { userHue } from '../ui/hue.js';
 import { mentionQuery, matchMentions, insertMention } from './mentions.js';
+import {
+    parseCommand, commandQuery, matchCommands, completeCommand, resultItem, refusalItem, COMMAND_REFUSALS,
+} from './commands.js';
 import { freshHistory, advanceHistory, nextPageQuery, shouldLoadOlder } from './history.js';
 import { stageView, tileKey, sharePickerView, shareSetupView, MAX_WATCHED } from './views/stage.js';
 import { stageSignature, stagePaintDecision } from './stage-paint.js';
 import { createStreamCues } from './stream-cues.js';
+import { messageCue } from './notify.js';
 import { extractUrls } from './embeds.js';
 import { avatar } from './views/parts.js';
 import { esc } from '../ui/dom.js';
@@ -80,11 +86,15 @@ const FULLSCREEN_HOLD_MS = 2000;
 // web app's. The mute pair answers the push-to-mute shortcut, and is the app's own rather
 // than anybody's chosen join or leave sound: it is the only thing telling somebody in a
 // game which way they just switched their microphone, so it must mean one thing everywhere.
+// (They are the web app's join and leave chimes, which is exactly why those are not ALSO
+// played for arrivals here — the sounds module does that, with sounds of its own.) The
+// message chime is the web app's too; see notify.js for when it plays.
 const BUNDLED_CUE_URLS = {
     start: new URL('../assets/sounds/stream_start.ogg', import.meta.url).href,
     end: new URL('../assets/sounds/stream_end.ogg', import.meta.url).href,
     mute: new URL('../assets/sounds/mic_mute.ogg', import.meta.url).href,
     unmute: new URL('../assets/sounds/mic_unmute.ogg', import.meta.url).href,
+    message: new URL('../assets/sounds/new_text.ogg', import.meta.url).href,
 };
 
 export function createRoom({ mount, api, link, user, server, features = [], reportStream = () => Promise.resolve(false), onSignedOut }) {
@@ -219,6 +229,14 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
     const canReact = features.includes('chat.reactions');
     const canPreview = features.includes('chat.link-previews');
     const canCall = features.includes('dm.calls');
+    // Slash commands, as the server lists them. Empty until GET /api/commands answers,
+    // and for ever on a server without the module — so every slash stays plain text.
+    const canCommand = features.includes('module.slash-commands');
+    let slashCommands = [];
+    // The command just sent, until its result or its refusal comes back. An error frame
+    // does not say which request it answers, so a refusal is recognised by its code and
+    // by arriving while this is set.
+    let pendingCommand = null;
     // Both are administrator verbs, and both are gated TWICE: on being an administrator,
     // and on the server actually having the handler. An older server has neither message
     // type, so offering them would mean a menu item whose only effect is an error frame.
@@ -340,17 +358,8 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             }
             paintStage();
         },
-        getAudioConstraints: () => ({
-            echoCancellation: prefs.echoCancellation !== false,
-            noiseSuppression: prefs.noiseSuppression !== false,
-            autoGainControl: prefs.autoGainControl !== false,
-            // NOTHING ELSE. sampleRate, latency and channelCount were all added in
-            // 0.1.41 and every one of them cost something: a 48 kHz request the device
-            // ignored while the graph was pinned to it (crackling), a 10 ms buffer with
-            // no headroom (popping), and a channel count the chain already handles. The
-            // three flags above are what shipped for every version people liked.
-            ...(prefs.micDevice ? { deviceId: { exact: prefs.micDevice } } : {}),
-        }),
+        // See audio-options.js for why it is these three flags and nothing else.
+        getAudioConstraints: () => micConstraints(prefs),
         getChainSettings: () => ({
             micGain: Number(prefs.micGain ?? 100),
             noiseGate: Boolean(prefs.noiseGate),
@@ -446,6 +455,8 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             syncPushToMute();
             return () => { pushToMutePaused = false; return syncPushToMute(); };
         },
+        openWhatsNew,
+        liftServerMute: (userId) => link.send('serverMute', { userId, muted: false }),
     });
 
     /**
@@ -578,11 +589,20 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         const view = state.toShell();
         // Faces folded in before anything renders. The views are pure functions of state
         // and must never reach for the network, so a URL only ever reaches them resolved.
-        view.people = withAvatars(view.people, avatarCache);
+        view.people = withPriority(withAvatars(view.people, avatarCache));
         view.me = { ...view.me, avatarUrl: avatarCache.urlFor(view.me.avatar) };
         for (const room of view.rooms) {
-            if (room.occupants?.length) room.occupants = withAvatars(room.occupants, avatarCache);
+            if (room.occupants?.length) room.occupants = withPriority(withAvatars(room.occupants, avatarCache));
         }
+        // The roster just changed in some way, so the voices to duck for may have too:
+        // somebody starred arrived, left, or came back on a new connection.
+        syncPriority();
+        // And the faces beside messages, which were initials only for as long as the
+        // timeline existed: the roster had its pictures resolved and the authors never did.
+        // A continued row shows no face, so it costs no fetch.
+        view.items = view.items.map((item) => (item.kind === 'message' && !item.continued && item.author?.avatar
+            ? { ...item, author: { ...item.author, avatarUrl: avatarCache.urlFor(item.author.avatar) } }
+            : item));
 
         // A drag holds the row it started on. Rewriting #roomScroll's innerHTML mid-gesture
         // destroys that row, and the drop lands on nothing — which is exactly what a
@@ -613,6 +633,35 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         // A repaint replaced those rows, so anything currently talking needs its ring back
         // immediately rather than at the next level sample.
         paintSpeaking();
+    }
+
+    /* ── priority speaker ────────────────────────────────────────────────── */
+
+    // Stored by ACCOUNT id, so a starred person stays starred across their reconnects and
+    // machines; voice works in connections, so the room translates on every paint.
+    const starred = () => new Set(prefs.prioritySpeakers ?? []);
+
+    /** The roster marks a starred person, which is what lights the star beside them. */
+    const withPriority = (people = []) => {
+        const ids = starred();
+        return ids.size ? people.map((p) => (ids.has(p.id) ? { ...p, priority: true } : p)) : people;
+    };
+
+    function syncPriority() {
+        const ids = starred();
+        voice.setPriority([...state.raw.peers.values()]
+            .filter((p) => ids.has(p.userId) && p.userId !== state.raw.me?.id)
+            .map((p) => p.cid));
+    }
+
+    function togglePriority(person) {
+        const ids = starred();
+        if (ids.has(person.id)) ids.delete(person.id); else ids.add(person.id);
+        const next = [...ids];
+        settingsFor(server.id).set('prioritySpeakers', next);
+        prefs = { ...prefs, prioritySpeakers: next };
+        syncPriority();
+        paint();
     }
 
     /**
@@ -1026,7 +1075,12 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         const inDm = Boolean(state.raw.activeDmId);
         list.innerHTML = messageList(items.map((i) =>
             (i.kind === 'message'
-                ? { ...i, canReact: canReact && !inDm, embedPlaying: playingEmbeds.has(i.id) }
+                ? {
+                    ...i,
+                    canReact: canReact && !inDm,
+                    embedPlaying: playingEmbeds.has(i.id),
+                    previewDismissed: dismissedPreviews.has(i.id),
+                }
                 : i)));
         hydrateAuthImages();
         if (!inDm) requestPreviews(state.raw.viewChannelId ?? state.raw.currentChannelId);
@@ -1036,7 +1090,7 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         // forever because it rendered before the roster arrived.
         $('.timeline-empty', mount)?.remove();
         if (!items.length) list.insertAdjacentHTML('afterend', emptyState(state.toShell().room));
-        paintHistoryNote(state.raw.currentChannelId);
+        paintHistoryNote(inDm ? null : (state.raw.viewChannelId ?? state.raw.currentChannelId));
 
         if (wasAtBottom) scroller.scrollTop = scroller.scrollHeight;
         else scroller.scrollTop = scroller.scrollHeight - fromBottom;
@@ -1184,8 +1238,15 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         if (msg.type === 'text-chat:message' && msg.message) {
             const record = msg.message;
             const viewId = state.raw.viewChannelId ?? state.raw.currentChannelId;
-            state.addMessage(record.channelId, record);
+            const fresh = state.addMessage(record.channelId, record);
             if (record.channelId === viewId) msgNoise.record(Date.now());
+            if (fresh) {
+                chimeFor({
+                    fromSelf: record.userId === state.raw.me?.id,
+                    onScreen: !state.raw.activeDmId && record.channelId === viewId,
+                    addressed: (record.mentions ?? []).includes(state.raw.me?.username),
+                });
+            }
 
             // Seen or owed: a message in front of a reader at the bottom of the timeline
             // is acked; anything else becomes the badge on that channel's row.
@@ -1258,6 +1319,25 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             return;
         }
 
+        if (msg.type === 'slash-commands:result') {
+            // Where it lands: the channel it was typed in, which a current server names.
+            // An older one names nothing and sends it to the room the person stands in,
+            // so that is where it goes.
+            const channelId = msg.channelId
+                ?? state.raw.peers.get(msg.by?.cid)?.channelId
+                ?? state.raw.currentChannelId;
+            if (msg.by?.cid && msg.by.cid === link.cid) pendingCommand = null;
+            if (channelId) state.addMessage(channelId, resultItem(msg));
+            return;
+        }
+        if (msg.type === 'error' && pendingCommand && COMMAND_REFUSALS.has(msg.code)
+            && Date.now() - pendingCommand.at < 5000) {
+            const { channelId } = pendingCommand;
+            pendingCommand = null;
+            if (channelId) state.addMessage(channelId, refusalItem(msg.message));
+            return;
+        }
+
         if (msg.type === 'sounds:play') {
             // The server already filtered this to peers in the announcer's channel,
             // excluding the announcer — nothing left to check here.
@@ -1283,7 +1363,15 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
                     .then(({ threads = [] }) => { state.setDmThreads(threads); paint(); })
                     .catch(() => {});
             }
-            state.addDmMessage(record.threadId, record);
+            const freshDm = state.addDmMessage(record.threadId, record);
+            // A DM is addressed to you by definition, so it sounds wherever you are looking.
+            if (freshDm) {
+                chimeFor({
+                    fromSelf: record.authorId === state.raw.me?.id,
+                    onScreen: state.raw.activeDmId === record.threadId,
+                    addressed: true,
+                });
+            }
             if (record.authorId !== state.raw.me?.id) {
                 if (state.raw.activeDmId === record.threadId && document.visibilityState !== 'hidden') {
                     ackDmRead(record.threadId);
@@ -1672,7 +1760,7 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         if (entry.busy) {
             list.insertAdjacentHTML('beforebegin',
                 '<div class="history-note">Fetching earlier messages…</div>');
-        } else if (entry.done && (state.raw.currentChannelId === channelId)
+        } else if (entry.done && ((state.raw.viewChannelId ?? state.raw.currentChannelId) === channelId)
             && (state.raw.messages.get(channelId)?.length ?? 0) > 0) {
             list.insertAdjacentHTML('beforebegin',
                 '<div class="history-note cap">Where it all began.</div>');
@@ -1689,6 +1777,10 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
     // Messages whose video embed the user has started; the view renders those as the
     // live iframe rather than the card.
     const playingEmbeds = new Set();
+    // Messages whose link preview the reader closed. For this sitting only, as on the web
+    // app: a preview is decoration, and remembering every dismissal forever would be a
+    // store with no way to see or undo what is in it.
+    const dismissedPreviews = new Set();
 
     // url -> objectURL for auth-gated images, so each image is fetched once.
     const blobUrls = new Map();
@@ -1743,6 +1835,16 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         playCue(bundledCueAudio[kind].cloneNode(), prefs.audioOutput).catch(() => { /* autoplay; a missed chime is harmless */ });
     }
 
+    /** The message chime, when notify.js says this message deserves one. */
+    function chimeFor({ fromSelf, onScreen, addressed }) {
+        const cue = messageCue({
+            fromSelf, onScreen, addressed,
+            deafened: Boolean(state.raw.peers.get(state.raw.selfCid)?.deafened),
+            prefs,
+        });
+        if (cue) playBundledCue(cue);
+    }
+
     /**
      * Ask the server about the first link in any message that has one and no preview
      * yet. Once per message, once per URL — the server caches too, but not asking at
@@ -1771,27 +1873,49 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         }
     }
 
+    /** What the server's uploads module will take. Anything else would only come back refused. */
+    const ATTACHABLE = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+
+    /** Upload one file and park it on the composer. The picker and a paste both end here. */
+    async function attachFile(file) {
+        if (!file) return;
+        paintAttachStrip({ uploading: true, name: file.name || 'image' });
+        try {
+            const stored = await api.uploadFile(file);
+            pendingAttachment = { ...stored, name: (file.name || 'image').slice(0, 80) };
+            paintAttachStrip();
+        } catch (err) {
+            pendingAttachment = null;
+            paintAttachStrip({ error: err?.message ?? 'Upload failed.' });
+        }
+    }
+
     async function pickAttachment() {
         if (!attachInput) {
             attachInput = document.createElement('input');
             attachInput.type = 'file';
-            attachInput.accept = 'image/png,image/jpeg,image/gif,image/webp';
-            attachInput.addEventListener('change', async () => {
+            attachInput.accept = ATTACHABLE.join(',');
+            attachInput.addEventListener('change', () => {
                 const file = attachInput.files?.[0];
                 attachInput.value = '';
-                if (!file) return;
-                paintAttachStrip({ uploading: true, name: file.name });
-                try {
-                    const stored = await api.uploadFile(file);
-                    pendingAttachment = { ...stored, name: file.name.slice(0, 80) };
-                    paintAttachStrip();
-                } catch (err) {
-                    pendingAttachment = null;
-                    paintAttachStrip({ error: err?.message ?? 'Upload failed.' });
-                }
+                attachFile(file);
             });
         }
         attachInput.click();
+    }
+
+    /**
+     * A screenshot pasted straight into the composer, as the web app took it. Only when
+     * the clipboard holds an image the server accepts and no text: pasting a paragraph that
+     * happens to arrive with a rendered picture of itself must still paste the paragraph.
+     */
+    function onComposerPaste(event) {
+        const data = event.clipboardData;
+        if (!data || data.getData('text/plain')) return;
+        const file = [...(data.files ?? [])].find((f) => ATTACHABLE.includes(f.type));
+        if (!file) return;
+        event.preventDefault();
+        attachFile(file);
     }
 
     /** The little chip above the composer: what is about to ride the next message. */
@@ -2031,6 +2155,13 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             const shot = event.target.closest('[data-lightbox]');
             if (shot?.src) { openLightbox(shot.src, shot.alt); return; }
             if (event.target.closest('[data-lightbox-close]')) { closeLightbox(); return; }
+
+            const dismiss = event.target.closest('[data-dismiss-preview]');
+            if (dismiss) {
+                dismissedPreviews.add(dismiss.dataset.dismissPreview);
+                paint();
+                return;
+            }
 
             const embed = event.target.closest('[data-embed-play]');
             if (embed) {
@@ -2297,6 +2428,29 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         });
 
         input?.addEventListener('keydown', (event) => {
+            // The command offer, the same way: Enter completes the name rather than
+            // sending "/ro" to the room as text.
+            if (commandOffer?.items.length) {
+                if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                    event.preventDefault();
+                    const delta = event.key === 'ArrowDown' ? 1 : -1;
+                    const count = commandOffer.items.length;
+                    commandOffer.index = (commandOffer.index + delta + count) % count;
+                    paintCommandPop();
+                    return;
+                }
+                if (event.key === 'Enter' || event.key === 'Tab') {
+                    event.preventDefault();
+                    pickCommand(commandOffer.items[commandOffer.index].name);
+                    return;
+                }
+                if (event.key === 'Escape') {
+                    commandOffer = null;
+                    paintCommandPop();
+                    return;
+                }
+            }
+
             // While the mention popover is open it owns the navigation keys — Enter picks
             // a person rather than sending half a name to the room.
             if (mention?.items.length) {
@@ -2340,8 +2494,14 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
 
         // Nearing the top of the timeline asks for the page before it. The policy —
         // once at a time, never past the beginning — lives in history.js.
+        //
+        // The page belongs to the channel on SCREEN, which is not always the one being
+        // stood in: reading a text channel from a voice room used to page the voice room,
+        // so scrolling up in what you were actually reading never fetched anything. A DM
+        // has no history pages to ask for.
         $('#timeline', mount)?.addEventListener('scroll', (event) => {
-            const channelId = state.raw.currentChannelId;
+            if (state.raw.activeDmId) return;
+            const channelId = state.raw.viewChannelId ?? state.raw.currentChannelId;
             if (shouldLoadOlder(history.get(channelId), event.target.scrollTop)) {
                 loadOlder(channelId);
             }
@@ -2398,10 +2558,13 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             link,
             canMove: () => canMovePeople,
             canModerate: () => canModeratePeople,
+            isPriority: (person) => starred().has(person.id),
+            togglePriority,
             paint,
         });
         $('.app-shell', mount)?.toggleAttribute('data-can-move', canMovePeople);
 
+        input?.addEventListener('paste', onComposerPaste);
         input?.addEventListener('input', updateMention);
         input?.addEventListener('click', updateMention);
         input?.addEventListener('keyup', (event) => {
@@ -2409,7 +2572,12 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         });
         input?.addEventListener('blur', () => {
             // Give a popover mousedown its moment before withdrawing the offer.
-            setTimeout(() => { mention = null; paintMentionPop(); }, 120);
+            setTimeout(() => {
+                mention = null;
+                paintMentionPop();
+                commandOffer = null;
+                paintCommandPop();
+            }, 120);
         });
 
         // Grow with the text, up to a point, so a long message is visible while it is typed.
@@ -2488,6 +2656,12 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
     function updateMention() {
         const input = $('#composerInput', mount);
         if (!input) return;
+        // A slash at the start is a command being named, never a mention — and the two
+        // popovers must not both claim Enter.
+        if (updateCommandOffer(input)) {
+            if (mention) { mention = null; paintMentionPop(); }
+            return;
+        }
         const found = mentionQuery(input.value, input.selectionStart ?? input.value.length);
         if (!found) { mention = null; paintMentionPop(); return; }
 
@@ -2512,6 +2686,68 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         input.setSelectionRange(next.caret, next.caret);
         mention = null;
         paintMentionPop();
+        input.focus();
+    }
+
+    /* ── slash command offer ─────────────────────────────────────────────── */
+
+    // The commands a leading slash could mean, and which row is highlighted. Null when closed.
+    let commandOffer = null;
+
+    /** Returns whether the caret is in a command name at all, offered or not. */
+    function updateCommandOffer(input) {
+        const found = canCommand && slashCommands.length && !state.raw.activeDmId
+            ? commandQuery(input.value, input.selectionStart ?? input.value.length)
+            : null;
+        if (!found) {
+            if (commandOffer) { commandOffer = null; paintCommandPop(); }
+            return false;
+        }
+        const items = matchCommands(found.query, slashCommands);
+        const keep = commandOffer?.items[commandOffer.index]?.name;
+        commandOffer = items.length
+            ? { items, index: Math.max(0, items.findIndex((c) => c.name === keep)) }
+            : null;
+        paintCommandPop();
+        return true;
+    }
+
+    function paintCommandPop() {
+        const wrap = $('.composer-wrap', mount);
+        let pop = $('#commandPop', mount);
+        if (!wrap || !commandOffer?.items.length) {
+            pop?.remove();
+            return;
+        }
+        if (!pop) {
+            pop = document.createElement('div');
+            pop.id = 'commandPop';
+            pop.className = 'mention-pop command-pop';
+            wrap.append(pop);
+        }
+        pop.innerHTML = commandOffer.items.map((c, i) => `
+            <button type="button" class="mention-row${i === commandOffer.index ? ' current' : ''}"
+                    data-command="${esc(c.name)}">
+              <span class="mention-name">${esc(c.usage ?? `/${c.name}`)}</span>
+              <span class="mention-user">${esc(c.describe ?? '')}</span>
+            </button>`).join('');
+        // mousedown for the same reason as the mention rows: click lands after blur.
+        pop.querySelectorAll('[data-command]').forEach((row) => {
+            row.addEventListener('mousedown', (event) => {
+                event.preventDefault();
+                pickCommand(row.dataset.command);
+            });
+        });
+    }
+
+    function pickCommand(name) {
+        const input = $('#composerInput', mount);
+        if (!input) return;
+        const next = completeCommand(input.value, input.selectionStart ?? input.value.length, name);
+        input.value = next.text;
+        input.setSelectionRange(next.caret, next.caret);
+        commandOffer = null;
+        paintCommandPop();
         input.focus();
     }
 
@@ -2869,6 +3105,21 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         pendingAttachment = null;
         paintAttachStrip();
         closeEmojiPop();
+        commandOffer = null;
+        paintCommandPop();
+
+        // A command is its own request, not a message: the server answers it with a
+        // result line for the channel rather than storing what was typed. Not in a DM,
+        // where there is no room to announce a roll to, and not with a picture attached,
+        // which only a message can carry.
+        const command = !state.raw.activeDmId && !attachment ? parseCommand(body, slashCommands) : null;
+        if (command) {
+            const channelId = state.raw.viewChannelId ?? state.raw.currentChannelId;
+            pendingCommand = { at: Date.now(), channelId };
+            link.send('slash-commands:run', { ...command, ...(channelId ? { channelId } : {}) });
+            return;
+        }
+
         if (state.raw.activeDmId) {
             link.send('dm:send', { threadId: state.raw.activeDmId, body, ...(attachment ? { attachment } : {}) });
         } else if (!(state.raw.viewChannelId ?? state.raw.currentChannelId)) {
@@ -2924,6 +3175,13 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         ]);
         state.setChannels(channels.channels ?? []);
         state.setUsers(users.users ?? []);
+        // The commands are fixed for the life of the server process, so once is enough.
+        // A failure leaves the list empty, which is exactly a server without them.
+        if (canCommand) {
+            api.request('GET', '/api/commands')
+                .then(({ commands = [] }) => { slashCommands = commands; })
+                .catch(() => {});
+        }
 
         if (state.raw.currentChannelId) await loadHistory(state.raw.currentChannelId);
         paint();

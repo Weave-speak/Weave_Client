@@ -231,9 +231,14 @@ function channelRow(c, { editing, armedKey }) {
 
 /* ── Sounds ──────────────────────────────────────────────────────────────── */
 
+/**
+ * `people` and `birthday` are null while loading and `false` from a server too old to have
+ * the routes, which is said in a line rather than offered as controls that would only 404.
+ */
 export function adminSoundsPanel({
     sounds = null, defaults = { joinSound: null, leaveSound: null },
     error = null, notice = null, armedKey = null, uploadBusy = false,
+    people = null, birthday = null,
 } = {}) {
     return `
     <h2 class="panel-title">Join &amp; leave sounds</h2>
@@ -251,7 +256,216 @@ export function adminSoundsPanel({
         ${uploadBusy ? 'Uploading…' : 'Add sounds'}
       </button>
       <span class="setting-hint">OGG, MP3 or WAV. Up to 2&nbsp;MB each.</span>
+    </div>
+
+    ${sounds === null ? '' : birthdaySection({ sounds, people, birthday })}
+    ${sounds === null ? '' : peopleSection({ sounds, people })}`;
+}
+
+const soundOptions = (sounds, selected, emptyLabel) => `
+    <option value="" ${selected ? '' : 'selected'}>${esc(emptyLabel)}</option>
+    ${sounds.map((s) => `<option value="${esc(s.id)}" ${s.id === selected ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}`;
+
+const tooOld = (what) => `<p class="panel-lead">This server is older than the app and cannot ${esc(what)} yet.</p>`;
+
+/**
+ * The birthday, as the web app had it: a person and a sound, heard by their room a few
+ * seconds after they arrive. Both or neither — the server refuses half of one.
+ */
+function birthdaySection({ sounds, people, birthday }) {
+    const body = people === false || birthday === false ? tooOld('play a birthday sound')
+        : people === null || birthday === null ? loading('the birthday')
+            : !sounds.length ? '<p class="panel-lead">Add a sound first.</p>'
+                : `
+    <form class="adm-create" data-birthday-form>
+      <select name="userId" aria-label="Birthday person">
+        <option value="" ${birthday.userId ? '' : 'selected'}>Nobody</option>
+        ${people.map((p) => `<option value="${esc(p.id)}" ${p.id === birthday.userId ? 'selected' : ''}>${esc(p.displayName ?? p.username)}</option>`).join('')}
+      </select>
+      <select name="soundId" aria-label="Birthday sound">${soundOptions(sounds, birthday.soundId, 'No sound')}</select>
+      <button type="submit" class="btn primary">Save</button>
+      ${birthday.userId ? '<button type="button" class="btn" data-birthday-clear>Clear</button>' : ''}
+    </form>`;
+    return `
+    <h3 class="panel-section">Birthday</h3>
+    <p class="panel-lead">Their room hears this a few seconds after they arrive — once each time they sign in,
+      including them. Clear it when the day is over.</p>
+    ${body}`;
+}
+
+/**
+ * Choosing for somebody, as the web app's Configurations screen did. It is the very choice
+ * they can make in their own profile, so whichever of them chose last is what plays.
+ */
+function peopleSection({ sounds, people }) {
+    const body = people === false ? tooOld('choose sounds for people')
+        : people === null ? loading('people')
+            : `
+    <div class="admin-table" role="table" aria-label="Each person's sounds">
+      ${people.map((p) => `
+      <div class="adm-row" role="row" data-person-sounds="${esc(p.id)}">
+        <span class="adm-names">
+          <span class="adm-display">${esc(p.displayName ?? p.username)}</span>
+          <span class="adm-username">@${esc(p.username)}</span>
+        </span>
+        <span class="adm-actions">
+          <select data-person-sound="join" aria-label="${esc(p.username)}'s join sound">${soundOptions(sounds, p.joinSound, 'Default join')}</select>
+          <select data-person-sound="leave" aria-label="${esc(p.username)}'s leave sound">${soundOptions(sounds, p.leaveSound, 'Default leave')}</select>
+        </span>
+      </div>`).join('')}
     </div>`;
+    return `
+    <h3 class="panel-section">Each person's sounds</h3>
+    <p class="panel-lead">Choose for somebody. It is the same choice they can make in their own profile, so
+      whoever chose last is what plays.</p>
+    ${body}`;
+}
+
+/* ── Moderation ──────────────────────────────────────────────────────────── */
+
+const clockOf = (ms) => new Date(ms).toLocaleString(undefined, {
+    day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+});
+
+/** What one restriction is, in a sentence. */
+export function restrictionText(r) {
+    if (r.action === 'kick') return r.expiresAt ? `Kicked — can come back at ${clockOf(r.expiresAt)}` : 'Kicked';
+    return r.expiresAt ? `Server-muted until ${clockOf(r.expiresAt)}` : 'Server-muted until lifted';
+}
+
+/**
+ * Every restriction in force, wherever the person is — or whether they are online at all.
+ * Before this an administrator could only see or lift a mute by finding the person in a
+ * room and right-clicking them.
+ */
+export function adminModerationPanel({ restrictions = null, error = null, notice = null } = {}) {
+    return `
+    <h2 class="panel-title">Moderation</h2>
+    <p class="panel-lead">Server mutes and kicks in force right now. Muting and kicking are done by right-clicking
+      somebody in a room; lifting a mute can be done from here, whether or not they are online.</p>
+    ${banner(error, notice)}
+    ${restrictions === null ? loading('restrictions')
+        : restrictions === false ? tooOld('list who is restricted')
+            : `
+    <div class="admin-table" role="table" aria-label="Restrictions in force">
+      ${restrictions.map((r) => `
+      <div class="adm-row" role="row">
+        <span class="adm-names">
+          <span class="adm-display">${esc(r.displayName ?? r.username)}</span>
+          <span class="adm-username">${esc(restrictionText(r))}${r.byUsername ? ` · by @${esc(r.byUsername)}` : ''}</span>
+        </span>
+        <span class="adm-actions">
+          ${r.action === 'mute'
+        ? `<button type="button" class="btn small" data-lift-mute="${esc(r.userId)}">Lift</button>` : ''}
+        </span>
+      </div>`).join('') || '<p class="panel-lead">Nobody is muted or kicked.</p>'}
+    </div>`}`;
+}
+
+/* ── Invites ─────────────────────────────────────────────────────────────── */
+
+/** An invite's expiry, in words. Expired ones are said to be, not hidden: they explain a failed sign-up. */
+export function inviteExpiry(expiresAt, now = Date.now()) {
+    if (!expiresAt) return 'never expires';
+    if (expiresAt <= now) return 'expired';
+    return `expires ${clockOf(expiresAt)}`;
+}
+
+export function adminInvitesPanel({ invites = null, error = null, notice = null, armedKey = null, now = Date.now() } = {}) {
+    return `
+    <h2 class="panel-title">Invites</h2>
+    <p class="panel-lead">Every invite code on the server, whoever made it. Revoking one stops it working at once;
+      anyone who already joined with it keeps their account.</p>
+    ${banner(error, notice)}
+    ${invites === null ? loading('invites') : `
+    <div class="admin-table" role="table" aria-label="Invites">
+      ${invites.map((i) => {
+        const used = i.maxUses ? `${i.uses ?? 0} of ${i.maxUses} used` : `${i.uses ?? 0} used`;
+        return `
+      <div class="adm-row" role="row">
+        <span class="adm-names">
+          <span class="adm-display"><code class="invite-code">${esc(i.code)}</code></span>
+          <span class="adm-username">${esc(used)} · ${esc(inviteExpiry(i.expiresAt, now))}${i.createdByName ? ` · by @${esc(i.createdByName)}` : ''}${i.note ? ` · ${esc(i.note)}` : ''}</span>
+        </span>
+        <span class="adm-actions">
+          ${armable(`data-invite-revoke="${esc(i.code)}"`, 'Revoke', 'Revoke — sure?', { armed: armedKey === `invite:${i.code}` })}
+        </span>
+      </div>`;
+    }).join('') || '<p class="panel-lead">No invites yet. Make one from Crew → Invites.</p>'}
+    </div>`}`;
+}
+
+/* ── Server settings ─────────────────────────────────────────────────────── */
+
+/**
+ * Settings with a better home elsewhere: ids nobody should type, chosen from a list on the
+ * Sounds screen. Shown there, so they are left out here rather than offered twice.
+ */
+export const SETTINGS_SHOWN_ELSEWHERE = new Set([
+    'sounds.defaultJoinSound', 'sounds.defaultLeaveSound', 'sounds.birthdayUserId', 'sounds.birthdaySound',
+]);
+
+function settingControl(item) {
+    const id = `srv-${item.key.replace(/[^\w-]/g, '-')}`;
+    const attrs = `id="${esc(id)}" data-server-setting="${esc(item.key)}" data-setting-type="${esc(item.type)}"`;
+    let control;
+    if (item.type === 'boolean') {
+        control = `<input class="switch" type="checkbox" ${attrs} ${item.value ? 'checked' : ''}>`;
+    } else if (item.type === 'number') {
+        control = `<input class="adm-number" type="number" ${attrs} value="${esc(item.value)}"
+            ${item.min !== undefined && item.min !== null ? `min="${esc(item.min)}"` : ''}
+            ${item.max !== undefined && item.max !== null ? `max="${esc(item.max)}"` : ''}>`;
+    } else if (item.type === 'enum') {
+        control = `<select ${attrs}>${(item.values ?? []).map((v) =>
+            `<option value="${esc(v)}" ${v === item.value ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>`;
+    } else {
+        control = `<input type="text" ${attrs} value="${esc(item.value ?? '')}">`;
+    }
+    return `
+    <div class="setting">
+      <label class="setting-text" for="${esc(id)}">
+        <span class="setting-label">${esc(item.label)}</span>
+        ${item.help ? `<span class="setting-hint">${esc(item.help)}</span>` : ''}
+      </label>
+      ${control}
+    </div>`;
+}
+
+/**
+ * The server's own settings and its modules, rendered from what the server says it has.
+ *
+ * Modules declare their settings with a type and a label so that no module ships UI; the
+ * web console has always drawn a form from that, and this is the same form in the app. The
+ * web app's AFK timeout lives here now, as the away module's "idle minutes".
+ */
+export function adminSettingsPanel({ groups = null, modules = null, error = null, notice = null } = {}) {
+    const nameOf = (owner) => (owner === 'core' ? 'Server' : modules?.find((m) => m.id === owner)?.name ?? owner);
+    const visible = (groups ?? [])
+        .map((g) => ({ ...g, items: g.items.filter((i) => !SETTINGS_SHOWN_ELSEWHERE.has(i.key)) }))
+        .filter((g) => g.items.length);
+    return `
+    <h2 class="panel-title">Server settings</h2>
+    <p class="panel-lead">Changes apply on the server at once. A module switched on or off reaches each person's
+      app the next time they connect.</p>
+    ${banner(error, notice)}
+
+    <h3 class="panel-section">Modules</h3>
+    ${modules === null ? loading('modules') : `
+    <div class="admin-table" role="table" aria-label="Modules">
+      ${modules.map((m) => `
+      <div class="adm-row" role="row">
+        <label class="adm-names" for="mod-${esc(m.id)}">
+          <span class="adm-display">${esc(m.name ?? m.id)}</span>
+          <span class="adm-username">${esc(m.description ?? '')}</span>
+        </label>
+        <input class="switch" type="checkbox" id="mod-${esc(m.id)}" data-module-toggle="${esc(m.id)}"
+               ${m.enabled ? 'checked' : ''} aria-label="${esc(m.name ?? m.id)}">
+      </div>`).join('')}
+    </div>`}
+
+    ${groups === null ? loading('settings') : visible.map((g) => `
+    <h3 class="panel-section">${esc(nameOf(g.owner))}</h3>
+    ${g.items.map(settingControl).join('')}`).join('')}`;
 }
 
 function soundRow(s, { defaults, armedKey }) {
@@ -287,10 +501,13 @@ const fmtUptime = (s) => {
     return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
 };
 
-export function adminServerPanel({ overview = null, logs = null, error = null } = {}) {
+export function adminServerPanel({ overview = null, logs = null, audit = null, consoleUrl = null, error = null } = {}) {
     return `
     <h2 class="panel-title">Server logs &amp; status</h2>
     ${banner(error, null)}
+    ${consoleUrl ? `
+    <p class="panel-lead">The raw database, first-run setup and module manager live in the server's own web console —
+      <a class="msg-link" href="${esc(consoleUrl)}" target="_blank" rel="noreferrer noopener">open it in your browser</a>.</p>` : ''}
     ${overview === null ? loading('status') : `
     <div class="adm-stats">
       ${stat('Uptime', fmtUptime(overview.uptimeSeconds))}
@@ -309,8 +526,26 @@ export function adminServerPanel({ overview = null, logs = null, error = null } 
     </div>
     ${logs === null ? loading('log tail') : `
     <pre class="adm-log" aria-label="Server log tail">${
-    (logs.entries ?? []).slice(-200).map(logLine).join('\n') || 'The log is empty.'}</pre>`}`;
+    (logs.entries ?? []).slice(-200).map(logLine).join('\n') || 'The log is empty.'}</pre>`}
+
+    ${audit ? `
+    <h3 class="settings-sub">Who did what</h3>
+    <div class="admin-table" role="table" aria-label="Audit log">
+      ${audit.map((a) => `
+      <div class="adm-row" role="row">
+        <span class="adm-names">
+          <span class="adm-display">${esc(auditAction(a.action))}${a.target ? ` · ${esc(a.target)}` : ''}</span>
+          <span class="adm-username">${esc(a.at ?? '')}${a.actor ? ` · by @${esc(a.actor)}` : ''}${a.detail ? ` · ${esc(a.detail)}` : ''}</span>
+        </span>
+      </div>`).join('') || '<p class="panel-lead">Nothing recorded yet.</p>'}
+    </div>` : ''}`;
 }
+
+/** ADMIN_SERVER_MUTED → "Server muted". The codes are for grep; people read words. */
+export const auditAction = (code) => {
+    const words = String(code ?? '').replace(/^ADMIN_/, '').toLowerCase().replace(/_/g, ' ');
+    return words ? words[0].toUpperCase() + words.slice(1) : 'Unknown';
+};
 
 const stat = (label, value) => `
     <div class="adm-stat"><span class="adm-stat-label">${esc(label)}</span>

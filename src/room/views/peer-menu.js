@@ -37,12 +37,24 @@ const volumeRow = (listen) => `
            aria-label="How loudly you hear them">
   </div>`;
 
-/** The half anyone gets: how YOU hear this person. Nothing here leaves this machine. */
-const listenSection = (listen) => `
+/**
+ * The half anyone gets: how YOU hear this person. Nothing here leaves this machine.
+ *
+ * Priority speaker lives here rather than with the administrator verbs because it is the
+ * web app's version: each listener stars whoever they need to hear over the room — a
+ * shot-caller, a raid lead — and only their own ears change.
+ */
+const listenSection = (listen, priority) => `
   <button type="button" class="peer-menu-item" data-peer-mute
           aria-pressed="${listen.muted ? 'true' : 'false'}">
     ${listen.muted ? icons.speakerOff : icons.mic}
     <span>${listen.muted ? 'Unmute for you' : 'Mute for you'}</span>
+  </button>
+  <button type="button" class="peer-menu-item${priority ? ' on' : ''}" data-peer-priority
+          aria-pressed="${priority ? 'true' : 'false'}"
+          title="While they talk, everyone else is turned down — for you only.">
+    ${icons.star}
+    <span>${priority ? 'Stop prioritising' : 'Priority speaker'}</span>
   </button>
   ${volumeRow(listen)}`;
 
@@ -84,16 +96,17 @@ const durationPage = (person) => `
  * @param {boolean} isSelf    your own row offers nothing; you have the self bar for that
  * @param {boolean} canModerate  admin AND a server that advertises `moderation`
  * @param {object}  listen    { muted, volume } — how you currently hear them
+ * @param {boolean} priority  you have starred them as a priority speaker
  * @param {string}  page      'main' | 'duration'
  * @param {boolean} armed     the kick is waiting for its second press
  */
 export function peerMenu({
     person, isSelf = false, canModerate = false,
-    listen = { muted: false, volume: 1 }, page = 'main', armed = false,
+    listen = { muted: false, volume: 1 }, priority = false, page = 'main', armed = false,
 } = {}) {
     const body = page === 'duration'
         ? durationPage(person)
-        : `${isSelf ? '' : listenSection(listen)}${canModerate && !isSelf ? adminSection(person, armed) : ''}`;
+        : `${isSelf ? '' : listenSection(listen, priority)}${canModerate && !isSelf ? adminSection(person, armed) : ''}`;
 
     return `
     <div class="peer-menu" role="menu" aria-label="${displayName(person)}">

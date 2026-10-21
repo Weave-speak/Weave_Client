@@ -37,6 +37,10 @@ export function createPeerActions({
     // it is right after a server-info refresh rather than only at construction.
     canMove = () => false,
     canModerate = () => false,
+    // Priority speaker: whether this listener has starred somebody, and starring them.
+    // The room owns the list, because it is a stored preference and the roster marks it.
+    isPriority = () => false,
+    togglePriority = () => {},
     paint = () => {},
 }) {
     let menuEl = null;
@@ -104,6 +108,7 @@ export function createPeerActions({
             isSelf: person.id === state.toShell().me.id,
             canModerate: canModerate(),
             listen: listenOf(person),
+            priority: isPriority(person),
             page: menuPage,
             armed: kickArmed,
         }));
@@ -243,6 +248,12 @@ export function createPeerActions({
             const now = listenOf(person);
             // Every connection they hold, so muting somebody signed in twice is one press.
             for (const cid of person.cids ?? []) voice.setListen(cid, 'audio', { muted: !now.muted });
+            refreshMenu();
+            return;
+        }
+
+        if (event.target.closest('[data-peer-priority]')) {
+            togglePriority(person);
             refreshMenu();
             return;
         }

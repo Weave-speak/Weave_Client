@@ -8,7 +8,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { micCodecOptions, screenAudioCodecOptions } from '../src/media/audio-options.js';
+import { micCodecOptions, screenAudioCodecOptions, micConstraints } from '../src/media/audio-options.js';
+
+test('the microphone is opened with three flags and nothing else', () => {
+    // sampleRate, latency and channelCount each cost something when they were tried; the
+    // three processing flags are what every version people liked shipped with.
+    assert.deepEqual(micConstraints({}), {
+        echoCancellation: true, noiseSuppression: true, autoGainControl: true,
+    });
+    assert.deepEqual(micConstraints({ echoCancellation: false, micDevice: 'dev-1' }), {
+        echoCancellation: false, noiseSuppression: true, autoGainControl: true,
+        deviceId: { exact: 'dev-1' },
+    });
+});
 
 test('the microphone does not suppress its own silence', () => {
     // The one that matters. DTX stops sending during what the encoder judges to be silence,

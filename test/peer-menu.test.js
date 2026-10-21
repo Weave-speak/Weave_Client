@@ -55,6 +55,22 @@ test('the listen controls reflect what you currently hear', () => {
     assert.match(loud, /value="100"/);
 });
 
+test('anyone may star somebody as a priority speaker, for their own ears', () => {
+    const plain = peerMenu({ person: kestrel });
+    assert.match(plain, /data-peer-priority/);
+    assert.match(plain, /Priority speaker/);
+    // Above the fold with the other listen controls, never among the administrator verbs.
+    const admin = peerMenu({ person: kestrel, canModerate: true });
+    assert.ok(admin.indexOf('data-peer-priority') < admin.indexOf('peer-menu-split'));
+
+    const starred = peerMenu({ person: kestrel, priority: true });
+    assert.match(starred, /data-peer-priority\s+aria-pressed="true"/);
+    assert.match(starred, /Stop prioritising/);
+
+    assert.ok(!peerMenu({ person: kestrel, isSelf: true }).includes('data-peer-priority'),
+        'you cannot be your own priority speaker');
+});
+
 test('an already server-muted person is offered the lift, not another mute', () => {
     const menu = peerMenu({ person: { ...kestrel, forceMuted: true }, canModerate: true });
     assert.match(menu, /data-server-mute="off"/);

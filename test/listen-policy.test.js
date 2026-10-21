@@ -8,7 +8,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { listenOutput, MAX_LISTEN_GAIN } from '../src/media/listen-policy.js';
+import {
+    listenOutput, duckState, MAX_LISTEN_GAIN, DUCK_FACTOR, DUCK_HOLD_MS, PRIORITY_TALKING_AT,
+} from '../src/media/listen-policy.js';
 
 test('a running context carries the sound, and the element goes quiet', () => {
     const out = listenOutput({ pref: { volume: 1 }, hasGain: true, contextRunning: true });
@@ -63,6 +65,49 @@ test('a stream with no preference of its own is still governed', () => {
     // through while deafened.
     assert.equal(listenOutput({ deafened: true, hasGain: true, contextRunning: true }).gain, 0);
     assert.equal(listenOutput({ hasGain: true, contextRunning: true }).gain, 1, 'and defaults to as-sent');
+});
+
+/* ── priority speaker ───────────────────────────────────────────────────── */
+
+test('a duck turns somebody down by the factor, on top of their own volume', () => {
+    const out = listenOutput({ pref: { volume: 2 }, hasGain: true, contextRunning: true, duck: DUCK_FACTOR });
+    assert.equal(out.gain, 2 * DUCK_FACTOR, 'composed, not replaced — your slider still counts');
+});
+
+test('a duck is a duck, never a mute or a boost', () => {
+    assert.ok(DUCK_FACTOR > 0 && DUCK_FACTOR < 1);
+    // Out-of-range factors are clamped rather than trusted.
+    assert.equal(listenOutput({ hasGain: true, contextRunning: true, duck: 5 }).gain, 1);
+    assert.equal(listenOutput({ hasGain: true, contextRunning: true, duck: 'x' }).gain, 1);
+});
+
+test('a duck does not lift deafen or a mute', () => {
+    assert.equal(listenOutput({ deafened: true, hasGain: true, contextRunning: true, duck: DUCK_FACTOR }).gain, 0);
+    assert.equal(listenOutput({ pref: { muted: true }, hasGain: true, contextRunning: true, duck: 1 }).gain, 0);
+});
+
+test('a duck reaches the element fallback too', () => {
+    const out = listenOutput({ pref: { volume: 1 }, hasGain: true, contextRunning: false, duck: DUCK_FACTOR });
+    assert.equal(out.elementVolume, DUCK_FACTOR);
+});
+
+test('the room ducks while a starred voice is talking, and holds through a breath', () => {
+    let s = duckState([PRIORITY_TALKING_AT], 1000, 0);
+    assert.equal(s.ducked, true);
+    // Silent now, but within the hold: still ducked, so a pause mid-sentence does not pump.
+    s = duckState([0], 1000 + DUCK_HOLD_MS - 1, s.holdUntil);
+    assert.equal(s.ducked, true);
+    s = duckState([0], 1000 + DUCK_HOLD_MS, s.holdUntil);
+    assert.equal(s.ducked, false, 'and lets go once the hold has run out');
+});
+
+test('room tone from a starred microphone does not duck anybody', () => {
+    assert.equal(duckState([PRIORITY_TALKING_AT / 2], 1000, 0).ducked, false);
+    assert.equal(duckState([], 1000, 0).ducked, false, 'nobody starred is here');
+});
+
+test('any one starred voice talking is enough', () => {
+    assert.equal(duckState([0, 0.4, 0], 1000, 0).ducked, true);
 });
 
 test('a nonsense volume reads as unchanged rather than silent', () => {

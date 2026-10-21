@@ -31,7 +31,7 @@ export const SECTIONS = [
         group: 'App',
         items: [
             { id: 'voice', label: 'Voice & Audio', icon: 'mic' },
-            { id: 'notifications', label: 'Notifications', icon: 'speaker', placeholder: true },
+            { id: 'notifications', label: 'Notifications', icon: 'bell' },
             { id: 'appearance', label: 'Appearance', icon: 'image' },
         ],
     },
@@ -51,9 +51,12 @@ export const SECTIONS = [
         adminOnly: true,
         items: [
             { id: 'admin-users', label: 'Users', icon: 'weave' },
+            { id: 'admin-moderation', label: 'Moderation', icon: 'micOff' },
             { id: 'admin-channels', label: 'Channels', icon: 'speaker' },
+            { id: 'admin-invites', label: 'Invite codes', icon: 'plus' },
             { id: 'admin-sounds', label: 'Sounds', icon: 'speaker' },
             { id: 'admin-bugs', label: 'Bug reports', icon: 'doc' },
+            { id: 'admin-settings', label: 'Server settings', icon: 'gear' },
             { id: 'admin-server', label: 'Server', icon: 'doc' },
             { id: 'admin-danger', label: 'DO NOT PRESS', icon: 'power', danger: true },
         ],
@@ -292,7 +295,10 @@ export function sessionsPanel({
           you are using.</span>
         <span class="setting-note" id="updateCheckNote"></span>
       </span>
-      <button type="button" class="btn" data-check-updates>Check for updates</button>
+      <span class="setting-actions">
+        <button type="button" class="btn" data-whats-new>What's new</button>
+        <button type="button" class="btn" data-check-updates>Check for updates</button>
+      </span>
     </div>`;
 
     if (!features.includes('account.sessions')) {
@@ -399,9 +405,48 @@ function pushToMuteRows({ prefs = {}, hotkeysGlobal = false, status = null } = {
     </div>`;
 }
 
+/** What the mic test is doing, in the words shown while it does it. */
+const MIC_TEST_PHASES = {
+    starting: 'Opening your microphone…',
+    room: 'Listening to the room — stay quiet for a moment…',
+    tone: 'Playing a short tone through your speakers…',
+    speak: 'Speak now: say a sentence or two. Recording for five seconds…',
+    playing: 'Playing it back — this is what the room hears.',
+};
+
+const MIC_TEST_RUNNING = new Set(['starting', 'room', 'tone', 'speak']);
+
+/**
+ * "Test my setup". Its own block with its own id, because it repaints on every phase of a
+ * run and redrawing the whole panel for that would throw away an open select.
+ */
+export function micTestView({ phase = 'idle', result = null, error = null, hasRecording = false } = {}) {
+    const running = MIC_TEST_RUNNING.has(phase);
+    const label = running ? 'Testing…' : result ? 'Test again' : 'Test my setup';
+    return `
+    <div class="mic-test" id="micTest">
+      <div class="setting">
+        <div class="setting-text">
+          <span class="setting-label">Test my setup</span>
+          <span class="setting-hint">Hear yourself the way the room hears you — after your gain, gate and
+            processing. Works without joining a room, and nothing is sent anywhere.</span>
+        </div>
+        <button type="button" class="btn small" data-mic-test ${running ? 'disabled' : ''}>${esc(label)}</button>
+      </div>
+      ${MIC_TEST_PHASES[phase] ? `<p class="mic-test-phase" role="status">${esc(MIC_TEST_PHASES[phase])}</p>` : ''}
+      ${error ? `<div class="form-message error show">${esc(error)}</div>` : ''}
+      ${result && !running ? `
+      <ul class="mic-test-findings verdict-${esc(result.verdict)}">
+        ${result.findings.map((f) => `<li class="tone-${esc(f.tone)}">${esc(f.text)}</li>`).join('')}
+      </ul>
+      ${hasRecording && phase !== 'playing'
+        ? '<button type="button" class="btn small" data-mic-test-play>Play the recording again</button>' : ''}` : ''}
+    </div>`;
+}
+
 export function voicePanel({
     prefs = {}, devices = [], cameras = [], outputs = [], features = [],
-    hotkeysGlobal = false, pushToMuteStatus = null,
+    hotkeysGlobal = false, pushToMuteStatus = null, micTest = {},
 } = {}) {
     const hasAfk = features.includes('module.afk');
     return `
@@ -432,6 +477,8 @@ export function voicePanel({
              <span class="setting-note">Where the room's voices play. Point this at your headset, away from anything you capture for a stream, so viewers never hear themselves through your share.</span>
            </div>`
         : notYet('Output device', 'Device names are only readable once microphone access has been granted.')}
+
+    ${micTestView(micTest)}
 
     ${toggle({
         id: 'pushToTalk',
@@ -580,6 +627,35 @@ export function appearancePanel({ prefs = {} } = {}) {
     })}
 
     ${notYet('Themes', 'Weave has one palette at the moment. A light theme is a later piece of work.')}`;
+}
+
+/**
+ * Sounds for messages. The two switches split along the line people actually draw: the
+ * conversation in front of you, and things addressed to you from anywhere else.
+ */
+export function notificationsPanel({ prefs = {} } = {}) {
+    return `
+    <h2 class="panel-title">Notifications</h2>
+    <p class="panel-lead">What Weave plays when something is said. On this device.</p>
+
+    <h3 class="panel-section">Sounds</h3>
+
+    ${toggle({
+        id: 'soundMessages',
+        label: 'New messages',
+        hint: 'A chime when somebody else writes in the conversation you have open.',
+        checked: prefs.soundMessages !== false,
+    })}
+
+    ${toggle({
+        id: 'soundMentions',
+        label: 'Mentions and direct messages',
+        hint: 'A chime when a message names you or a direct message arrives, wherever you are looking.',
+        checked: prefs.soundMentions !== false,
+        note: 'Nothing plays while you are deafened.',
+    })}
+
+    ${notYet('Desktop notifications', 'Pop-ups outside the Weave window are a later piece of work.')}`;
 }
 
 /**
@@ -820,8 +896,6 @@ export function placeholderPanel({ label = '', reason = '' } = {}) {
 }
 
 export const PLACEHOLDER_REASONS = {
-    notifications: 'Weave does not track unread messages or mentions yet, so there is nothing to notify '
-        + 'you about.',
     privacy: 'Blocking someone has to be enforced by the server or it is only cosmetic. That work has '
         + 'not been done.',
 };

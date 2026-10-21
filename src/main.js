@@ -16,6 +16,7 @@ import { activeServer, rememberServer, setActive } from './server/store.js';
 import { parseDeepLink } from './server/deeplink.js';
 import { discover, OUTCOME } from './server/discover.js';
 import { createUpdateBanner } from './updates/banner.js';
+import { showWhatsNewIfUpdated } from './updates/whats-new.js';
 import { createLink } from './net/link.js';
 import { createIdleReporter } from './room/idle.js';
 import { createRoom } from './room/index.js';
@@ -251,7 +252,11 @@ async function enterRoom({ api, user, token, server, autoJoin = true }) {
         },
     });
 
-    room.start().catch((err) => {
+    room.start().then(() => {
+        // After an update, once, over the room it describes. Its own failure is never the
+        // room's: a broken notes dialog must not turn into "could not open the room".
+        try { showWhatsNewIfUpdated(); } catch { /* the notes are a courtesy */ }
+    }).catch((err) => {
         // Failing to build the room must not leave a blank window with no way out of it.
         app.innerHTML = safe`
           <div class="app"><main class="stage">

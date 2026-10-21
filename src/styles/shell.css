@@ -1189,6 +1189,21 @@
 }
 .msg:hover { background: rgb(var(--accent-rgb) / 0.04); }
 
+/* The same person again within a few minutes: no face, no name, a tighter row, and the
+   time tucked into the gutter where the face would be — visible only on hover, so a
+   burst of short lines reads as one turn instead of a column of identical headers. */
+.msg.continued { padding-top: 1px; padding-bottom: 1px; }
+.msg-gutter-time {
+    align-self: center;
+    text-align: center;
+    font-size: var(--t-xs);
+    color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+    opacity: 0;
+    transition: opacity var(--dur-fast) var(--ease);
+}
+.msg.continued:hover .msg-gutter-time { opacity: 1; }
+
 /* A message that names you. The row tint plus an edge marker, because colour alone is
    not a signal everyone can see. */
 .msg.mentions-me {
@@ -1328,6 +1343,29 @@
 .preview-site { font-size: var(--t-xs); color: var(--ink-faint); }
 .preview-title { font-weight: 600; color: var(--accent-hi); margin: 2px 0; }
 .preview-desc { font-size: var(--t-base); color: var(--ink-dim); }
+
+/* The wrap exists for the dismiss button, which cannot live inside the link. It is as wide
+   as the card and no wider, so the button sits on the card's corner. */
+.link-preview-wrap { position: relative; max-width: 620px; }
+/* Room for the button, so it never sits on top of the title. */
+.link-preview-wrap .link-preview { padding-right: calc(var(--s-3) + 26px); }
+.preview-dismiss {
+    position: absolute;
+    top: calc(var(--s-2) + var(--s-1));
+    right: var(--s-1);
+    width: 22px;
+    height: 22px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    font-size: var(--t-xs);
+    color: var(--ink-faint);
+    opacity: 0;
+    transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.msg:hover .preview-dismiss,
+.preview-dismiss:focus-visible { opacity: 1; }
+.preview-dismiss:hover { color: var(--ink); background: var(--surface-3); }
 
 .attachment {
     display: flex;
@@ -1770,6 +1808,8 @@
     color: var(--bad);
 }
 .peer-menu-item[aria-pressed="true"] { color: var(--ink); }
+/* A starred person's star is lit here exactly as it is in the roster. */
+.peer-menu-item[data-peer-priority].on svg { color: var(--gold); fill: var(--gold); }
 
 /* The volume row is not a button, so it does not get the button treatment. */
 .peer-menu-volume {
@@ -1911,6 +1951,31 @@
     from { opacity: 0; transform: translateY(8px) scale(0.985); }
     to { opacity: 1; transform: none; }
 }
+
+/* ── What's new ───────────────────────────────────────────────────────────── */
+
+/* Release notes after an update. It scrolls inside the dialog rather than the dialog
+   growing past the window, because a few versions of notes can be long. */
+.whats-new { width: min(640px, 92vw); max-height: 82vh; overflow-y: auto; padding: var(--s-6); }
+.whats-new-version + .whats-new-version { margin-top: var(--s-5); padding-top: var(--s-5); border-top: 1px solid var(--line-soft); }
+.whats-new-heading { margin: 0 0 var(--s-2); font-size: var(--t-lg); font-weight: 650; }
+.whats-new-date { margin-left: var(--s-2); font-size: var(--t-sm); font-weight: 400; color: var(--ink-faint); }
+.whats-new-kind {
+    margin: var(--s-3) 0 var(--s-1);
+    font-size: var(--t-xs);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+}
+.whats-new-items { margin: 0; padding-left: var(--s-5); display: grid; gap: var(--s-2); color: var(--ink-dim); }
+.whats-new-items p { margin: 0 0 var(--s-1); }
+.whats-new-items strong { color: var(--ink); }
+.whats-new-items code { font-size: 0.92em; padding: 0 4px; border-radius: var(--r-1); background: var(--surface-3); }
+.whats-new-actions { display: flex; justify-content: flex-end; margin-top: var(--s-5); }
+
+/* Two buttons on one settings row. */
+.setting-actions { display: flex; gap: var(--s-2); flex-wrap: wrap; justify-content: flex-end; }
 
 /* ── Settings ─────────────────────────────────────────────────────────────── */
 
@@ -2181,6 +2246,22 @@
     letter-spacing: 0.04em;
 }
 .not-yet.standalone { margin-top: var(--s-5); padding: var(--s-5); }
+
+/* "Test my setup": the phase line while it runs, then one line per finding, each edged in
+   the colour of how much it matters. */
+.mic-test-phase { margin: 0 0 var(--s-2); color: var(--accent-hi); font-size: var(--t-sm); }
+.mic-test-findings { list-style: none; margin: 0 0 var(--s-3); padding: 0; display: grid; gap: var(--s-1); }
+.mic-test-findings li {
+    padding: var(--s-2) var(--s-3);
+    border-left: 3px solid var(--line-strong);
+    border-radius: var(--r-1);
+    background: var(--surface-2);
+    font-size: var(--t-sm);
+    color: var(--ink-dim);
+}
+.mic-test-findings .tone-good { border-left-color: var(--ok); color: var(--ok-text); }
+.mic-test-findings .tone-warn { border-left-color: var(--warn); }
+.mic-test-findings .tone-bad { border-left-color: var(--bad); color: var(--bad-text); }
 .not-yet-what { font-weight: 550; color: var(--ink-dim); }
 .not-yet-why { font-size: var(--t-sm); color: var(--ink-faint); }
 
@@ -2489,6 +2570,9 @@
     flex: 1 1 220px;
 }
 .adm-names { display: flex; flex-direction: column; min-width: 0; }
+/* A row with no avatar puts its names straight in the row; they take the room an .adm-who
+   would, so the actions and switches sit at the far edge either way. */
+.adm-row > .adm-names { flex: 1 1 220px; min-width: 160px; }
 .adm-display {
     color: var(--ink);
     font-weight: 600;
@@ -2544,6 +2628,23 @@
     font-size: var(--t-sm);
 }
 .adm-create input { flex: 1; min-width: 0; }
+.adm-create { flex-wrap: wrap; }
+
+/* The per-person sound choices are values to read, not row actions, so they are always
+   shown — and styled like the other admin inputs. */
+.adm-row[data-person-sounds] .adm-actions { opacity: 1; }
+.adm-row select,
+.adm-number,
+.settings-panel input[type="text"][data-server-setting] {
+    background: var(--bg-void);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--ink);
+    padding: var(--s-1) var(--s-2);
+    font-size: var(--t-sm);
+}
+.adm-number { width: 7.5em; }
+.invite-code { font-family: var(--font-mono); letter-spacing: 0.04em; }
 
 .adm-stats {
     display: grid;

@@ -24,12 +24,14 @@ import { bindingFromKeydown, bindingError, labelFor } from '../ui/hotkey.js';
 import { startLoads, settleWithin, singleFlight, LOAD_PANELS, OPEN_GRACE_MS } from './loading.js';
 import {
     adminUsersPanel, adminChannelsPanel, adminSoundsPanel, adminServerPanel, adminDangerPanel,
-    adminBugsPanel,
+    adminBugsPanel, adminModerationPanel, adminInvitesPanel, adminSettingsPanel,
 } from './admin.js';
 import {
     settingsFrame, profilePanel, voicePanel, appearancePanel, invitesPanel, inviteMessage, sessionsPanel,
-    securityPanel, bugPanel, placeholderPanel, sectionById, PLACEHOLDER_REASONS,
+    securityPanel, bugPanel, placeholderPanel, sectionById, PLACEHOLDER_REASONS, notificationsPanel,
+    micTestView,
 } from './panels.js';
+import { runMicTest } from '../media/mic-test.js';
 
 /**
  * Defaults, chosen to match what the media layer already does.
@@ -79,6 +81,14 @@ export const DEFAULTS = {
     // time and opens pre-set to these, and the room writes them when a share starts.
     shareQuality: DEFAULT_SHARE_QUALITY,
     shareContent: DEFAULT_SHARE_CONTENT,
+    // Message chimes, on as they were on the web app. See room/notify.js for which
+    // message is which.
+    soundMessages: true,
+    soundMentions: true,
+    // People this listener has starred: while one of them talks, everybody else is
+    // turned down. This ear's choice on this device, never sent anywhere — see
+    // media/listen-policy.js.
+    prioritySpeakers: [],
 };
 
 /** Read every preference for a server, defaults filled in. */
@@ -127,7 +137,13 @@ export function createSettings({
     pushToMuteStatus = () => null,
     // Let the shortcut go while a new one is being chosen. Returns the function that takes
     // it back, which resolves once the operating system has answered.
-    pausePushToMute = () => () => Promise.resolve() }) {
+    pausePushToMute = () => () => Promise.resolve(),
+    // The release notes. Handed in rather than imported: they are the bundled CHANGELOG.md,
+    // which only the bundler can load, and this file is also loaded by the tests.
+    openWhatsNew = () => {},
+    // Lifting a server mute goes over the socket, because that path is the one that also
+    // un-pauses the person's microphone and tells the room. The room owns the socket.
+    liftServerMute = () => false }) {
     const store = settingsFor(server.id);
     let me = signedInAs;
     let current = 'profile';
@@ -173,6 +189,9 @@ export function createSettings({
         sounds: null, soundDefaults: { joinSound: null, leaveSound: null }, soundUploadBusy: false,
         // Bug reports: the list, how many there are in total, and the one being read.
         bugs: null, bugTotal: 0, bugOpen: null,
+        // null while loading, false when the server is too old to have the route.
+        soundPeople: null, birthday: null, restrictions: null,
+        invites: null, settingsGroups: null, modules: null, audit: null,
         error: null, notice: null,
         editingId: null,       // user or channel row in rename mode
         armedKey: null,        // 'action:id' of the one destructive button awaiting its second click
@@ -180,7 +199,16 @@ export function createSettings({
         doom: { stage: 'idle', typed: '', error: null, busy: false },
     };
 
-    const modal = createModal({ className: 'settings-modal', label: 'Settings' });
+    // "Test my setup": which phase a run is in, its verdict, and the recording to replay.
+    // The abort is how closing the dialog mid-test lets go of the microphone at once
+    // rather than five seconds later.
+    const micTest = { phase: 'idle', result: null, error: null, url: null, abort: null };
+
+    const modal = createModal({
+        className: 'settings-modal',
+        label: 'Settings',
+        onClose: () => micTest.abort?.abort(),
+    });
 
     /* ── panels ──────────────────────────────────────────────────────────── */
 
@@ -194,6 +222,7 @@ export function createSettings({
                 prefs, devices, cameras, outputs, features,
                 hotkeysGlobal: Boolean(platform.hotkeys?.available),
                 pushToMuteStatus: pushToMuteStatus(),
+                micTest: micTestState(),
             });
             case 'sessions': return sessionsPanel({
                 version: VERSION, features,
@@ -212,6 +241,7 @@ export function createSettings({
                 error: sec.error, notice: sec.notice, loading: sec.loading,
             });
             case 'appearance': return appearancePanel({ prefs });
+            case 'notifications': return notificationsPanel({ prefs });
             case 'invites': return invitesPanel({
                 invite, busy: inviteBusy, error: inviteError,
                 origin: server?.origin ?? null,
@@ -230,6 +260,17 @@ export function createSettings({
                 return adminSoundsPanel({
                     sounds: adm.sounds, defaults: adm.soundDefaults, error: adm.error, notice: adm.notice,
                     armedKey: adm.armedKey, uploadBusy: adm.soundUploadBusy,
+                    people: adm.soundPeople, birthday: adm.birthday,
+                });
+            case 'admin-moderation':
+                return adminModerationPanel({ restrictions: adm.restrictions, error: adm.error, notice: adm.notice });
+            case 'admin-invites':
+                return adminInvitesPanel({
+                    invites: adm.invites, error: adm.error, notice: adm.notice, armedKey: adm.armedKey,
+                });
+            case 'admin-settings':
+                return adminSettingsPanel({
+                    groups: adm.settingsGroups, modules: adm.modules, error: adm.error, notice: adm.notice,
                 });
             case 'admin-bugs':
                 return adminBugsPanel({
@@ -237,7 +278,10 @@ export function createSettings({
                     error: adm.error, notice: adm.notice, armedKey: adm.armedKey,
                 });
             case 'admin-server':
-                return adminServerPanel({ overview: adm.overview, logs: adm.logs, error: adm.error });
+                return adminServerPanel({
+                    overview: adm.overview, logs: adm.logs, audit: adm.audit, error: adm.error,
+                    consoleUrl: server?.origin ? `${server.origin}/admin` : null,
+                });
             case 'admin-danger':
                 return adminDangerPanel({
                     ...adm.doom,
@@ -336,6 +380,15 @@ export function createSettings({
         if (mismatch) line.textContent += ' — NOT the device selected above';
     }
 
+    /**
+     * A request a server may be too old to answer. A 404 is "this server cannot", and is
+     * drawn as a line saying so; anything else is a real failure and goes to the banner.
+     */
+    const orTooOld = (promise) => promise.catch((err) => {
+        if (err?.status === 404) return false;
+        throw err;
+    });
+
     /** Fetch whatever the open admin panel shows. Stale data is replaced, not merged. */
     async function loadAdminData() {
         try {
@@ -346,9 +399,30 @@ export function createSettings({
                 const { channels } = await api.request('GET', '/api/channels');
                 adm.channels = channels;
             } else if (current === 'admin-sounds') {
-                const { sounds, defaults } = await api.request('GET', '/api/sounds');
-                adm.sounds = sounds;
-                adm.soundDefaults = defaults;
+                // The birthday and the per-person choices are newer than the library, so
+                // they are asked for alongside it and allowed to be missing on their own.
+                const [library, people, birthday] = await Promise.all([
+                    api.request('GET', '/api/sounds'),
+                    orTooOld(api.request('GET', '/api/sounds/users')),
+                    orTooOld(api.request('GET', '/api/sounds/birthday')),
+                ]);
+                adm.sounds = library.sounds;
+                adm.soundDefaults = library.defaults;
+                adm.soundPeople = people === false ? false : people.users;
+                adm.birthday = birthday;
+            } else if (current === 'admin-moderation') {
+                const reply = await orTooOld(api.request('GET', '/api/admin/moderation'));
+                adm.restrictions = reply === false ? false : reply.restrictions;
+            } else if (current === 'admin-invites') {
+                const { invites } = await api.request('GET', '/api/invites');
+                adm.invites = invites;
+            } else if (current === 'admin-settings') {
+                const [settingsReply, modulesReply] = await Promise.all([
+                    api.request('GET', '/api/admin/settings'),
+                    api.request('GET', '/api/admin/modules'),
+                ]);
+                adm.settingsGroups = settingsReply.groups ?? [];
+                adm.modules = modulesReply.modules ?? [];
             } else if (current === 'admin-bugs') {
                 // Only the list. A report is fetched whole when somebody asks to read it,
                 // because the logs inside one are the size of the thing.
@@ -357,12 +431,15 @@ export function createSettings({
                 adm.bugTotal = total ?? reports.length;
             } else if (current === 'admin-server') {
                 // Fetched together: the numbers without the log answer half the question.
-                const [overview, logs] = await Promise.all([
+                // The audit trail is a nicety; its failing must not cost the other two.
+                const [overview, logs, audit] = await Promise.all([
                     api.request('GET', '/api/admin/overview'),
                     api.request('GET', '/api/admin/logs?lines=200'),
+                    api.request('GET', '/api/admin/audit?limit=50').catch(() => null),
                 ]);
                 adm.overview = overview;
                 adm.logs = logs;
+                adm.audit = audit?.entries ?? null;
             } else return;
         } catch (err) {
             adm.error = err?.message ?? 'The server did not answer.';
@@ -563,6 +640,69 @@ export function createSettings({
             adm.soundUploadBusy = false;
             await loadAdminData();
         });
+
+        // -- sounds: the birthday, and choosing for somebody --
+        $('[data-birthday-form]', el)?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const form = e.currentTarget;
+            const userId = form.userId.value || null;
+            const soundId = form.soundId.value || null;
+            adminAct(() => api.request('PUT', '/api/sounds/birthday', { body: { userId, soundId } }),
+                userId ? 'Birthday set. Their room will hear it when they next arrive.' : 'Birthday cleared.');
+        });
+        $('[data-birthday-clear]', el)?.addEventListener('click', () => {
+            adminAct(() => api.request('PUT', '/api/sounds/birthday', { body: { userId: null, soundId: null } }),
+                'Birthday cleared.');
+        });
+        $$('[data-person-sound]', el).forEach((select) => select.addEventListener('change', () => {
+            const row = select.closest('[data-person-sounds]');
+            if (!row) return;
+            const pick = (which) => $(`[data-person-sound="${which}"]`, row)?.value || null;
+            adminAct(() => api.request('PUT', `/api/sounds/users/${encodeURIComponent(row.dataset.personSounds)}`, {
+                body: { joinSound: pick('join'), leaveSound: pick('leave') },
+            }), 'Saved.');
+        }));
+
+        // -- moderation --
+        $$('[data-lift-mute]', el).forEach((b) => b.addEventListener('click', () => {
+            const userId = b.dataset.liftMute;
+            b.disabled = true;
+            if (!liftServerMute(userId)) {
+                adm.error = 'Not connected — the mute could not be lifted. Try again in a moment.';
+                renderPanel();
+                return;
+            }
+            // The socket answers on its own time; the list is read again once it has had
+            // a moment, so what is shown is what the server now holds.
+            adm.notice = 'Lifted.';
+            setTimeout(() => loadAdminData(), 600);
+        }));
+
+        // -- invites --
+        $$('[data-invite-revoke]', el).forEach((b) => b.addEventListener('click', () => {
+            const code = b.dataset.inviteRevoke;
+            armThen(`invite:${code}`, () => adminAct(
+                () => api.request('DELETE', `/api/invites/${encodeURIComponent(code)}`),
+                'Revoked. That code no longer works.',
+            ));
+        }));
+
+        // -- server settings and modules --
+        $$('[data-module-toggle]', el).forEach((input) => input.addEventListener('change', () => {
+            const id = input.dataset.moduleToggle;
+            const action = input.checked ? 'enable' : 'disable';
+            adminAct(() => api.request('POST', `/api/admin/modules/${encodeURIComponent(id)}/${action}`),
+                `${input.checked ? 'Switched on' : 'Switched off'}. Each person's app picks this up the next time it connects.`);
+        }));
+        $$('[data-server-setting]', el).forEach((input) => input.addEventListener('change', () => {
+            const key = input.dataset.serverSetting;
+            const type = input.dataset.settingType;
+            const value = type === 'boolean' ? input.checked
+                : type === 'number' ? Number(input.value)
+                    : input.value;
+            if (type === 'number' && !Number.isFinite(value)) return;
+            adminAct(() => api.request('PUT', '/api/admin/settings', { body: { [key]: value } }), 'Saved.');
+        }));
 
         // -- server --
         $('[data-admin-refresh-logs]', el)?.addEventListener('click', () => loadAdminData());
@@ -938,8 +1078,70 @@ export function createSettings({
         }
     }
 
+    /* ── test my setup ───────────────────────────────────────────────────── */
+
+    const micTestState = () => ({
+        phase: micTest.phase, result: micTest.result, error: micTest.error, hasRecording: Boolean(micTest.url),
+    });
+
+    /** Redraw just the test block: it changes several times a run, the rest of the panel never. */
+    function paintMicTest() {
+        const block = $('#micTest', modal.element);
+        if (!block) return;
+        block.outerHTML = micTestView(micTestState());
+        wireMicTest();
+    }
+
+    function wireMicTest() {
+        $('[data-mic-test]', modal.element)?.addEventListener('click', () => { startMicTest(); });
+        $('[data-mic-test-play]', modal.element)?.addEventListener('click', () => { playMicRecording(); });
+    }
+
+    /** The recording, on the device the room plays through — see cue.js. */
+    async function playMicRecording() {
+        if (!micTest.url) return;
+        micTest.phase = 'playing';
+        paintMicTest();
+        try {
+            const audio = new Audio(micTest.url);
+            await playCue(audio, prefs.audioOutput);
+            await new Promise((resolve) => { audio.onended = resolve; audio.onerror = resolve; });
+        } catch { /* refused playback: the verdict still stands on its own */ }
+        if (micTest.phase === 'playing') micTest.phase = 'done';
+        paintMicTest();
+    }
+
+    async function startMicTest() {
+        if (['starting', 'room', 'tone', 'speak'].includes(micTest.phase)) return;
+        if (micTest.url) URL.revokeObjectURL(micTest.url);
+        const abort = new AbortController();
+        Object.assign(micTest, { phase: 'starting', result: null, error: null, url: null, abort });
+        paintMicTest();
+        try {
+            const { verdict, findings, recording } = await runMicTest({
+                prefs,
+                signal: abort.signal,
+                onPhase: (phase) => { micTest.phase = phase; paintMicTest(); },
+            });
+            micTest.result = { verdict, findings };
+            micTest.url = recording ? URL.createObjectURL(recording) : null;
+            micTest.phase = 'done';
+            platform.log('info', `[mic-test] ${verdict}: ${findings.map((f) => f.tone).join(', ')}`);
+            await playMicRecording();
+        } catch (err) {
+            micTest.phase = 'idle';
+            micTest.error = err?.name === 'AbortError' ? null
+                : err?.name === 'NotAllowedError' ? 'Microphone access was refused, so there was nothing to test.'
+                    : `The test could not run: ${err?.message ?? err}`;
+            paintMicTest();
+        } finally {
+            if (micTest.abort === abort) micTest.abort = null;
+        }
+    }
+
     function wirePanel() {
         paintActiveMic();
+        wireMicTest();
         wireAdminPanel();
         wireAvatar();
         wireName();
@@ -1018,6 +1220,7 @@ export function createSettings({
             button.addEventListener('click', (event) => captureKey(event.currentTarget));
         });
 
+        $('[data-whats-new]', modal.element)?.addEventListener('click', () => openWhatsNew());
         $('[data-check-updates]', modal.element)?.addEventListener('click', async (event) => {
             const button = event.currentTarget;
             const note = $('#updateCheckNote', modal.element);

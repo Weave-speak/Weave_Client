@@ -3,7 +3,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { toTimelineItems, dayLabel, resolveMentions } from '../src/room/messages.js';
+import { toTimelineItems, dayLabel, resolveMentions, GROUP_WINDOW_MS } from '../src/room/messages.js';
+import { messageList } from '../src/room/views/timeline.js';
 
 const ME = { id: 'u-me', username: 'ghostbyte', displayName: 'Ghostbyte' };
 const users = new Map([
@@ -97,4 +98,72 @@ test('an empty history produces an empty timeline, not a stray separator', () =>
 test('times are rendered on a 24-hour clock with a leading zero', () => {
     const [, message] = toTimelineItems([record('a', at(2026, 8, 23, 9, 5))], { users, me: ME });
     assert.equal(message.at, '09:05');
+});
+
+/* ── grouping a person's turn ───────────────────────────────────────────── */
+
+const messagesOf = (items) => items.filter((i) => i.kind === 'message');
+
+test('the same person again within the window continues their turn', () => {
+    const t = at(2026, 8, 23, 10);
+    const [first, second, third] = messagesOf(toTimelineItems([
+        record('a', t),
+        record('b', t + 60_000),
+        record('c', t + 120_000),
+    ], { users, me: ME }));
+    assert.equal(first.continued, false, 'a turn opens with a name');
+    assert.equal(second.continued, true);
+    assert.equal(third.continued, true, 'a run continues from the previous line, not from the first');
+});
+
+test('a pause longer than the window starts a fresh turn', () => {
+    const t = at(2026, 8, 23, 10);
+    const [, late] = messagesOf(toTimelineItems([
+        record('a', t),
+        record('b', t + GROUP_WINDOW_MS),
+    ], { users, me: ME }));
+    assert.equal(late.continued, false, 'exactly the window is already too long');
+});
+
+test('somebody else speaking in between breaks the turn', () => {
+    const t = at(2026, 8, 23, 10);
+    const [, other, back] = messagesOf(toTimelineItems([
+        record('a', t),
+        record('b', t + 1000, { userId: 'u-me', authorName: 'Ghostbyte' }),
+        record('c', t + 2000),
+    ], { users, me: ME }));
+    assert.equal(other.continued, false);
+    assert.equal(back.continued, false, 'coming back gets the name back');
+});
+
+test('a system line or a new day breaks the turn too', () => {
+    // Otherwise a message reads as belonging to the "started streaming" line above it, or
+    // carries no name at the top of a new day.
+    const t = at(2026, 8, 23, 23, 59);
+    const items = toTimelineItems([
+        record('a', t - 60_000),
+        { kind: 'system', id: 'sys-1', createdAt: t - 30_000, who: 'Kestrel', text: 'started streaming' },
+        record('b', t),
+        record('c', t + 2 * 60_000),   // past midnight
+    ], { users, me: ME });
+    const [, afterSystem, afterMidnight] = messagesOf(items);
+    assert.equal(afterSystem.continued, false);
+    assert.equal(afterMidnight.continued, false);
+});
+
+test('a continued row drops the face and name but keeps the name for a screen reader', () => {
+    const t = at(2026, 8, 23, 10);
+    const markup = messageList(toTimelineItems([record('a', t), record('b', t + 1000)], { users, me: ME }));
+    const rows = markup.split('<li').slice(1);
+    const second = rows.find((r) => r.includes('data-message="b"'));
+    assert.match(second, /class="msg continued"/);
+    assert.doesNotMatch(second, /msg-head/);
+    assert.match(second, /class="sr-only">Kestrel, 10:00/);
+});
+
+test('a departed author keeps the face they had when they wrote it', () => {
+    const [, message] = toTimelineItems([
+        record('a', at(2026, 8, 23), { userId: 'u-gone', authorName: 'Departed', avatar: 'av-1' }),
+    ], { users, me: ME });
+    assert.equal(message.author.avatar, 'av-1');
 });

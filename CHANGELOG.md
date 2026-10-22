@@ -7,7 +7,7 @@ All notable changes to Weave Client are recorded here. The format follows
 The newest entries are what the app shows under **What's new** after it updates, so they are
 written for the people using it rather than for the people building it.
 
-## [Unreleased]
+## [0.1.70] - 2026-10-22
 
 ### Added
 - **What's new.** After an update, the app tells you what changed — this list, in fact. It
@@ -16,7 +16,8 @@ written for the people using it rather than for the people building it.
 - **Slash commands.** Type `/roll` or `/flip` in a channel and the result appears for
   everyone there, as a line about you rather than as something you typed. Start with a slash
   to see what the server offers. To send a line that starts with a command name as plain text,
-  begin it with two slashes.
+  begin it with two slashes. On a server older than 0.1.37 the result appears in the room you
+  are standing in rather than the channel you typed it in.
 
 - **Priority speaker.** Right-click somebody and choose **Priority speaker**: while they
   talk, everyone else drops to a third of their volume, so a shot-caller cuts through a busy
@@ -41,6 +42,23 @@ written for the people using it rather than for the people building it.
   choosing it with the + button.
 
 - **Hide a link preview.** The ✕ on a preview card hides it for the rest of the session.
+
+- **Moderation, for administrators.** Settings → Admin → Moderation lists every server mute
+  and kick in force — including for people who are not online — and lifts a mute with one
+  click. Needs server 0.1.37.
+
+- **Invite codes, for administrators.** Every code on the server, how used it is and when it
+  expires, and a way to revoke one.
+
+- **Server settings, for administrators.** Switch modules on and off and change their
+  settings — the away timeout among them — without opening the web console.
+
+- **A birthday, and sounds chosen for somebody.** Admin → Sounds can name a birthday person
+  and a sound their room hears a few seconds after they arrive, and can choose anybody's join
+  and leave sounds for them. Needs server 0.1.37; an older server says so on the screen.
+
+- **Who did what.** Admin → Server now shows the audit trail, and links to the server's own
+  web console for everything else.
 
 ### Fixed
 - **Scrolling up in a text channel loads older messages again.** While you were reading a

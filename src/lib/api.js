@@ -124,6 +124,26 @@ export function createApi({ origin, token = null }) {
             return data;
         },
 
+        /**
+         * A new bubble: its photo raw, its name in the query. The photo is the bubble's
+         * own file on the server, not an upload, because uploads are swept on a timer.
+         */
+        async uploadBubble(file, name) {
+            const res = await fetch(origin + `/api/bubbles?name=${encodeURIComponent(name)}`, {
+                method: 'POST',
+                headers: { ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) },
+                body: file,
+                credentials: 'omit',
+                signal: AbortSignal.timeout(60_000),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new ApiError(data.message ?? data.error ?? 'The bubble could not be made.',
+                    { status: res.status });
+            }
+            return data;
+        },
+
         /** Auth-gated bytes (uploads) as a blob, for <img> tags and downloads. */
         async fetchBlob(path) {
             const res = await fetch(origin + path, {

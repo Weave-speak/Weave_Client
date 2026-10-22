@@ -45,6 +45,8 @@ export const icons = {
     thumbDown: svg('<path d="M17 13V4h3a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1z"/><path d="M17 13l-4 7a2 2 0 0 1-2-2v-3H6a2 2 0 0 1-2-2.3l1.2-6A2 2 0 0 1 7 4h10"/>'),
 
     afk: svg('<path d="M4 17h6l-6-6h6"/><path d="M13 13h7l-7-7h7"/>'),
+    /** Three bubbles of different sizes, drifting. */
+    bubbles: svg('<circle cx="8" cy="14" r="5"/><circle cx="16.5" cy="8.5" r="3.5"/><circle cx="18" cy="17" r="2"/>'),
     /** A die showing five: what a /roll or a /flip leaves in the timeline. */
     dice: svg('<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8.5 8.5h.01M15.5 8.5h.01M12 12h.01M8.5 15.5h.01M15.5 15.5h.01"/>'),
     doc: svg('<path d="M14 3v5h5"/><path d="M19 8v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7z"/>'),

@@ -321,6 +321,62 @@ function peopleSection({ sounds, people }) {
     ${body}`;
 }
 
+/* ── Bubbles ─────────────────────────────────────────────────────────────── */
+
+/**
+ * The web app's bubbles: a photo and a name, a few of which drift over everybody's chat.
+ *
+ * `bubbles` is null while loading and `false` when the server cannot have them — too old,
+ * or the module switched off — which `unavailable` explains in a line.
+ */
+export function adminBubblesPanel({
+    bubbles = null, unavailable = '', error = null, notice = null, armedKey = null, busy = false,
+} = {}) {
+    if (bubbles === false) {
+        return `
+    <h2 class="panel-title">Bubbles</h2>
+    <p class="panel-lead">${esc(unavailable || 'This server has no bubbles.')}</p>`;
+    }
+    return `
+    <h2 class="panel-title">Bubbles</h2>
+    <p class="panel-lead">A photo and a name. A few at a time drift over everybody's chat, chosen at random
+      every so often, and clicking one opens a small conversation of its own. How many float and how often
+      are in Server settings.</p>
+    ${banner(error, notice)}
+    ${bubbles === null ? loading('bubbles') : `
+    <div class="admin-table" role="table" aria-label="Bubbles">
+      ${bubbles.map((b) => `
+      <div class="adm-row" role="row" data-bubble-row="${esc(b.id)}">
+        <span class="adm-who">
+          ${b.photoUrl
+            ? `<span class="bubble-thumb" style="background-image: url(&quot;${esc(b.photoUrl)}&quot;)"></span>`
+            : '<span class="bubble-thumb empty" aria-hidden="true"></span>'}
+          <span class="adm-names">
+            <span class="adm-display">${esc(b.name)}</span>
+            <span class="adm-username">${b.lastMessageAt
+                ? `last message ${esc(clockOf(b.lastMessageAt))}` : 'nothing said yet'}</span>
+          </span>
+        </span>
+        <span class="adm-actions">
+          ${armable(`data-bubble-clear="${esc(b.id)}"`, 'Clear messages', 'Clear — sure?',
+                { armed: armedKey === `bubble-clear:${b.id}` })}
+          ${armable(`data-bubble-delete="${esc(b.id)}"`, 'Delete', 'Delete bubble?',
+                    { armed: armedKey === `bubble-delete:${b.id}` })}
+        </span>
+      </div>`).join('') || '<p class="panel-lead">No bubbles yet.</p>'}
+    </div>`}
+
+    <h3 class="panel-section">Make one</h3>
+    <form class="adm-create" data-bubble-create>
+      <input name="name" placeholder="Name" maxlength="60" required aria-label="Bubble name">
+      <input type="file" name="photo" accept="image/png,image/jpeg,image/gif,image/webp" required
+             aria-label="Bubble photo">
+      <button type="submit" class="btn primary" ${busy ? 'disabled' : ''}>${busy ? 'Making…' : 'Make bubble'}</button>
+    </form>
+    <p class="setting-hint">PNG, JPEG, GIF or WebP, up to 5&nbsp;MB. It is shown as a circle, so a face in the
+      middle works best.</p>`;
+}
+
 /* ── Moderation ──────────────────────────────────────────────────────────── */
 
 const clockOf = (ms) => new Date(ms).toLocaleString(undefined, {

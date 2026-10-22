@@ -44,5 +44,6 @@ still ships disabled, same as before, but everything behind the flag now works).
 Ported from the web app since: slash commands (`/roll`, `/flip`, offered as you type a
 slash), priority speaker (per listener, from the right-click menu), "Test my setup" in Voice
 & Audio, the message chime and the Notifications screen that switches it, faces and
-grouping in the timeline, pasting a screenshot, dismissable link previews, and What's New
-after an update.
+grouping in the timeline, pasting a screenshot, dismissable link previews, What's New
+after an update, and bubbles — drifting over the chat, each with its own conversation, made
+and managed under Settings → Admin → Bubbles.

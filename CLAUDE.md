@@ -69,6 +69,7 @@ holds the app log. Fatal startup errors go to `%TEMP%\weave\startup-crash.log`.
 | "Test my setup" in Voice & Audio | `src/media/mic-test.js` |
 | Message chimes | `src/room/notify.js` |
 | What's New after an update | `src/updates/changelog.js` (pure), `src/updates/whats-new.js` (dialog) |
+| Bubbles — drifting, the popup chat, the list | `src/room/bubbles.js` (controller), `src/ui/bubbles.js` (motion), `src/room/bubble-store.js` (state), `src/room/views/bubbles.js` |
 
 ## Conventions
 

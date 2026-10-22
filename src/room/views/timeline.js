@@ -331,6 +331,8 @@ export function timeline({ room = {}, items = [], typing = [], voice = {} } = {}
         <h1>${esc(room.name ?? 'Room')}</h1>
         <span class="room-topic" id="roomTopic" ${room.topic ? '' : 'hidden'}>${esc(room.topic ?? '')}</span>
         <span class="room-head-spacer"></span>
+        <button type="button" class="icon-btn bubbles-btn" id="allBubblesBtn" data-all-bubbles hidden
+                title="Bubbles" aria-label="All bubbles">${icons.bubbles}</button>
         <button type="button" class="icon-btn" id="dmCallBtn" data-dm-call hidden
                 title="Start a private call" aria-label="Start a private call">${icons.phone}</button>
         <button type="button" class="icon-btn danger-btn" id="dmHangupBtn" data-dm-hangup hidden
@@ -349,6 +351,10 @@ export function timeline({ room = {}, items = [], typing = [], voice = {} } = {}
           <div class="typing" aria-live="polite">${typingLine(typing)}</div>
         </div>
       </div>
+
+      <!-- The bubbles drift here: the same grid cell as the timeline, over it, not in it,
+           so they never scroll away with the messages. Empty until the room fills it. -->
+      <div class="bubbles-layer" id="bubblesLayer"></div>
 
       <div class="voice-notice-slot" id="voiceNotice">${voiceNoticeMarkup(voice)}</div>
 

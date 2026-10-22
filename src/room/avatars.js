@@ -13,8 +13,13 @@
 /**
  * @param {object}   api        the client for this server
  * @param {Function} onResolved called when a face arrives, so the caller can repaint
+ * @param {Function} pathFor    where an id's bytes live. Avatars by default; a bubble's
+ *                              photo is the same problem — behind the session, immutable
+ *                              under its id — so it is the same cache pointed elsewhere.
  */
-export function createAvatarCache({ api, onResolved = () => {} }) {
+export function createAvatarCache({
+    api, onResolved = () => {}, pathFor = (id) => `/api/avatars/${encodeURIComponent(id)}`,
+}) {
     const urls = new Map();      // avatar id -> object URL
     const pending = new Set();   // ids being fetched right now
     // Ids that failed. Kept so a missing picture costs one request rather than one per
@@ -24,7 +29,7 @@ export function createAvatarCache({ api, onResolved = () => {} }) {
     function load(id) {
         if (pending.has(id) || failed.has(id) || urls.has(id)) return;
         pending.add(id);
-        api.fetchBlob(`/api/avatars/${encodeURIComponent(id)}`)
+        api.fetchBlob(pathFor(id))
             .then((blob) => {
                 urls.set(id, URL.createObjectURL(blob));
                 onResolved();

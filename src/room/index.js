@@ -33,6 +33,7 @@ import { openWhatsNew } from '../updates/whats-new.js';
 import { createRoomBrowser } from '../rooms/browser.js';
 import { createPeerActions } from './peer-actions.js';
 import { createAvatarCache, withAvatars } from './avatars.js';
+import { createBubbles } from './bubbles.js';
 import { createModal } from '../ui/modal.js';
 import { platform } from '../platform/index.js';
 import { userHue } from '../ui/hue.js';
@@ -255,6 +256,18 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             settings?.refreshProfile?.();
         },
     });
+    // Bubbles. The photos are behind the session like avatars are, so they come through the
+    // same kind of cache — shared with settings, where the admin screen shows them too.
+    const canBubble = features.includes('bubbles');
+    let bubbleRoom = null;
+    const bubblePhotos = createAvatarCache({
+        api,
+        pathFor: (id) => `/api/bubbles/${encodeURIComponent(id)}/photo`,
+        onResolved: () => {
+            bubbleRoom?.photosArrived();
+            settings?.refreshBubbles?.();
+        },
+    });
     const canMovePeople = Boolean(user?.isAdmin) && features.includes('peers.admin-move');
     const canModeratePeople = Boolean(user?.isAdmin) && features.includes('moderation');
     // The call the user is part of, and where to stand again when it ends.
@@ -457,6 +470,7 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         },
         openWhatsNew,
         liftServerMute: (userId) => link.send('serverMute', { userId, muted: false }),
+        bubblePhotos,
     });
 
     /**
@@ -723,6 +737,15 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         if (hangupBtn) hangupBtn.hidden = !inThisCall;
         const composer = $('#composerInput', mount);
         if (composer) composer.placeholder = `Message ${room.name ?? 'the room'}…`;
+        paintBubblesButton();
+    }
+
+    /** The way into every bubble — there once any exist, and marked when one has news. */
+    function paintBubblesButton() {
+        const button = $('#allBubblesBtn', mount);
+        if (!button) return;
+        button.hidden = !bubbleRoom?.count;
+        button.classList.toggle('has-unread', Boolean(bubbleRoom?.unread));
     }
 
     /**
@@ -1222,6 +1245,8 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
     function applyMotionPrefs() {
         // A tile in fullscreen is the second reason to stop, and it is not a preference:
         // see onFullscreenChange for what these cost over a full-screen video.
+        // Bubbles stop drifting for the same reasons, but stay where they are: still is not gone.
+        bubbleRoom?.setMoving(!(prefs.staticBackground || document.fullscreenElement));
         if (prefs.staticBackground || document.fullscreenElement) {
             background?.stop();
             loom?.stop();
@@ -1235,6 +1260,11 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
 
     function applyFrame(msg) {
         // Module messages arrive namespaced, so a module can never shadow a core type.
+        if (bubbleRoom?.handle(msg)) {
+            paintBubblesButton();
+            return;
+        }
+
         if (msg.type === 'text-chat:message' && msg.message) {
             const record = msg.message;
             const viewId = state.raw.viewChannelId ?? state.raw.currentChannelId;
@@ -1525,6 +1555,8 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
                     .then(({ threads = [] }) => { state.setDmThreads(threads); paint(); })
                     .catch(() => { /* the rail stays empty; a reconnect retries */ });
             }
+            // Bubbles belong to no room, so only a fresh connection asks — a move does not.
+            if (msg.type === 'joined') bubbleRoom?.load().then(paintBubblesButton);
             // Entering a room is seeing its latest page, so the backlog is acked too —
             // without this, days of history in your home room stay "unread" for ever.
             // Arriving NOWHERE loads nothing and starts nothing.
@@ -2128,6 +2160,10 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             }
             if (event.target.closest('[data-add-member]')) {
                 toggleMemberPicker();
+                return;
+            }
+            if (event.target.closest('[data-all-bubbles]')) {
+                bubbleRoom?.openList();
                 return;
             }
 
@@ -3144,6 +3180,23 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             voice: voiceState,
         })));
         wire();
+        if (canBubble) {
+            bubbleRoom = createBubbles({
+                mount,
+                api,
+                link,
+                photos: bubblePhotos,
+                getMe: () => state.raw.me,
+                getUsers: () => state.raw.users,
+                // Faces beside a bubble's messages, resolved the same way the timeline's are.
+                withFaces: (items) => items.map((item) => (item.kind === 'message' && !item.continued && item.author?.avatar
+                    ? { ...item, author: { ...item.author, avatarUrl: avatarCache.urlFor(item.author.avatar) } }
+                    : item)),
+                hydrate: hydrateAuthImages,
+                createModal,
+                onChange: paintBubblesButton,
+            });
+        }
         startBackground();
         mountLoom();
 
@@ -3221,6 +3274,8 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             voice.stop();
             background?.destroy();
             loom?.destroy();
+            bubbleRoom?.destroy();
+            bubblePhotos.destroy();
             link.onEvent = () => {};
             link.onState = () => {};
         },

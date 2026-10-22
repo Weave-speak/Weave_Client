@@ -55,6 +55,7 @@ export const SECTIONS = [
             { id: 'admin-channels', label: 'Channels', icon: 'speaker' },
             { id: 'admin-invites', label: 'Invite codes', icon: 'plus' },
             { id: 'admin-sounds', label: 'Sounds', icon: 'speaker' },
+            { id: 'admin-bubbles', label: 'Bubbles', icon: 'bubbles' },
             { id: 'admin-bugs', label: 'Bug reports', icon: 'doc' },
             { id: 'admin-settings', label: 'Server settings', icon: 'gear' },
             { id: 'admin-server', label: 'Server', icon: 'doc' },

@@ -24,7 +24,7 @@ import { bindingFromKeydown, bindingError, labelFor } from '../ui/hotkey.js';
 import { startLoads, settleWithin, singleFlight, LOAD_PANELS, OPEN_GRACE_MS } from './loading.js';
 import {
     adminUsersPanel, adminChannelsPanel, adminSoundsPanel, adminServerPanel, adminDangerPanel,
-    adminBugsPanel, adminModerationPanel, adminInvitesPanel, adminSettingsPanel,
+    adminBugsPanel, adminModerationPanel, adminInvitesPanel, adminSettingsPanel, adminBubblesPanel,
 } from './admin.js';
 import {
     settingsFrame, profilePanel, voicePanel, appearancePanel, invitesPanel, inviteMessage, sessionsPanel,
@@ -143,7 +143,9 @@ export function createSettings({
     openWhatsNew = () => {},
     // Lifting a server mute goes over the socket, because that path is the one that also
     // un-pauses the person's microphone and tells the room. The room owns the socket.
-    liftServerMute = () => false }) {
+    liftServerMute = () => false,
+    // Bubble photos are behind the session; the room's cache turns an id into a URL.
+    bubblePhotos = null }) {
     const store = settingsFor(server.id);
     let me = signedInAs;
     let current = 'profile';
@@ -192,6 +194,7 @@ export function createSettings({
         // null while loading, false when the server is too old to have the route.
         soundPeople: null, birthday: null, restrictions: null,
         invites: null, settingsGroups: null, modules: null, audit: null,
+        bubbles: null, bubblesUnavailable: '', bubbleBusy: false,
         error: null, notice: null,
         editingId: null,       // user or channel row in rename mode
         armedKey: null,        // 'action:id' of the one destructive button awaiting its second click
@@ -264,6 +267,14 @@ export function createSettings({
                 });
             case 'admin-moderation':
                 return adminModerationPanel({ restrictions: adm.restrictions, error: adm.error, notice: adm.notice });
+            case 'admin-bubbles':
+                return adminBubblesPanel({
+                    bubbles: Array.isArray(adm.bubbles)
+                        ? adm.bubbles.map((b) => ({ ...b, photoUrl: bubblePhotos?.urlFor(b.id) ?? null }))
+                        : adm.bubbles,
+                    unavailable: adm.bubblesUnavailable,
+                    error: adm.error, notice: adm.notice, armedKey: adm.armedKey, busy: adm.bubbleBusy,
+                });
             case 'admin-invites':
                 return adminInvitesPanel({
                     invites: adm.invites, error: adm.error, notice: adm.notice, armedKey: adm.armedKey,
@@ -410,6 +421,15 @@ export function createSettings({
                 adm.soundDefaults = library.defaults;
                 adm.soundPeople = people === false ? false : people.users;
                 adm.birthday = birthday;
+            } else if (current === 'admin-bubbles') {
+                // Asked of the server rather than decided from the features list alone: the
+                // module can be switched on in Server settings during this very session.
+                const reply = await orTooOld(api.request('GET', '/api/bubbles'));
+                adm.bubbles = reply === false ? false : reply.bubbles;
+                adm.bubblesUnavailable = reply === false
+                    ? 'This server has no bubbles. Switch the Bubbles module on in Server settings — or, '
+                        + 'if it is not listed there, the server is older than 0.1.37 and needs updating.'
+                    : '';
             } else if (current === 'admin-moderation') {
                 const reply = await orTooOld(api.request('GET', '/api/admin/moderation'));
                 adm.restrictions = reply === false ? false : reply.restrictions;
@@ -661,6 +681,33 @@ export function createSettings({
             adminAct(() => api.request('PUT', `/api/sounds/users/${encodeURIComponent(row.dataset.personSounds)}`, {
                 body: { joinSound: pick('join'), leaveSound: pick('leave') },
             }), 'Saved.');
+        }));
+
+        // -- bubbles --
+        $('[data-bubble-create]', el)?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const form = e.currentTarget;
+            const name = form.name.value.trim();
+            const file = form.photo.files?.[0];
+            if (!name || !file) return;
+            adm.bubbleBusy = true; renderPanel();
+            adminAct(() => api.uploadBubble(file, name),
+                `"${name}" is made. It floats whenever a rotation picks it — making one starts a new rotation.`)
+                .finally(() => { adm.bubbleBusy = false; renderPanel(); });
+        });
+        $$('[data-bubble-clear]', el).forEach((b) => b.addEventListener('click', () => {
+            const id = b.dataset.bubbleClear;
+            armThen(`bubble-clear:${id}`, () => adminAct(
+                () => api.request('POST', `/api/bubbles/${encodeURIComponent(id)}/clear`),
+                'Its conversation is cleared, for everyone.',
+            ));
+        }));
+        $$('[data-bubble-delete]', el).forEach((b) => b.addEventListener('click', () => {
+            const id = b.dataset.bubbleDelete;
+            armThen(`bubble-delete:${id}`, () => adminAct(
+                () => api.request('DELETE', `/api/bubbles/${encodeURIComponent(id)}`),
+                'Deleted, with everything said in it.',
+            ));
         }));
 
         // -- moderation --
@@ -1558,6 +1605,13 @@ export function createSettings({
         refreshProfile() {
             if (!modal.isOpen) return;
             if (current !== 'profile') return;
+            if (!$('#settingsPanel', modal.element)) return;
+            renderPanel();
+        },
+
+        /** A bubble's photo arrived; the admin list is the one place here that shows them. */
+        refreshBubbles() {
+            if (!modal.isOpen || current !== 'admin-bubbles') return;
             if (!$('#settingsPanel', modal.element)) return;
             renderPanel();
         },

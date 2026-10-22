@@ -7,6 +7,22 @@ All notable changes to Weave Client are recorded here. The format follows
 The newest entries are what the app shows under **What's new** after it updates, so they are
 written for the people using it rather than for the people building it.
 
+## [0.1.71] - 2026-10-22
+
+### Added
+- **Bubbles.** The web app's bubbles are back: small round photos that drift slowly over the
+  chat, a few at a time. Click one to open a little conversation of its own — it belongs to
+  the bubble, not to any channel, so it is the same wherever you are standing. Pick one up and
+  drop it somewhere else if it is in the way. One with something new in it glows until you
+  open it. The bubbles button at the top of the room lists every bubble, floating or not.
+  They stop drifting with **Still background**, and stay where they are.
+
+- **Bubbles, for administrators.** Settings → Admin → Bubbles makes one from a photo and a
+  name, clears a bubble's conversation, or deletes it. How many float at once and how often
+  they change are in Admin → Server settings.
+
+  Bubbles need server 0.1.37 or later, with the Bubbles module switched on (it is by default).
+
 ## [0.1.70] - 2026-10-22
 
 ### Added

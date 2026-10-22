@@ -724,7 +724,9 @@
     position: relative;
     z-index: var(--z-base);
 }
-.room > .timeline { grid-row: 3; }
+/* Column as well as row: the bubbles layer shares this cell, and an item pinned only by row
+   is auto-placed into a new column when another already holds the spot. */
+.room > .timeline { grid-row: 3; grid-column: 1; }
 .room > .voice-notice-slot { grid-row: 4; }
 .room > .composer-wrap { grid-row: 5; }
 
@@ -1950,6 +1952,168 @@
 @keyframes modal-in {
     from { opacity: 0; transform: translateY(8px) scale(0.985); }
     to { opacity: 1; transform: none; }
+}
+
+/* ── Bubbles ──────────────────────────────────────────────────────────────── */
+
+/* The same grid cell as the timeline, laid over it. The layer itself takes no clicks, so
+   the conversation underneath stays selectable and scrollable; only the bubbles do. */
+.room > .bubbles-layer {
+    /* Column too, not only row: with the row alone, auto-placement sees the timeline already
+       in that cell and opens an implicit second column of zero width for the layer. */
+    grid-row: 3;
+    grid-column: 1;
+    position: relative;
+    z-index: var(--z-raised);
+    pointer-events: none;
+    overflow: hidden;
+}
+.bubble {
+    position: absolute;
+    left: 0;
+    top: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    pointer-events: auto;
+    cursor: grab;
+    touch-action: none;
+    transition: opacity var(--dur) var(--ease), scale var(--dur) var(--ease);
+}
+.bubble:active { cursor: grabbing; }
+.bubble-enter, .bubble-exit { opacity: 0; scale: 0.6; }
+.bubble-face {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    background: var(--surface-3) center / cover no-repeat;
+    border: 2px solid rgb(var(--accent-rgb) / 0.55);
+    box-shadow: var(--shadow-2);
+}
+.bubble:focus-visible .bubble-face { outline: 2px solid var(--accent-hi); outline-offset: 2px; }
+/* Something new inside: it breathes, as the web app's did. */
+.bubble.is-unread .bubble-face { animation: bubble-throb 1.8s ease-in-out infinite; border-color: var(--accent-hi); }
+@keyframes bubble-throb {
+    0%, 100% { box-shadow: var(--shadow-2), 0 0 0 0 rgb(var(--accent-rgb) / 0.55); }
+    50% { box-shadow: var(--shadow-2), 0 0 0 7px rgb(var(--accent-rgb) / 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .bubble.is-unread .bubble-face { animation: none; box-shadow: var(--shadow-2), 0 0 0 3px rgb(var(--accent-rgb) / 0.6); }
+}
+/* The name folds out beside the bubble on hover, towards whichever side has room. */
+.bubble-label {
+    position: absolute;
+    top: 50%;
+    left: calc(100% + var(--s-2));
+    translate: 0 -50%;
+    padding: 2px var(--s-2);
+    border-radius: var(--r-pill);
+    background: var(--surface-4);
+    color: var(--ink);
+    font-size: var(--t-xs);
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--dur-fast) var(--ease);
+}
+.bubble.label-left .bubble-label { left: auto; right: calc(100% + var(--s-2)); }
+.bubble:hover .bubble-label, .bubble:focus-visible .bubble-label { opacity: 1; }
+
+/* A bubble's photo anywhere else: the popup head, the list, the admin table. */
+.bubble-thumb {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--surface-3) center / cover no-repeat;
+    color: var(--ink-faint);
+}
+.bubble-thumb.lg { width: 40px; height: 40px; }
+.bubble-thumb svg { width: 60%; height: 60%; }
+
+/* The conversation a bubble opens into. Fixed, on the menu layer, out of every overflow. */
+.bubble-popup {
+    position: fixed;
+    z-index: var(--z-menu);
+    width: min(340px, 92vw);
+    max-height: min(460px, 70vh);
+    display: flex;
+    flex-direction: column;
+    background: var(--surface-4);
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    box-shadow: var(--shadow-2);
+    animation: pop-in var(--dur-fast) var(--ease);
+}
+.bubble-popup-head {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    padding: var(--s-2) var(--s-2) var(--s-2) var(--s-3);
+    border-bottom: 1px solid var(--line-soft);
+}
+.bubble-popup-name { flex: 1; min-width: 0; font-weight: 640; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bubble-popup-body { flex: 1; min-height: 80px; overflow-y: auto; padding: var(--s-2) var(--s-3); }
+.bubble-popup-body .msg { grid-template-columns: 28px minmax(0, 1fr); margin: 0; padding: var(--s-1) 0; }
+.bubble-popup-body .msg .avatar { width: 28px; height: 28px; font-size: var(--t-xs); }
+.bubble-popup-body .attach-image { max-width: 100%; }
+.bubble-popup-note { margin: var(--s-3) 0; color: var(--ink-faint); font-size: var(--t-sm); text-align: center; }
+.bubble-popup-note.error { color: var(--bad-text); }
+.bubble-popup-composer {
+    display: flex;
+    align-items: center;
+    gap: var(--s-1);
+    padding: var(--s-2);
+    border-top: 1px solid var(--line-soft);
+}
+.bubble-popup-input {
+    flex: 1;
+    min-width: 0;
+    background: var(--bg-void);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+    color: var(--ink);
+    padding: var(--s-1) var(--s-3);
+    font-size: var(--t-sm);
+}
+
+/* Every bubble, floating or not. */
+.all-bubbles { width: min(460px, 92vw); max-height: 80vh; overflow-y: auto; padding: var(--s-6); }
+.all-bubbles-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-1); }
+.all-bubbles-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    width: 100%;
+    padding: var(--s-2) var(--s-3);
+    border-radius: var(--r-2);
+    text-align: left;
+}
+.all-bubbles-row:hover, .all-bubbles-row:focus-visible { background: var(--accent-tint-hi); }
+.all-bubbles-name { flex: 1; min-width: 0; font-weight: 600; }
+.all-bubbles-tag, .all-bubbles-unread {
+    padding: 2px var(--s-2);
+    border-radius: var(--r-pill);
+    font-size: var(--t-xs);
+}
+.all-bubbles-tag { background: var(--surface-3); color: var(--ink-faint); }
+.all-bubbles-unread { background: var(--accent-tint); color: var(--accent-hi); }
+
+/* The way into the list, in the room head: a dot when one of them has news. */
+.bubbles-btn { position: relative; }
+.bubbles-btn.has-unread::after {
+    content: "";
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent-hi);
 }
 
 /* ── What's new ───────────────────────────────────────────────────────────── */

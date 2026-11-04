@@ -63,6 +63,25 @@ export function attachmentClaim(stored, name) {
     };
 }
 
+/** What a person is told when their device would not hand the picture over. */
+export const UNREADABLE = 'That picture could not be read from this device. Choose it again, or save it to the phone first.';
+
+/**
+ * The picture's bytes, read into memory, ready to upload.
+ *
+ * Read here rather than left for fetch() to stream from the file. On Android a chosen
+ * picture is a content:// stream that the WebView re-reads while it uploads, and some
+ * providers (the photo picker, a gallery or cloud app) report the file as changed, or
+ * withdraw the app's access, part way through. The upload then dies as a bare network
+ * error, which reaches the page as nothing more than "Failed to fetch". Read up front, a
+ * picture that cannot be read fails at once and says so, and one that can no longer
+ * depends on the picker at all.
+ */
+export async function readPicture(file) {
+    if (typeof file?.arrayBuffer !== 'function') return file;
+    return new Blob([await file.arrayBuffer()], { type: file.type || 'application/octet-stream' });
+}
+
 const EMPTY = Object.freeze({ status: 'empty' });
 
 /**
@@ -81,9 +100,13 @@ const EMPTY = Object.freeze({ status: 'empty' });
  * @param {object}   deps
  * @param {(file: File) => Promise<object>} deps.upload   the uploads endpoint (api.uploadFile)
  * @param {(state: object) => void} [deps.onChange]       repaint whatever shows the chip
+ * @param {(err: Error, about: object) => void} [deps.onError]  for the log: which step failed
+ *   ('read' or 'upload'), and the picture's type and size — never its name, which can be personal
  * @param {(fn: Function, ms: number) => unknown} [deps.schedule]  injected for tests
  */
-export function createAttachmentSlot({ upload, onChange = () => {}, schedule = (fn, ms) => setTimeout(fn, ms) }) {
+export function createAttachmentSlot({
+    upload, onChange = () => {}, onError = () => {}, schedule = (fn, ms) => setTimeout(fn, ms),
+}) {
     let state = EMPTY;
     let claim = null;
     let input = null;
@@ -97,17 +120,32 @@ export function createAttachmentSlot({ upload, onChange = () => {}, schedule = (
         if (!file) return;
         const mine = ++generation;
         const name = String(file.name || 'image').slice(0, 80);
+        const about = { type: file.type || 'unknown', size: file.size ?? null };
         claim = null;
         set({ status: 'uploading', name });
+
+        const fail = (stage, err, message) => {
+            onError(err, { ...about, stage });
+            if (mine !== generation) return;
+            set({ status: 'error', name, error: message });
+            schedule(() => { if (mine === generation && state.status === 'error') set(EMPTY); }, ATTACH_ERROR_MS);
+        };
+
+        let bytes;
         try {
-            const stored = await upload(file);
+            bytes = await readPicture(file);
+        } catch (err) {
+            fail('read', err, UNREADABLE);
+            return;
+        }
+        if (mine !== generation) return;
+        try {
+            const stored = await upload(bytes);
             if (mine !== generation) return;
             claim = attachmentClaim(stored, name);
             set({ status: 'ready', name, url: stored.url });
         } catch (err) {
-            if (mine !== generation) return;
-            set({ status: 'error', name, error: err?.message || 'The picture could not be uploaded.' });
-            schedule(() => { if (mine === generation && state.status === 'error') set(EMPTY); }, ATTACH_ERROR_MS);
+            fail('upload', err, err?.message || 'The picture could not be uploaded.');
         }
     }
 

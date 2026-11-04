@@ -7,6 +7,15 @@ All notable changes to Weave Client are recorded here. The format follows
 The newest entries are what the app shows under **What's new** after it updates, so they are
 written for the people using it rather than for the people building it.
 
+## [0.1.74] - 2026-11-04
+
+### Fixed
+- **Pictures from a phone's gallery.** Choosing a picture on Android could fail with
+  "Failed to fetch", depending on which app the picture came from. The picture is now read
+  in full the moment you choose it and sent from memory, so the upload no longer depends on
+  the photo app. If something does still go wrong, the picture's chip says what happened
+  instead of "Failed to fetch".
+
 ## [0.1.73] - 2026-11-04
 
 ### Fixed

@@ -71,13 +71,24 @@ export function createApi({ origin, token = null }) {
          * the blob as-is and lets the server's magic-byte sniffing decide what it is.
          */
         async uploadFile(file) {
-            const res = await fetch(origin + '/api/uploads', {
-                method: 'POST',
-                headers: { ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) },
-                body: file,
-                credentials: 'omit',
-                signal: AbortSignal.timeout(60_000),
-            });
+            let res;
+            try {
+                res = await fetch(origin + '/api/uploads', {
+                    method: 'POST',
+                    headers: { ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) },
+                    body: file,
+                    credentials: 'omit',
+                    signal: AbortSignal.timeout(60_000),
+                });
+            } catch (err) {
+                // fetch() rejecting means no reply arrived at all, and the browser's own
+                // wording for that, "Failed to fetch", told the person nothing they could act on.
+                if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
+                    throw new ApiError('The picture took too long to upload.', { status: 0 });
+                }
+                throw new ApiError('The picture could not reach the server. Check the connection and try again.',
+                    { status: 0, detail: err?.message });
+            }
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new ApiError(data.message ?? data.error ?? 'Upload failed.', { status: res.status });
             return data;

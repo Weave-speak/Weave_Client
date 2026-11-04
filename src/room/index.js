@@ -1832,6 +1832,8 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
     const composerPicture = createAttachmentSlot({
         upload: (file) => api.uploadFile(file),
         onChange: () => paintAttachStrip(),
+        onError: (err, about) => platform.log('warn',
+            `picture ${about.stage} failed: ${err?.name}: ${err?.detail ?? err?.message} (${about.type}, ${about.size} bytes)`),
     });
 
     // Messages whose video embed the user has started; the view renders those as the

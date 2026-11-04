@@ -12,6 +12,7 @@ import { bubblePopupView, allBubblesView } from './views/bubbles.js';
 import { toTimelineItems } from './messages.js';
 import { html } from '../ui/dom.js';
 import { createAttachmentSlot, outgoingMessage } from './compose.js';
+import { platform } from '../platform/index.js';
 import {
     emptyBubbles, loadBubbles, applyBubbleFrame, setBubbleMessages, markBubbleRead, anyUnread,
 } from './bubble-store.js';
@@ -51,6 +52,8 @@ export function createBubbles({
     const picture = createAttachmentSlot({
         upload: (file) => api.uploadFile(file),
         onChange: () => render(),
+        onError: (err, about) => platform.log('warn',
+            `bubble picture ${about.stage} failed: ${err?.name}: ${err?.detail ?? err?.message} (${about.type}, ${about.size} bytes)`),
     });
 
     const photoOf = (id) => photos.urlFor(id);

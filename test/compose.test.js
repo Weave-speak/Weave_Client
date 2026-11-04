@@ -12,7 +12,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-    outgoingMessage, pastedImage, attachmentClaim, createAttachmentSlot, ATTACHABLE, ATTACH_ERROR_MS,
+    outgoingMessage, pastedImage, attachmentClaim, createAttachmentSlot, readPicture,
+    ATTACHABLE, ATTACH_ERROR_MS, UNREADABLE,
 } from '../src/room/compose.js';
 import { attachChipView } from '../src/room/views/attach.js';
 import { bubblePopupView } from '../src/room/views/bubbles.js';
@@ -75,6 +76,9 @@ function manualUpload() {
     return { calls, upload };
 }
 
+/** Lets every step already under way (reading the picture, starting its upload) run. */
+const settle = () => new Promise((resolve) => { setImmediate(resolve); });
+
 test('a picture uploads at once, waits as a chip, and goes with the next message', async () => {
     const { calls, upload } = manualUpload();
     const seen = [];
@@ -85,8 +89,9 @@ test('a picture uploads at once, waits as a chip, and goes with the next message
     assert.equal(slot.ready, false);
     assert.equal(slot.take(), null, 'nothing to hand over while it is still uploading');
 
+    await settle();
     calls[0].resolve(UPLOAD);
-    await Promise.resolve();
+    await settle();
     assert.deepEqual(slot.state, { status: 'ready', name: 'shot.png', url: UPLOAD.url });
     assert.equal(slot.ready, true);
 
@@ -102,9 +107,9 @@ test('a failed upload says why, then clears itself', async () => {
     const slot = createAttachmentSlot({ upload, schedule: (fn, ms) => timers.push({ fn, ms }) });
 
     slot.attach({ name: 'huge.jpg' });
+    await settle();
     calls[0].reject(new Error('That file is too large.'));
-    await Promise.resolve();
-    await Promise.resolve();
+    await settle();
     assert.deepEqual(slot.state, { status: 'error', name: 'huge.jpg', error: 'That file is too large.' });
     assert.equal(timers[0].ms, ATTACH_ERROR_MS);
     timers[0].fn();
@@ -116,22 +121,35 @@ test('a picture removed or replaced mid-upload never comes back', async () => {
     const slot = createAttachmentSlot({ upload });
 
     slot.attach({ name: 'first.png' });
+    await settle();                       // its upload is under way
     slot.clear();
     calls[0].resolve(UPLOAD);
-    await Promise.resolve();
+    await settle();
     assert.equal(slot.state.status, 'empty', 'removed while uploading stays removed');
 
     slot.attach({ name: 'second.png' });
+    await settle();
     slot.attach({ name: 'third.png' });
+    await settle();
     calls[1].resolve({ ...UPLOAD, url: '/second' });
-    await Promise.resolve();
+    await settle();
     assert.equal(slot.state.name, 'third.png', 'the older upload finishing late does not win');
     calls[2].resolve({ ...UPLOAD, url: '/third' });
-    await Promise.resolve();
+    await settle();
     assert.deepEqual(slot.state, { status: 'ready', name: 'third.png', url: '/third' });
 });
 
-test('a paste is taken only when it is a picture', () => {
+test('a picture removed before its upload begins is never sent at all', async () => {
+    const { calls, upload } = manualUpload();
+    const slot = createAttachmentSlot({ upload });
+    slot.attach({ name: 'oops.png' });
+    slot.clear();
+    await settle();
+    assert.equal(calls.length, 0);
+    assert.equal(slot.state.status, 'empty');
+});
+
+test('a paste is taken only when it is a picture', async () => {
     const { calls, upload } = manualUpload();
     const slot = createAttachmentSlot({ upload });
     let prevented = 0;
@@ -141,7 +159,62 @@ test('a paste is taken only when it is a picture', () => {
     assert.equal(prevented, 0, 'typing is left alone');
     assert.equal(slot.paste(event(clipboard({ files: [{ type: 'image/png', name: 'image.png' }] }))), true);
     assert.equal(prevented, 1);
+    await settle();
     assert.equal(calls.length, 1, 'and it uploads');
+});
+
+// ── Reading the picture before sending it ────────────────────────────────────
+
+/** A picked file, as a phone hands one over: bytes behind an asynchronous read. */
+const pickedFile = (bytes, { name = 'IMG_0412.jpg', type = 'image/jpeg', fail = null } = {}) => ({
+    name, type, size: bytes.length,
+    arrayBuffer: async () => { if (fail) throw fail; return new Uint8Array(bytes).buffer; },
+});
+
+test('the picture is read into memory first, and those bytes are what is uploaded', async () => {
+    // On Android the WebView re-reads a picked file while it uploads, and some providers
+    // report it changed or withdraw access part way: the upload then dies as "Failed to
+    // fetch". Uploading bytes already in memory does not depend on the picker at all.
+    const { calls, upload } = manualUpload();
+    const slot = createAttachmentSlot({ upload });
+    const file = pickedFile([0xff, 0xd8, 0xff, 0xe0]);
+
+    slot.attach(file);
+    await settle();
+    const sent = calls[0].file;
+    assert.notEqual(sent, file, 'not the picker\'s file');
+    assert.ok(sent instanceof Blob);
+    assert.equal(sent.type, 'image/jpeg');
+    assert.deepEqual([...new Uint8Array(await sent.arrayBuffer())], [0xff, 0xd8, 0xff, 0xe0]);
+    assert.equal(slot.state.name, 'IMG_0412.jpg', 'the chip still names the picture');
+
+    assert.equal(await readPicture({ name: 'plain' }).then((f) => f.name), 'plain',
+        'something with no bytes to read is passed through as it is');
+});
+
+test('a picture the device will not hand over says so, and nothing is uploaded', async () => {
+    const { calls, upload } = manualUpload();
+    const logged = [];
+    const slot = createAttachmentSlot({ upload, onError: (err, about) => logged.push({ err, about }) });
+
+    slot.attach(pickedFile([1, 2, 3], { fail: new DOMException('denied', 'NotReadableError') }));
+    await settle();
+    assert.equal(calls.length, 0);
+    assert.deepEqual(slot.state, { status: 'error', name: 'IMG_0412.jpg', error: UNREADABLE });
+    assert.deepEqual(logged.map((l) => l.about), [{ type: 'image/jpeg', size: 3, stage: 'read' }],
+        'the log says which step failed — and never the picture\'s name, which can be personal');
+});
+
+test('a failed upload is logged as the upload, not the read', async () => {
+    const { calls, upload } = manualUpload();
+    const logged = [];
+    const slot = createAttachmentSlot({ upload, onError: (err, about) => logged.push(about.stage) });
+    slot.attach(pickedFile([1]));
+    await settle();
+    calls[0].reject(new Error('The picture could not reach the server.'));
+    await settle();
+    assert.deepEqual(logged, ['upload']);
+    assert.equal(slot.state.error, 'The picture could not reach the server.');
 });
 
 test('the chip shows each state, escaped, and nothing when empty', () => {

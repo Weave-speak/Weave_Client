@@ -1691,6 +1691,7 @@
     border: 1px solid;
     font-size: var(--t-base);
 }
+.voice-notice .btn { margin-left: var(--s-2); }
 .voice-notice.quiet {
     background: var(--surface-2);
     border-color: var(--line);

@@ -256,6 +256,16 @@ export function voiceNotice(status = {}) {
     }
 
     switch (status.state) {
+        case 'elsewhere':
+            // One account is heard on one device. This one stays signed in, reading, and
+            // offers to bring voice back rather than leaving the person to find out why
+            // nobody can hear them.
+            return {
+                show: true,
+                tone: 'quiet',
+                text: 'You are in voice on another device.',
+                action: { label: 'Join voice here', attr: 'data-voice-here' },
+            };
         case 'no-mic':
             return { show: true, tone: 'warn', text: status.message ?? 'Microphone unavailable.' };
         case 'unavailable':
@@ -292,7 +302,11 @@ export function voiceNotice(status = {}) {
 export const voiceNoticeMarkup = (status) => {
     const view = voiceNotice(status);
     if (!view.show) return '';
-    return `<div class="voice-notice ${esc(view.tone)}">${esc(view.text)}</div>`;
+    // The attribute is one of ours, never data, so it is written as it is.
+    const action = view.action
+        ? ` <button type="button" class="btn small" ${view.action.attr}>${esc(view.action.label)}</button>`
+        : '';
+    return `<div class="voice-notice ${esc(view.tone)}">${esc(view.text)}${action}</div>`;
 };
 
 /** The glyph for what kind of place this is. Painted at mount and on every view change. */

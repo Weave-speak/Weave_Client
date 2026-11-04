@@ -410,6 +410,8 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         },
     });
     let voiceState = { state: 'idle' };
+    // The last real room voice stood in, for taking voice back after another device had it.
+    let lastVoiceRoomId = null;
 
     const canPrivate = features.includes('channels.private');
     const browser = createRoomBrowser({
@@ -1459,6 +1461,15 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         }
 
         if (msg.type === 'left') {
+            // Stood down because this account took voice on another device (see the
+            // server's standDownOthers). The server has closed this connection's media
+            // already; this side lets go of its own, and a reconnect must not walk back
+            // into the room and take voice back by accident.
+            if (msg.reason === 'elsewhere') {
+                voice.stop();
+                link.noteChannel(null);
+                voiceState = { state: 'elsewhere', roomId: state.raw.currentChannelId ?? lastVoiceRoomId };
+            }
             state.apply(msg);
             return;
         }
@@ -1538,6 +1549,18 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         if (msg.type === 'moved' || msg.type === 'joined') {
             msgNoise.reset();
             spotlight = null;
+            // Where voice was, so "Join voice here" can go back there. A call room is not
+            // somewhere to return to once the call has ended.
+            if (msg.channel?.id && state.raw.channels.some((c) => c.id === msg.channel.id)) {
+                lastVoiceRoomId = msg.channel.id;
+            }
+            if (msg.channel) {
+                if (voiceState.state === 'elsewhere') voiceState = { state: 'idle' };
+            } else if (msg.type === 'joined' && msg.elsewhere) {
+                // A reconnect that deferred to the device that has voice now.
+                link.noteChannel(null);
+                voiceState = { state: 'elsewhere', roomId: lastVoiceRoomId };
+            }
             // Stepping INTO a call room remembers the room being left, so ending the
             // call puts you back where you stood rather than nowhere.
             if (msg.channel?.system && !state.raw.channels.some((c) => c.id === msg.channel.id)) {
@@ -2358,6 +2381,21 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
                     forceMuted: Boolean(me.forceMuted),
                 }));
                 link.send('setMute', { muted: deafened || me.muted, deafened });
+                return;
+            }
+
+            if (event.target.closest('[data-voice-here]')) {
+                // Taking voice back to this device: an ordinary move into the room, which is
+                // the person choosing where to be heard, so the server stands the other
+                // device down in turn.
+                const target = state.raw.channels.some((c) => c.id === voiceState.roomId)
+                    ? voiceState.roomId
+                    : state.raw.channels.find((c) => c.isDefault && c.kind !== 'text')?.id
+                        ?? state.raw.channels.find((c) => c.kind !== 'text')?.id;
+                if (target) {
+                    link.noteChannel(target);
+                    link.send('move', { channelId: target });
+                }
                 return;
             }
 

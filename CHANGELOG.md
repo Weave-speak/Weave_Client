@@ -7,6 +7,19 @@ All notable changes to Weave Client are recorded here. The format follows
 The newest entries are what the app shows under **What's new** after it updates, so they are
 written for the people using it rather than for the people building it.
 
+## [0.1.73] - 2026-11-04
+
+### Fixed
+- **Signed in on two devices, the right mute.** Your own mute button now shows the mute of
+  the device you are holding. Before, muting on your phone made the computer's button show
+  muted too while its microphone stayed live, and unmuting on the computer then did
+  nothing.
+
+- **Switching devices.** When you open Weave on another device and it takes your voice, this
+  one says so — "You are in voice on another device" — and offers **Join voice here** to take
+  it back. You stay signed in on both, so the chat still works everywhere. This needs Weave
+  Server 0.1.39 or later; on an older server, both devices stay in voice as before.
+
 ## [0.1.72] - 2026-11-04
 
 ### Fixed

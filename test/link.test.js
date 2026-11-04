@@ -277,6 +277,20 @@ test('a reconnect returns to the room you were in', () => {
     assert.equal(h.sock.lastOf('join').channelId, 'the-library');
 });
 
+test('a reconnect says it is one, and a first join does not', () => {
+    // One account is heard on one device. Opening the app takes voice to it; an automatic
+    // reconnect must not take voice from whichever device has it now.
+    const h = harness();
+    h.goLive({ id: 'great-hall', name: 'The Great Hall' });
+    assert.equal(h.sock.lastOf('join').reconnect, undefined, 'opening the app is a choice');
+
+    h.sock.dropByServer();
+    h.clock.advance(60_000);
+    h.sock.accept();
+    h.sock.deliver({ type: 'hello', cid: 'C2' });
+    assert.equal(h.sock.lastOf('join').reconnect, true);
+});
+
 test('a rate limit is not retried immediately, because that is what caused it', () => {
     const h = harness({ random: () => 1 });
     h.goLive();

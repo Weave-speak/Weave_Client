@@ -60,3 +60,12 @@ test('a hostile message cannot become markup', () => {
     assert.ok(!/\son\w+\s*=\s*["']/.test(markup));
     assert.ok(markup.includes('&lt;img'));
 });
+
+test('voice on another device says so, and offers it back here', () => {
+    const view = voiceNotice({ state: 'elsewhere', roomId: 'c-hall' });
+    assert.equal(view.show, true);
+    assert.match(view.text, /another device/);
+    const markup = voiceNoticeMarkup({ state: 'elsewhere' });
+    assert.match(markup, /<button type="button" class="btn small" data-voice-here>Join voice here<\/button>/);
+    assert.doesNotMatch(voiceNoticeMarkup({ state: 'no-mic' }), /<button/, 'only the notice that has a step to offer');
+});

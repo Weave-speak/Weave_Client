@@ -403,6 +403,13 @@ export function createLink({
                     // from the arrival preference, and on reconnects from wherever the
                     // session actually stood when the line dropped.
                     ...(nowhere ? { autoJoin: false } : {}),
+                    // An automatic reconnect, not somebody opening the app. One account is
+                    // heard on one device, and a reconnect must not take voice from the
+                    // device that has it now — after an outage every device comes back in
+                    // whatever order its network allows. A server that has the rule puts
+                    // this connection nowhere and says so (joined.elsewhere); an older one
+                    // ignores the field.
+                    ...(joinedBefore ? { reconnect: true } : {}),
                 });
                 return;
 

@@ -591,3 +591,47 @@ test('a joined frame carries a standing mute, so a reconnect is not a way out of
     assert.equal(state.toShell().me.forceMuted, true);
     assert.equal(state.toShell().me.forceMutedUntil, 7_000);
 });
+
+// ── One account on two devices ───────────────────────────────────────────────
+
+test("your self bar shows THIS device's mute, not another device's", () => {
+    // Muted on the phone, then unmuting on the laptop did nothing: the laptop's bar read
+    // the phone's mute off the merged row, so it showed muted with its microphone live,
+    // and its "unmute" asked for what was already true.
+    const state = fresh();
+    state.apply({
+        type: 'joined',
+        channel: channels[0],
+        self: peer('cid-laptop', 'u-me', 'ghostbyte'),
+        peers: [peer('cid-phone', 'u-me', 'ghostbyte', { channelId: null, muted: true })],
+    });
+    assert.equal(state.toShell().me.muted, false, 'the laptop is not muted');
+
+    state.apply({ type: 'peer_mute_changed', cid: 'cid-phone', muted: true, deafened: false });
+    assert.equal(state.toShell().me.muted, false, "the phone's mute stays the phone's");
+
+    state.apply({ type: 'muteChanged', muted: true, deafened: false });
+    assert.equal(state.toShell().me.muted, true, 'and this device\'s own mute shows at once');
+});
+
+test('somebody on two devices is shown as the one they are heard on', () => {
+    const state = fresh();
+    state.apply({
+        type: 'joined',
+        channel: channels[0],
+        self: peer('cid-me', 'u-me', 'ghostbyte'),
+        // The phone joined last but stands nowhere: the laptop is the one in the room.
+        peers: [
+            peer('cid-k-laptop', 'u-kes', 'kestrel', { muted: false }),
+            peer('cid-k-phone', 'u-kes', 'kestrel', { channelId: null, muted: true }),
+        ],
+    });
+    const kes = state.people.find((p) => p.username === 'kestrel');
+    assert.equal(kes.roomId, 'c-hall', 'in the room, as the laptop is');
+    assert.equal(kes.muted, false, "with the laptop's mute, which is what the room hears");
+    assert.deepEqual(kes.cids.sort(), ['cid-k-laptop', 'cid-k-phone'], 'both still counted for levels');
+
+    // Standing nowhere on both, the most recent connection is the one shown.
+    state.apply({ type: 'peer_joined', peer: peer('cid-k-laptop', 'u-kes', 'kestrel', { channelId: null }) });
+    assert.equal(state.people.find((p) => p.username === 'kestrel').cid, 'cid-k-phone');
+});

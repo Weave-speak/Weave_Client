@@ -63,10 +63,13 @@ export function createRoomState({ me = null, server = {} } = {}) {
     function people() {
         const byUser = new Map();
         for (const peer of state.peers.values()) {
-            // If somebody is connected twice, the room they are visibly in is the one their
-            // most recent connection is in. Picking arbitrarily makes them flicker.
+            // If somebody is connected twice, their row shows the connection they are heard
+            // on: the one standing in a room (a server with the one-voice rule allows only
+            // one), and among several standing nowhere, the most recent. Taking the most
+            // recent regardless showed a phone left standing nowhere as the person —
+            // out of the room, and with the phone's mute — while the laptop was audibly in it.
             const entry = byUser.get(peer.userId) ?? { peer: null, cids: [] };
-            entry.peer = peer;
+            if (!entry.peer || peer.channelId !== null || entry.peer.channelId === null) entry.peer = peer;
             entry.cids.push(peer.cid);
             byUser.set(peer.userId, entry);
         }
@@ -612,7 +615,13 @@ export function createRoomState({ me = null, server = {} } = {}) {
                     activity: channel?.kind === 'afk'
                         ? (/away|afk/i.test(channel.name) ? null : 'Away')
                         : 'Weaving',
-                    muted: Boolean(self?.muted),
+                    // THIS connection's own mute, as deafen already was. Read off the roster
+                    // row it was another device's whenever the account was signed in twice:
+                    // mute on the phone and the laptop's self bar showed muted with its
+                    // microphone live, so its unmute sent "unmute" for a connection that was
+                    // never muted and nothing changed — and starting voice applied the
+                    // phone's mute to the laptop's microphone.
+                    muted: Boolean(state.peers.get(state.selfCid)?.muted),
                     deafened: Boolean(state.peers.get(state.selfCid)?.deafened),
                     // Read off the roster row rather than off this connection's peer, so
                     // it is right on a machine that was signed in when the mute landed and

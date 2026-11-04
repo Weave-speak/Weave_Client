@@ -17,7 +17,7 @@
 // what that server sends back. Treating the window as a general-purpose browser would mean
 // a hostile server could navigate it somewhere and inherit whatever the page can do.
 
-import { app, BrowserWindow, ipcMain, shell, safeStorage, nativeTheme, protocol, net, desktopCapturer, powerMonitor, globalShortcut } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, safeStorage, nativeTheme, protocol, net, desktopCapturer, powerMonitor, globalShortcut, Menu, clipboard } from 'electron';
 import crypto from 'node:crypto';
 // Both of these are CommonJS. A named import from CJS depends on Node's module lexer
 // spotting the export in compiled output, which is not something to rely on in a process
@@ -32,6 +32,8 @@ import { readFile, writeFile, mkdir, open, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { join, dirname, normalize, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { contextMenuItems } from './context-menu.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
@@ -160,6 +162,19 @@ function createWindow() {
             event.preventDefault();
             log.warn({ url }, 'Blocked in-window navigation');
         }
+    });
+
+    // Right-click. Electron has no context menu of its own, so without this there was no
+    // Paste in a message box and no way to copy a picture out of the chat. What each
+    // right-click offers is decided in context-menu.js; the two actions that are not plain
+    // roles are carried out here, against the spot that was clicked.
+    win.webContents.on('context-menu', (_event, params) => {
+        const items = contextMenuItems(params).map(({ action, ...item }) => {
+            if (action === 'copy-image') return { ...item, click: () => win?.webContents.copyImageAt(params.x, params.y) };
+            if (action === 'copy-link') return { ...item, click: () => clipboard.writeText(params.linkURL) };
+            return item;
+        });
+        if (items.length) Menu.buildFromTemplate(items).popup({ window: win });
     });
 
     // A link to somewhere else opens in the user's own browser, with their extensions,

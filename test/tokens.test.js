@@ -148,3 +148,10 @@ test('narrow windows drop whole columns instead of squeezing them', () => {
         assert.match(body, /grid-template-columns/, 'and reclaims its column from the grid');
     }
 });
+
+test("a bubble's card rebuilt for new content does not make a second entrance", () => {
+    const css = code(read('shell.css'));
+    const at = css.indexOf('\n.bubble-popup.settled {');
+    assert.ok(at >= 0, 'the settled rule exists');
+    assert.match(css.slice(at, css.indexOf('}', at)), /animation: none;/);
+});

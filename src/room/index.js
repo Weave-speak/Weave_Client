@@ -34,6 +34,8 @@ import { createRoomBrowser } from '../rooms/browser.js';
 import { createPeerActions } from './peer-actions.js';
 import { createAvatarCache, withAvatars } from './avatars.js';
 import { createBubbles } from './bubbles.js';
+import { createAttachmentSlot, outgoingMessage } from './compose.js';
+import { attachChipView } from './views/attach.js';
 import { createModal } from '../ui/modal.js';
 import { platform } from '../platform/index.js';
 import { userHue } from '../ui/hue.js';
@@ -1801,10 +1803,13 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
 
     /* ── rich content: uploads, previews, images, embeds ─────────────────── */
 
-    // The image waiting on the composer, if any: uploaded already, sent with the next
-    // message, shown as a chip the user can discard.
-    let pendingAttachment = null;
-    let attachInput = null;
+    // The picture waiting on the composer, if any: uploaded already, sent with the next
+    // message, shown as a chip the user can discard. The same slot a bubble's card uses
+    // (compose.js), so choosing, pasting and sending a picture work alike in both.
+    const composerPicture = createAttachmentSlot({
+        upload: (file) => api.uploadFile(file),
+        onChange: () => paintAttachStrip(),
+    });
 
     // Messages whose video embed the user has started; the view renders those as the
     // live iframe rather than the card.
@@ -1905,53 +1910,8 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         }
     }
 
-    /** What the server's uploads module will take. Anything else would only come back refused. */
-    const ATTACHABLE = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
-
-    /** Upload one file and park it on the composer. The picker and a paste both end here. */
-    async function attachFile(file) {
-        if (!file) return;
-        paintAttachStrip({ uploading: true, name: file.name || 'image' });
-        try {
-            const stored = await api.uploadFile(file);
-            pendingAttachment = { ...stored, name: (file.name || 'image').slice(0, 80) };
-            paintAttachStrip();
-        } catch (err) {
-            pendingAttachment = null;
-            paintAttachStrip({ error: err?.message ?? 'Upload failed.' });
-        }
-    }
-
-    async function pickAttachment() {
-        if (!attachInput) {
-            attachInput = document.createElement('input');
-            attachInput.type = 'file';
-            attachInput.accept = ATTACHABLE.join(',');
-            attachInput.addEventListener('change', () => {
-                const file = attachInput.files?.[0];
-                attachInput.value = '';
-                attachFile(file);
-            });
-        }
-        attachInput.click();
-    }
-
-    /**
-     * A screenshot pasted straight into the composer, as the web app took it. Only when
-     * the clipboard holds an image the server accepts and no text: pasting a paragraph that
-     * happens to arrive with a rendered picture of itself must still paste the paragraph.
-     */
-    function onComposerPaste(event) {
-        const data = event.clipboardData;
-        if (!data || data.getData('text/plain')) return;
-        const file = [...(data.files ?? [])].find((f) => ATTACHABLE.includes(f.type));
-        if (!file) return;
-        event.preventDefault();
-        attachFile(file);
-    }
-
     /** The little chip above the composer: what is about to ride the next message. */
-    function paintAttachStrip(stateOverride = null) {
+    function paintAttachStrip() {
         let strip = $('#attachStrip', mount);
         if (!strip) {
             const wrap = $('.composer-wrap', mount) ?? $('.composer', mount)?.parentElement;
@@ -1960,22 +1920,7 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             strip.id = 'attachStrip';
             wrap.prepend(strip);
         }
-        if (stateOverride?.uploading) {
-            strip.innerHTML = safe`<span class="attach-chip">Uploading ${stateOverride.name}…</span>`;
-            return;
-        }
-        if (stateOverride?.error) {
-            strip.innerHTML = safe`<span class="attach-chip error">${stateOverride.error}</span>`;
-            setTimeout(() => { if (!pendingAttachment) strip.innerHTML = ''; }, 4000);
-            return;
-        }
-        if (!pendingAttachment) { strip.innerHTML = ''; return; }
-        strip.innerHTML = safe`
-          <span class="attach-chip">
-            <img data-auth-src="${pendingAttachment.url}" alt="">
-            <span>${pendingAttachment.name}</span>
-            <button type="button" data-attach-clear aria-label="Remove attachment">✕</button>
-          </span>`;
+        strip.innerHTML = attachChipView(composerPicture.state);
         hydrateAuthImages();
     }
 
@@ -2167,10 +2112,10 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
                 return;
             }
 
-            if (event.target.closest('[data-attach]')) { pickAttachment(); return; }
-            if (event.target.closest('[data-attach-clear]')) {
-                pendingAttachment = null;
-                paintAttachStrip();
+            if (event.target.closest('[data-attach]')) { composerPicture.pick(); return; }
+            // A bubble's card has a chip of its own, and handles it itself.
+            if (event.target.closest('[data-attach-clear]') && !event.target.closest('.bubble-popup')) {
+                composerPicture.clear();
                 return;
             }
             const emojiBtn = event.target.closest('[data-emoji]');
@@ -2600,7 +2545,7 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         });
         $('.app-shell', mount)?.toggleAttribute('data-can-move', canMovePeople);
 
-        input?.addEventListener('paste', onComposerPaste);
+        input?.addEventListener('paste', (event) => composerPicture.paste(event));
         input?.addEventListener('input', updateMention);
         input?.addEventListener('click', updateMention);
         input?.addEventListener('keyup', (event) => {
@@ -3125,11 +3070,8 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
     function sendMessage() {
         const input = $('#composerInput', mount);
         const body = input?.value.trim() ?? '';
-        const attachment = pendingAttachment
-            ? { id: pendingAttachment.id, mime: pendingAttachment.mime,
-                bytes: pendingAttachment.bytes, name: pendingAttachment.name }
-            : null;
-        if (!body && !attachment) return;
+        if (!body && !composerPicture.ready) return;
+        const attachment = composerPicture.take();
         mention = null;
         paintMentionPop();
         msgNoise.record(Date.now());
@@ -3138,8 +3080,6 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         // that on a slow link people retype, or send twice.
         input.value = '';
         input.style.height = 'auto';
-        pendingAttachment = null;
-        paintAttachStrip();
         closeEmojiPop();
         commandOffer = null;
         paintCommandPop();
@@ -3156,17 +3096,13 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             return;
         }
 
-        if (state.raw.activeDmId) {
-            link.send('dm:send', { threadId: state.raw.activeDmId, body, ...(attachment ? { attachment } : {}) });
-        } else if (!(state.raw.viewChannelId ?? state.raw.currentChannelId)) {
-            return;   // standing nowhere, viewing nothing: there is no "here" to message
-        } else {
-            link.send('text-chat:send', {
-                channelId: state.raw.viewChannelId ?? state.raw.currentChannelId,
-                body,
-                ...(attachment ? { attachment } : {}),
-            });
-        }
+        // Standing nowhere and viewing nothing leaves no "here" to message: outgoingMessage
+        // answers null and nothing is sent.
+        const to = state.raw.activeDmId
+            ? { kind: 'dm', id: state.raw.activeDmId }
+            : { kind: 'channel', id: state.raw.viewChannelId ?? state.raw.currentChannelId ?? null };
+        const out = outgoingMessage(to, { body, attachment });
+        if (out) link.send(out.type, out.payload);
     }
 
     /* ── lifecycle ───────────────────────────────────────────────────────── */

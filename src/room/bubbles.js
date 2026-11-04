@@ -11,6 +11,7 @@ import { BubblesField } from '../ui/bubbles.js';
 import { bubblePopupView, allBubblesView } from './views/bubbles.js';
 import { toTimelineItems } from './messages.js';
 import { html } from '../ui/dom.js';
+import { createAttachmentSlot, outgoingMessage } from './compose.js';
 import {
     emptyBubbles, loadBubbles, applyBubbleFrame, setBubbleMessages, markBubbleRead, anyUnread,
 } from './bubble-store.js';
@@ -43,7 +44,14 @@ export function createBubbles({
     // The open conversation: which bubble, its element, and anything to say about it.
     let popup = null;
     let listModal = null;
-    let attachInput = null;
+    // The picture waiting on the card. The channel composer's own slot (compose.js), so a
+    // bubble takes a pasted or chosen picture exactly as a channel does: uploaded at once,
+    // shown as a chip, sent with the message. It used to send the moment it was chosen, and
+    // a paste did nothing at all.
+    const picture = createAttachmentSlot({
+        upload: (file) => api.uploadFile(file),
+        onChange: () => render(),
+    });
 
     const photoOf = (id) => photos.urlFor(id);
 
@@ -91,19 +99,38 @@ export function createBubbles({
         if (!popup) return;
         const b = state.bubbles.get(popup.id);
         if (!b) { close(); return; }
-        const typed = keepInput ? popup.el?.querySelector('[data-bubble-input]')?.value ?? '' : '';
+        const old = popup.el?.querySelector('[data-bubble-input]');
+        const typed = keepInput ? old?.value ?? '' : '';
+        // The card is rebuilt whole, for a message arriving or a picture finishing its upload,
+        // and a rebuilt input has neither focus nor caret. Somebody mid-sentence keeps both.
+        const caret = keepInput && old && document.activeElement === old
+            ? [old.selectionStart, old.selectionEnd] : null;
         const markup = bubblePopupView({
             bubble: b,
             photoUrl: photoOf(b.id),
             items: itemsFor(b.id),
             loading: !state.messages.has(b.id),
             error: popup.error,
+            attachment: picture.state,
         });
         const next = html(markup);
-        if (popup.el) popup.el.replaceWith(next); else mount.append(next);
+        // Only the first appearance animates. A rebuild is a fresh element, and without this
+        // every message arriving made the card pop in again, and the phone's sheet slide up.
+        if (popup.el) {
+            next.classList.add('settled');
+            popup.el.replaceWith(next);
+        } else {
+            mount.append(next);
+        }
         popup.el = next;
         const input = next.querySelector('[data-bubble-input]');
-        if (input) input.value = typed;
+        if (input) {
+            input.value = typed;
+            if (caret) {
+                input.focus({ preventScroll: true });
+                input.setSelectionRange(...caret);
+            }
+        }
         wirePopup(next);
         place();
         hydrate();
@@ -135,41 +162,22 @@ export function createBubbles({
 
     function wirePopup(el) {
         el.querySelector('[data-bubble-close]')?.addEventListener('click', close);
+        const input = el.querySelector('[data-bubble-input]');
         el.querySelector('[data-bubble-composer]')?.addEventListener('submit', (event) => {
             event.preventDefault();
-            const input = el.querySelector('[data-bubble-input]');
+            if (!popup) return;
             const body = input?.value.trim() ?? '';
-            if (!body || !popup) return;
-            link.send('bubbles:send', { bubbleId: popup.id, body });
-            input.value = '';
+            if (!body && !picture.ready) return;
+            // Emptied before the picture is taken: taking it rebuilds the card, and the
+            // rebuild keeps whatever the input held at that moment.
+            if (input) input.value = '';
+            // The same builder the channel composer sends through.
+            const out = outgoingMessage({ kind: 'bubble', id: popup.id }, { body, attachment: picture.take() });
+            if (out) link.send(out.type, out.payload);
         });
-        el.querySelector('[data-bubble-attach]')?.addEventListener('click', pickPicture);
-    }
-
-    /** A picture, sent the moment it is chosen — as the web app's bubbles did. */
-    function pickPicture() {
-        if (!attachInput) {
-            attachInput = document.createElement('input');
-            attachInput.type = 'file';
-            attachInput.accept = 'image/png,image/jpeg,image/gif,image/webp';
-            attachInput.addEventListener('change', async () => {
-                const file = attachInput.files?.[0];
-                attachInput.value = '';
-                if (!file || !popup) return;
-                const bubbleId = popup.id;
-                try {
-                    const stored = await api.uploadFile(file);
-                    link.send('bubbles:send', {
-                        bubbleId,
-                        body: '',
-                        attachment: { id: stored.id, mime: stored.mime, bytes: stored.bytes, name: file.name.slice(0, 80) },
-                    });
-                } catch (err) {
-                    if (popup?.id === bubbleId) { popup.error = err?.message ?? 'The picture could not be sent.'; render(); }
-                }
-            });
-        }
-        attachInput.click();
+        input?.addEventListener('paste', (event) => picture.paste(event));
+        el.querySelector('[data-bubble-attach]')?.addEventListener('click', () => picture.pick());
+        el.querySelector('[data-attach-clear]')?.addEventListener('click', () => picture.clear());
     }
 
     /** Opening reads it: the newest message is acknowledged, on every device. */
@@ -205,6 +213,9 @@ export function createBubbles({
     function close() {
         popup?.el?.remove();
         popup = null;
+        // A picture chosen for a card that has gone with it. Cleared after the card, so the
+        // repaint this asks for finds nothing to draw.
+        picture.clear();
     }
 
     // Escape and a click elsewhere both close it, as every other popover here does.
@@ -214,7 +225,10 @@ export function createBubbles({
         if (popup.el.contains(event.target) || event.target.closest?.('.bubble, .lightbox')) return;
         close();
     };
+    // A card placed for the window's old size can end up off the edge of a resized one.
+    const onResize = () => place();
     window.addEventListener('keydown', onKey);
+    window.addEventListener('resize', onResize);
     mount.addEventListener('pointerdown', onPointer);
 
     /* ── the list of every bubble ───────────────────────────────────────── */
@@ -305,6 +319,7 @@ export function createBubbles({
             close();
             closeList();
             window.removeEventListener('keydown', onKey);
+            window.removeEventListener('resize', onResize);
             mount.removeEventListener('pointerdown', onPointer);
             field?.destroy();
             field = null;

@@ -7,6 +7,20 @@ All notable changes to Weave Client are recorded here. The format follows
 The newest entries are what the app shows under **What's new** after it updates, so they are
 written for the people using it rather than for the people building it.
 
+## [0.1.72] - 2026-11-04
+
+### Fixed
+- **Pictures in bubbles.** A bubble now takes a picture the way a channel does: paste a
+  screenshot straight into it, or choose one, and it waits as a chip until you send it, with
+  words or without. Before, pasting a picture into a bubble did nothing, and a chosen one was
+  sent the moment it was picked. A message arriving while you type in a bubble no longer
+  takes the cursor out of the box.
+
+- **Right-click in the desktop app.** It now offers Cut, Copy and Paste in a message box,
+  Copy on selected text and links, and Copy image on a picture in the chat — so a picture can
+  be copied out of a conversation and pasted into a bubble or a channel. Before, a right-click
+  did nothing at all.
+
 ## [0.1.71] - 2026-10-22
 
 ### Added

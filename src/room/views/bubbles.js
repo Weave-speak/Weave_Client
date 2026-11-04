@@ -7,6 +7,7 @@
 import { esc } from '../../ui/dom.js';
 import { icons } from '../icons.js';
 import { messageList } from './timeline.js';
+import { attachChipView } from './attach.js';
 
 /** A bubble's face: the photo once it has arrived, a coloured circle until then. */
 const face = (photoUrl, size = '') => (photoUrl
@@ -15,9 +16,12 @@ const face = (photoUrl, size = '') => (photoUrl
 
 /**
  * One bubble's conversation, as a small floating card. The message rows are the timeline's
- * own, so a bubble reads exactly like a channel does.
+ * own, so a bubble reads exactly like a channel does, and the picture waiting to be sent is
+ * the channel composer's own chip.
  */
-export function bubblePopupView({ bubble = {}, photoUrl = null, items = [], loading = false, error = '' } = {}) {
+export function bubblePopupView({
+    bubble = {}, photoUrl = null, items = [], loading = false, error = '', attachment = null,
+} = {}) {
     return `
     <div class="bubble-popup" role="dialog" aria-label="${esc(bubble.name ?? 'Bubble')}" data-bubble-popup="${esc(bubble.id ?? '')}">
       <header class="bubble-popup-head">
@@ -31,6 +35,7 @@ export function bubblePopupView({ bubble = {}, photoUrl = null, items = [], load
             : '<p class="bubble-popup-note">Nothing said here yet. Start it off.</p>'}
       </div>
       ${error ? `<p class="bubble-popup-note error">${esc(error)}</p>` : ''}
+      <div class="bubble-popup-attach">${attachChipView(attachment)}</div>
       <form class="bubble-popup-composer" data-bubble-composer>
         <button type="button" class="composer-btn" data-bubble-attach aria-label="Send a picture">${icons.image}</button>
         <input class="bubble-popup-input" data-bubble-input maxlength="2000" autocomplete="off"

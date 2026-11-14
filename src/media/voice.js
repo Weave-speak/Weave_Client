@@ -32,7 +32,7 @@
 
 import { Device } from 'mediasoup-client';
 import { createMicChain, sensitivityToDb, gainToLinear, levelToDb } from './chain.js';
-import { micCodecOptions, screenAudioCodecOptions } from './audio-options.js';
+import { micCodecOptions, screenAudioCodecOptions, openMicrophoneStream } from './audio-options.js';
 import { listenOutput, duckState, MAX_LISTEN_GAIN, DUCK_FACTOR } from './listen-policy.js';
 import { bestFitFramerate } from './presets.js';
 import { createStallDetector, readFlow } from './stall.js';
@@ -103,6 +103,8 @@ export function createVoice({
      * when the room was first entered.
      */
     getAudioConstraints = () => ({ echoCancellation: true, noiseSuppression: true, autoGainControl: true }),
+    // Told when the microphone chosen in Settings was missing and the default stood in.
+    onMicFallback = () => {},
     /** The chain settings — gain 0–200, gate on/off, sensitivity 0–100 — read fresh. */
     getChainSettings = () => ({ micGain: 100, noiseGate: false, gateSensitivity: 64 }),
     /** Gate telemetry for the settings meter: { level, db, open } ~15×/s while live. */
@@ -590,10 +592,8 @@ export function createVoice({
     }
 
     async function openMicrophone() {
-        micStream = await navigator.mediaDevices.getUserMedia({
-            audio: getAudioConstraints(),
-            video: false,
-        });
+        // The chosen device when it is there, the default when it is not: see audio-options.js.
+        micStream = await openMicrophoneStream(getAudioConstraints(), { onFallback: onMicFallback });
 
         const [track] = micStream.getAudioTracks();
 

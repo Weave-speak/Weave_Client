@@ -385,6 +385,13 @@ export function createSettings({
         const active = getActiveMicrophone?.() ?? null;
         if (!active) { line.textContent = 'Not capturing — join a voice room.'; return; }
         line.textContent = `Capturing: ${active.label ?? 'unnamed device'}`;
+        // The chosen device is not connected, and the default stood in for it: say so, rather
+        // than call the stand-in a mismatch with a choice that is not on the screen.
+        if ($('#micDevice option[data-missing]', modal.element)?.selected) {
+            line.classList.add('is-warn');
+            line.textContent += ' — the chosen microphone is not connected, so the default is in use';
+            return;
+        }
         const wanted = prefs.micDevice;
         const mismatch = wanted && active.deviceId && wanted !== active.deviceId && active.deviceId !== 'default';
         line.classList.toggle('is-warn', Boolean(mismatch));

@@ -445,6 +445,29 @@ export function micTestView({ phase = 'idle', result = null, error = null, hasRe
     </div>`;
 }
 
+/**
+ * The input picker's options. Two that are not devices:
+ *
+ * "System default" is the way back. Without it, choosing a headset once was permanent: every
+ * option named a device, so there was nothing to choose that meant "whatever is plugged in".
+ *
+ * A chosen device that is not connected is listed as such, and selected. Leaving it out would
+ * show the first device as chosen when it is not, and picking that device would then change
+ * nothing, because a select only reports a change away from what it displays. The room falls
+ * back to the default in the meantime (openMicrophoneStream), and returns to the choice when
+ * the device does.
+ */
+function micDeviceOptions(chosen = '', devices = []) {
+    const option = (value, label, selected, extra = '') =>
+        `<option value="${esc(value)}"${extra}${selected ? ' selected' : ''}>${esc(label)}</option>`;
+    const missing = chosen && !devices.some((d) => d.deviceId === chosen);
+    return [
+        option('', 'System default', !chosen),
+        ...(missing ? [option(chosen, 'Chosen microphone (not connected)', true, ' data-missing')] : []),
+        ...devices.map((d) => option(d.deviceId, d.label || 'Microphone', d.deviceId === chosen)),
+    ].join('');
+}
+
 export function voicePanel({
     prefs = {}, devices = [], cameras = [], outputs = [], features = [],
     hotkeysGlobal = false, pushToMuteStatus = null, micTest = {},
@@ -460,8 +483,7 @@ export function voicePanel({
         ? `<div class="field">
              <label for="micDevice">Input device</label>
              <select id="micDevice" data-setting="micDevice">
-               ${devices.map((d) => `<option value="${esc(d.deviceId)}"
-                    ${d.deviceId === prefs.micDevice ? 'selected' : ''}>${esc(d.label || 'Microphone')}</option>`).join('')}
+               ${micDeviceOptions(prefs.micDevice, devices)}
              </select>
              <span class="setting-note" id="activeMic">Checking which device is live…</span>
            </div>`

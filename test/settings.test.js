@@ -375,6 +375,27 @@ test('microphone selection explains its absence rather than showing an empty lis
     assert.match(some, /Headset/);
 });
 
+test('the microphone picker has a way back to the default, and owns up to a missing choice', () => {
+    const devices = [{ deviceId: 'phone', label: 'Phone microphone' }];
+    const picker = (markup) => markup.slice(markup.indexOf('<select id="micDevice"'), markup.indexOf('</select>', markup.indexOf('<select id="micDevice"')));
+    const selected = (markup) => [...picker(markup).matchAll(/<option value="([^"]*)"[^>]*\bselected\b/g)].map((m) => m[1]);
+
+    // Nothing chosen: the default is what is chosen, and it is on the list.
+    const fresh = voicePanel({ prefs: { micDevice: '' }, devices });
+    assert.match(fresh, /<option value=""[^>]*>System default</);
+    assert.deepEqual(selected(fresh), ['']);
+
+    // Chosen and connected.
+    assert.deepEqual(selected(voicePanel({ prefs: { micDevice: 'phone' }, devices })), ['phone']);
+
+    // Chosen and gone — Bluetooth headphones switched off. It stays the choice and says so,
+    // instead of the picker showing the phone's microphone as chosen when it is not.
+    const gone = voicePanel({ prefs: { micDevice: 'bt-headphones' }, devices });
+    assert.deepEqual(selected(gone), ['bt-headphones']);
+    assert.match(gone, /value="bt-headphones" data-missing selected>Chosen microphone \(not connected\)</);
+    assert.match(gone, /Phone microphone/);
+});
+
 test('appearance offers the still background and says what else it follows', () => {
     const markup = appearancePanel({ prefs: { staticBackground: true } });
     assert.match(markup, /data-setting="staticBackground"\s*checked/);

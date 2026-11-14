@@ -26,7 +26,7 @@ import { screenShareSettings, normaliseShareChoice, cameraConstraints, cameraEnc
 import { settingsFor } from '../server/store.js';
 import { classify } from '../media/stream-report.js';
 import { captureProcessAudio } from '../media/process-audio.js';
-import { micConstraints } from '../media/audio-options.js';
+import { micConstraints, micFailureText } from '../media/audio-options.js';
 import { playCue } from '../media/cue.js';
 import { createSettings, readPrefs } from '../settings/index.js';
 import { openWhatsNew } from '../updates/whats-new.js';
@@ -83,6 +83,9 @@ const PAINT_FLOOR_MS = 100;
  * share which really ended does not leave somebody staring at a frozen frame wondering.
  */
 const FULLSCREEN_HOLD_MS = 2000;
+
+/** How long the room says the default microphone stood in for a missing chosen one. */
+const MIC_FALLBACK_NOTICE_MS = 12_000;
 
 // The sounds the app ships with, bundled beside it; under weave:// and vite alike these
 // resolve to real URLs, and vite emits the files with the build. The stream chimes are the
@@ -375,6 +378,14 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         },
         // See audio-options.js for why it is these three flags and nothing else.
         getAudioConstraints: () => micConstraints(prefs),
+        onMicFallback(err) {
+            platform.log('warn', `chosen microphone not available (${err?.name}); using the default`);
+            // Said for a while, then out of the way: the default microphone is working, and
+            // the choice is kept for when that device comes back.
+            micFallbackUntil = Date.now() + MIC_FALLBACK_NOTICE_MS;
+            paint();
+            setTimeout(() => paint(), MIC_FALLBACK_NOTICE_MS + 50);
+        },
         getChainSettings: () => ({
             micGain: Number(prefs.micGain ?? 100),
             noiseGate: Boolean(prefs.noiseGate),
@@ -410,6 +421,8 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         },
     });
     let voiceState = { state: 'idle' };
+    // Until when to say that the chosen microphone was missing and the default stood in.
+    let micFallbackUntil = 0;
     // The last real room voice stood in, for taking voice back after another device had it.
     let lastVoiceRoomId = null;
 
@@ -642,6 +655,7 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             // the room says something true about your microphone, and two would compete.
             forceMuted: Boolean(view.me.forceMuted),
             forceMutedUntil: view.me.forceMutedUntil,
+            micFallback: Date.now() < micFallbackUntil,
         }));
         paintConnection({ ...view.connection, ...mediaStats });
         paintRoomHead(view.room);
@@ -1743,12 +1757,8 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         } catch (err) {
             // A refused microphone is a completely normal thing for someone to do, and the
             // room still works without one — you can read, type and listen.
-            voiceState = {
-                state: 'no-mic',
-                message: err?.name === 'NotAllowedError'
-                    ? 'Microphone blocked. You can still hear everyone.'
-                    : `Microphone unavailable: ${err.message}`,
-            };
+            platform.log('warn', `microphone did not open: ${err?.name}: ${err?.message || '(no message)'}`);
+            voiceState = { state: 'no-mic', message: micFailureText(err) };
             paint();
         }
     }

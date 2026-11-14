@@ -81,6 +81,62 @@ export function micConstraints(prefs = {}) {
     };
 }
 
+/** The errors a microphone request gives when the device asked for is not there. */
+export const isMissingDevice = (err) => err?.name === 'OverconstrainedError' || err?.name === 'NotFoundError';
+
+/**
+ * Open the microphone: the one chosen in Settings when it is there, the default when not.
+ *
+ * micConstraints() asks for the chosen device EXACTLY, so that a choice is honoured rather
+ * than quietly ignored. But a chosen device can go away — Bluetooth headphones switched
+ * off, a USB headset unplugged — and an exact request for something missing fails outright,
+ * with an OverconstrainedError whose message is empty. Voice then never started, the room
+ * said only "Microphone unavailable:", and because Settings can only list devices once the
+ * microphone has opened, the picker that could undo the choice never appeared either. So a
+ * missing device falls back to the default one. The choice is kept, and is used again as
+ * soon as that device returns.
+ *
+ * @param {object} constraints   micConstraints(prefs)
+ * @param {object} [deps]
+ * @param {(c: object) => Promise<MediaStream>} [deps.getUserMedia]  injected for tests
+ * @param {(err: Error) => void} [deps.onFallback]  told when the default stood in
+ */
+export async function openMicrophoneStream(constraints, {
+    getUserMedia = (c) => navigator.mediaDevices.getUserMedia(c),
+    onFallback = () => {},
+} = {}) {
+    try {
+        return await getUserMedia({ audio: constraints, video: false });
+    } catch (err) {
+        if (!constraints?.deviceId || !isMissingDevice(err)) throw err;
+        const { deviceId: _missing, ...rest } = constraints;
+        onFallback(err);
+        return getUserMedia({ audio: rest, video: false });
+    }
+}
+
+/**
+ * What to say when the microphone will not open. Never a bare colon: a browser's error for
+ * a missing device has no message at all, and "Microphone unavailable:" told nobody anything.
+ */
+export function micFailureText(err) {
+    switch (err?.name) {
+        case 'NotAllowedError':
+        case 'SecurityError':
+            return 'Microphone blocked. You can still hear everyone.';
+        case 'NotFoundError':
+        case 'OverconstrainedError':
+            return 'No microphone was found. You can still hear everyone.';
+        case 'NotReadableError':
+        case 'AbortError':
+            return 'The microphone would not start. Something else may be using it. You can still hear everyone.';
+        default:
+            return err?.message
+                ? `Microphone unavailable: ${err.message}`
+                : `Microphone unavailable (${err?.name || 'unknown error'}). You can still hear everyone.`;
+    }
+}
+
 /**
  * A screen's system audio: music, games and film, not speech.
  *

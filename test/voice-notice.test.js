@@ -69,3 +69,15 @@ test('voice on another device says so, and offers it back here', () => {
     assert.match(markup, /<button type="button" class="btn small" data-voice-here>Join voice here<\/button>/);
     assert.doesNotMatch(voiceNoticeMarkup({ state: 'no-mic' }), /<button/, 'only the notice that has a step to offer');
 });
+
+test('a missing chosen microphone says the default stood in, and gives way to anything worse', () => {
+    // Carried as a flag: voice reports itself live as soon as the stand-in produces, so a
+    // state of its own would be overwritten before anyone read it.
+    const live = voiceNotice({ state: 'live', micFallback: true });
+    assert.equal(live.show, true);
+    assert.equal(live.tone, 'quiet');
+    assert.match(live.text, /default one is in use/);
+    assert.equal(voiceNotice({ state: 'live', micFallback: false }).show, false);
+    assert.match(voiceNotice({ state: 'recovering', attempt: 1, of: 5, micFallback: true }).text, /Reconnecting/);
+    assert.match(voiceNotice({ state: 'live', micFallback: true, forceMuted: true }).text, /administrator/);
+});

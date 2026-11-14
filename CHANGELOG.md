@@ -7,6 +7,18 @@ All notable changes to Weave Client are recorded here. The format follows
 The newest entries are what the app shows under **What's new** after it updates, so they are
 written for the people using it rather than for the people building it.
 
+## [0.1.75] - 2026-11-12
+
+### Fixed
+- **A chosen microphone that has been unplugged.** If you had picked a headset or USB
+  microphone in Settings and it was later unplugged or switched off, voice would not start:
+  the room said only "Microphone unavailable:". Weave now uses your computer's default
+  microphone while the chosen one is away, says so for a moment, and goes back to the chosen
+  one when it is connected again.
+- **A way back to the default microphone.** Settings now offers "System default" as an input
+  device, and shows a chosen microphone that is not connected as exactly that.
+- A microphone that will not open now says why, instead of a message that stops at a colon.
+
 ## [0.1.74] - 2026-11-04
 
 ### Fixed

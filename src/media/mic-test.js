@@ -19,7 +19,7 @@
 // without a microphone; the runner is the only part that needs one.
 
 import { createMicChain, sensitivityToDb, gainToLinear, levelToDb } from './chain.js';
-import { micConstraints } from './audio-options.js';
+import { micConstraints, openMicrophoneStream } from './audio-options.js';
 
 const GATE_WORKLET_URL = new URL('./gate-worklet.js', import.meta.url);
 
@@ -203,7 +203,8 @@ async function playTone(context, outputId, ms) {
  */
 export async function runMicTest({ prefs = {}, onPhase = () => {}, signal } = {}) {
     const asked = micConstraints(prefs);
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: asked });
+    // The same fallback the room uses, so the test hears what the room would.
+    const stream = await openMicrophoneStream(asked);
     const [track] = stream.getAudioTracks();
     const context = new AudioContext();
     let chain = null;

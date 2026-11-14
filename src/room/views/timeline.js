@@ -295,7 +295,16 @@ export function voiceNotice(status = {}) {
                 text: 'Click anywhere to let sound play.',
             };
         default:
-            return { show: false };
+            // A flag rather than a state of its own: voice reports itself live the moment
+            // the stand-in microphone produces, and a state would be overwritten unseen.
+            // It is said only while there is nothing more pressing to say.
+            return status.micFallback
+                ? {
+                    show: true,
+                    tone: 'quiet',
+                    text: 'The microphone chosen in Settings is not connected, so the default one is in use.',
+                }
+                : { show: false };
     }
 }
 

@@ -36,7 +36,7 @@ import { micCodecOptions, screenAudioCodecOptions, openMicrophoneStream } from '
 import { listenOutput, duckState, MAX_LISTEN_GAIN, DUCK_FACTOR } from './listen-policy.js';
 import { bestFitFramerate } from './presets.js';
 import { createStallDetector, readFlow } from './stall.js';
-import { buildStreamSample, pickTransport } from './stream-report.js';
+import { pickTransport } from './ice-path.js';
 import { watchesToRestore } from './watch-resume.js';
 import { consumeVerdict, reconcileConsumers, wantedStreams, createFlights } from './consume-plan.js';
 
@@ -130,14 +130,6 @@ export function createVoice({
      */
     getAudioOutput = () => '',
     /**
-     * Viewer-side RENDER stats for one on-stage video: fullscreen, displayed size, and the
-     * element's getVideoPlaybackQuality(). Supplied by the room, because the <video> elements
-     * live in the stage's DOM, not here — this layer owns packets, the stage owns pixels.
-     * Null when there is nothing to read. See media/stream-report.js for why render matters
-     * separately from decode: fullscreen upscaling is a GPU cost getStats cannot see.
-     */
-    getRenderStats = () => null,
-    /**
      * Capture only the shared program's audio for a screen share, returning { track, stop } or
      * null. The room provides this because it knows which source was picked; voice uses the
      * returned track as screen-audio instead of the system-loopback track, which is what keeps
@@ -212,14 +204,6 @@ export function createVoice({
 
     // Previous outbound-rtp byte counter, for the bitrate the connection pill shows.
     let statSample = null;
-
-    // Rolling stream-quality samples per `${role}:${cid}:${slot}`, so a Good/Bad click can
-    // carry the ~30s LEAD-UP to a freeze rather than only the calm after it. Each sample is
-    // a picked-and-diffed getStats snapshot; media/stream-report.js is where the fields mean
-    // something and where blame gets assigned. Kept small on purpose — a buffer that grew for
-    // an hour would be a memory leak wearing a diagnostic's coat.
-    const streamRings = new Map();
-    const STREAM_RING = 30;
 
     const consumers = new Map();   // consumerId -> { consumer, cid, slot, audio, meter }
     // Local listening preferences per `${cid}:${slot}` — YOUR ears, nobody else's
@@ -1371,72 +1355,6 @@ export function createVoice({
         }
     }
 
-    /* ── stream quality sampling ─────────────────────────────────────────── */
-
-    /**
-     * Capture ONE stream-quality sample for an active screen or camera and ring-buffer it.
-     *
-     * The room drives this on a short timer while a video tile is on the stage, so that a
-     * Good/Bad click has a running history to attach rather than a single lonely reading. A
-     * streamer samples its own producer (the send side); a viewer samples the consumer it is
-     * watching (the receive side). The candidate-pair comes from the TRANSPORT stats, which
-     * the producer/consumer stats do not include — RTT and the UDP-vs-TCP path live there.
-     *
-     * Best effort throughout: an engine that refuses getStats, or a producer that closed
-     * between the timer firing and here, yields no sample rather than an error. A diagnostic
-     * that could throw into the call it measures would be worse than no diagnostic at all.
-     */
-    async function sampleStream({ role, cid, slot }) {
-        const key = `${role}:${cid}:${slot}`;
-        const ring = streamRings.get(key) ?? { samples: [], lastPicked: null, lastRender: null };
-        streamRings.set(key, ring);
-        try {
-            let sample = null;
-            if (role === 'streamer') {
-                const producer = slot === SLOTS.SCREEN ? screenProducer
-                    : slot === SLOTS.WEBCAM ? camProducer : null;
-                if (!producer || producer.closed || !sendTransport || sendTransport.closed) return null;
-                const [sendStats, transportStats] = await Promise.all([
-                    producer.getStats().catch(() => null),
-                    sendTransport.getStats().catch(() => null),
-                ]);
-                sample = buildStreamSample({ role, sendStats, transportStats, prev: ring.lastPicked });
-                ring.lastPicked = sample.send;
-            } else {
-                const entry = [...consumers.values()].find(
-                    (e) => e.kind === 'video' && e.cid === cid && e.slot === slot && !e.consumer?.closed);
-                if (!entry || !recvTransport || recvTransport.closed) return null;
-                const [recvStats, transportStats] = await Promise.all([
-                    entry.consumer.getStats().catch(() => null),
-                    recvTransport.getStats().catch(() => null),
-                ]);
-                const renderStats = getRenderStats(cid, slot);
-                sample = buildStreamSample({
-                    role, recvStats, transportStats, renderStats,
-                    prev: ring.lastPicked, prevRender: ring.lastRender,
-                });
-                ring.lastPicked = sample.recv;
-                ring.lastRender = sample.render;
-            }
-            if (!sample) return null;
-            sample.t = Date.now();
-            ring.samples.push(sample);
-            if (ring.samples.length > STREAM_RING) ring.samples.shift();
-            return sample;
-        } catch {
-            return null;
-        }
-    }
-
-    /** The ring for one stream, oldest first, plus its newest sample — for a Good/Bad report. */
-    function streamReport({ role, cid, slot }) {
-        const ring = streamRings.get(`${role}:${cid}:${slot}`);
-        return {
-            samples: ring ? ring.samples.slice() : [],
-            latest: ring?.samples.at(-1) ?? null,
-        };
-    }
-
     /* ── listening ───────────────────────────────────────────────────────── */
 
     /**
@@ -1585,10 +1503,6 @@ export function createVoice({
         sendTransport = null;
         recvTransport = null;
         invalidateTransports();
-        // The lead-up buffer describes a path that no longer exists: its byte and frame
-        // counters reset with the new transport, so diffing across the gap would invent a
-        // spike. A recovery starts the history fresh, which is the honest thing to show.
-        streamRings.clear();
     }
 
     /** Turn one watch on or off, remembering the choice by account as well as by cid. */
@@ -1985,15 +1899,6 @@ export function createVoice({
             audioOutputId = deviceId || '';
             applyAudioOutput();
         },
-
-        /**
-         * Capture one stream-quality sample for an on-stage video, for the Good/Bad reporter.
-         * Called on a short timer by the room while a video tile is up; see sampleStream.
-         */
-        sampleStream,
-
-        /** The rolling samples for one stream, oldest first, for a Good/Bad report. */
-        streamReport,
 
         /** Handle a signalling frame. Returns true if it was ours. */
         handle(msg) {

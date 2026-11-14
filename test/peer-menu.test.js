@@ -11,6 +11,10 @@ import { peerMenu, peerMenuHasContent, MUTE_DURATIONS } from '../src/room/views/
 
 const kestrel = { username: 'kestrel', displayName: 'Kestrel', forceMuted: false };
 
+/** What the room passes for an administrator, and for a tester. */
+const ADMIN = { canServerMute: true, canKick: true, timedOnly: false };
+const TESTER = { canServerMute: true, canKick: false, timedOnly: true };
+
 test('anyone gets the listen controls, and nobody else gets the admin ones', () => {
     const plain = peerMenu({ person: kestrel });
 
@@ -22,7 +26,7 @@ test('anyone gets the listen controls, and nobody else gets the admin ones', () 
 });
 
 test('an administrator gets both halves, separated', () => {
-    const menu = peerMenu({ person: kestrel, canModerate: true });
+    const menu = peerMenu({ person: kestrel, ...ADMIN });
 
     assert.match(menu, /data-peer-mute/);
     assert.match(menu, /peer-menu-split/);
@@ -38,7 +42,7 @@ test('your own row offers nothing — the self bar already has all of it', () =>
     assert.equal(peerMenuHasContent({ isSelf: true }), false);
     assert.equal(peerMenuHasContent({ isSelf: false }), true);
 
-    const mine = peerMenu({ person: kestrel, isSelf: true, canModerate: true });
+    const mine = peerMenu({ person: kestrel, isSelf: true, ...ADMIN });
     assert.ok(!mine.includes('data-peer-mute'), 'you cannot mute yourself for yourself');
     assert.ok(!mine.includes('data-kick'), 'nor kick yourself');
 });
@@ -60,7 +64,7 @@ test('anyone may star somebody as a priority speaker, for their own ears', () =>
     assert.match(plain, /data-peer-priority/);
     assert.match(plain, /Priority speaker/);
     // Above the fold with the other listen controls, never among the administrator verbs.
-    const admin = peerMenu({ person: kestrel, canModerate: true });
+    const admin = peerMenu({ person: kestrel, ...ADMIN });
     assert.ok(admin.indexOf('data-peer-priority') < admin.indexOf('peer-menu-split'));
 
     const starred = peerMenu({ person: kestrel, priority: true });
@@ -72,14 +76,14 @@ test('anyone may star somebody as a priority speaker, for their own ears', () =>
 });
 
 test('an already server-muted person is offered the lift, not another mute', () => {
-    const menu = peerMenu({ person: { ...kestrel, forceMuted: true }, canModerate: true });
+    const menu = peerMenu({ person: { ...kestrel, forceMuted: true }, ...ADMIN });
     assert.match(menu, /data-server-mute="off"/);
     assert.match(menu, /Remove server mute/);
     assert.ok(!menu.includes('Server mute…'));
 });
 
 test('the duration page offers every duration, including the open-ended one', () => {
-    const page = peerMenu({ person: kestrel, canModerate: true, page: 'duration' });
+    const page = peerMenu({ person: kestrel, ...ADMIN, page: 'duration' });
 
     for (const d of MUTE_DURATIONS) assert.ok(page.includes(d.label), `${d.label} is offered`);
     // The open-ended one carries an empty value, which is what "no expiry" is on the wire.
@@ -97,21 +101,60 @@ test('the duration page offers every duration, including the open-ended one', ()
 });
 
 test('the kick arms before it fires', () => {
-    const cold = peerMenu({ person: kestrel, canModerate: true });
+    const cold = peerMenu({ person: kestrel, ...ADMIN });
     assert.match(cold, /data-kick="arm"/);
     assert.ok(!cold.includes('press again'));
 
-    const armed = peerMenu({ person: kestrel, canModerate: true, armed: true });
+    const armed = peerMenu({ person: kestrel, ...ADMIN, armed: true });
     assert.match(armed, /data-kick="confirm"/);
     assert.match(armed, /Kick — press again/);
 });
 
 test('a name is escaped, because it came from a server', () => {
     const nasty = { username: 'x', displayName: '<img src=x onerror=alert(1)>', forceMuted: false };
-    const menu = peerMenu({ person: nasty, canModerate: true });
+    const menu = peerMenu({ person: nasty, ...ADMIN });
 
     assert.ok(!menu.includes('<img'), 'no markup from a display name');
     assert.match(menu, /&lt;img/);
     // And it is escaped ONCE — a doubly-escaped name reads as literal &amp;lt; on screen.
     assert.ok(!menu.includes('&amp;lt;'));
+});
+
+// ── the tester ───────────────────────────────────────────────────────────────
+
+test('a tester gets the server mute and nothing else from the privileged half', () => {
+    const menu = peerMenu({ person: kestrel, ...TESTER });
+
+    assert.match(menu, /data-server-mute="on"/);
+    assert.ok(!menu.includes('data-kick'), 'kicking stays with administrators');
+    // Labelled with the role that grants it, not as if they were an administrator.
+    assert.match(menu, /<p class="peer-menu-admin-label">Tester<\/p>/);
+    assert.ok(!menu.includes('Administrator'));
+    // Still below the listen controls, like every verb that affects somebody else.
+    assert.ok(menu.indexOf('data-peer-mute') < menu.indexOf('data-server-mute'));
+});
+
+test('a tester\'s durations all end on their own', () => {
+    const page = peerMenu({ person: kestrel, ...TESTER, page: 'duration' });
+
+    assert.match(page, /data-mute-minutes="0.5"/);
+    assert.match(page, /data-mute-minutes="5"/);
+    assert.match(page, /data-mute-minutes="60"/);
+    assert.ok(!page.includes('data-mute-minutes=""'), 'no open-ended mute from a tester');
+    assert.ok(!page.includes('Until I lift it'));
+});
+
+test('a tester is offered the lift on anybody already muted, and the server decides', () => {
+    // Whose mute it is lives on the server; a lift of somebody else's comes back refused,
+    // in words, rather than the option being guessed away here.
+    const menu = peerMenu({ person: { ...kestrel, forceMuted: true }, ...TESTER });
+    assert.match(menu, /data-server-mute="off"/);
+});
+
+test('kick without mute is never a combination the menu has to draw badly', () => {
+    // Not a role anybody has today, but the two flags are separate, so the section must
+    // stand up with either one alone.
+    const kickOnly = peerMenu({ person: kestrel, canKick: true });
+    assert.match(kickOnly, /data-kick="arm"/);
+    assert.ok(!kickOnly.includes('data-server-mute'));
 });

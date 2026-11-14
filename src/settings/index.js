@@ -582,13 +582,15 @@ export function createSettings({
                 () => api.request('POST', `/api/admin/members/${id}/admin`, { body: { isAdmin: false } }),
             ));
         }));
-        // Tester is low-stakes either way — it only shows or hides the stream-quality tools —
-        // so both directions are a single click. The button carries the state to move to.
+        // Tester grants one administrator power: a timed server mute. Both directions are a
+        // single click, like granting admin — the consequential half of that one (taking it
+        // away) arms because it can lock somebody out, and losing tester locks nobody out of
+        // anything. The button carries the state to move to.
         $$('[data-admin-tester]', el).forEach((b) => b.addEventListener('click', () => {
             const on = b.dataset.testerNext === '1';
             adminAct(() => api.request('POST', `/api/admin/members/${b.dataset.adminTester}/tester`, {
                 body: { isTester: on },
-            }), on ? 'They can see the stream-quality tools now.' : 'Stream-quality tools removed.');
+            }), on ? 'They can server-mute people now.' : 'Tester removed.');
         }));
 
         // -- channels --

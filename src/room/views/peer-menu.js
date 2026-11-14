@@ -2,7 +2,8 @@
 //
 // One menu with two halves rather than two menus. The top half is what ANYONE may do to
 // how they personally hear this person — local, never signalled, nobody else affected.
-// The bottom half is what an administrator may do to everybody's experience of them. They
+// The bottom half is what an administrator (or a tester, for the server mute alone) may do
+// to everybody's experience of them. They
 // are separated by a rule and a label rather than split into separate surfaces, because
 // the question you arrive with is "what can I do about this person", and answering it in
 // two places means learning which right-click gives which.
@@ -64,32 +65,43 @@ const listenSection = (listen, priority) => `
   ${volumeRow(listen)}`;
 
 /**
- * The admin half.
+ * The privileged half: what an administrator — or, for the server mute alone, a tester — may
+ * do to everybody's experience of this person.
+ *
+ * Labelled with the role that grants it, so a tester is never left wondering why the kick
+ * an administrator described to them is not there.
  *
  * `armed` is the kick waiting for a second press — the same arm-then-fire shape the admin
  * settings panel uses for its destructive buttons, and for the same reason: a kick sitting
  * one click away in a menu that opens under the pointer is a kick that will happen by
  * accident.
  */
-const adminSection = (person, armed) => `
+const privilegedSection = (person, { canServerMute, canKick, armed }) => `
   <div class="peer-menu-split" role="separator"></div>
-  <p class="peer-menu-admin-label">Administrator</p>
+  <p class="peer-menu-admin-label">${canKick ? 'Administrator' : 'Tester'}</p>
+  ${canServerMute ? `
   <button type="button" class="peer-menu-item" data-server-mute="${person.forceMuted ? 'off' : 'on'}">
     ${person.forceMuted ? icons.mic : icons.micOff}
     <span>${person.forceMuted ? 'Remove server mute' : 'Server mute…'}</span>
-  </button>
+  </button>` : ''}
+  ${canKick ? `
   <button type="button" class="peer-menu-item danger" data-kick="${armed ? 'confirm' : 'arm'}">
     ${icons.power}
     <span>${armed ? 'Kick — press again' : 'Kick'}</span>
-  </button>`;
+  </button>` : ''}`;
 
-/** The second page: how long the server mute should last. */
-const durationPage = (person) => `
+/**
+ * The second page: how long the server mute should last.
+ *
+ * `timedOnly` leaves out the open-ended choice. A tester's mute always ends on its own; one
+ * that lasts until somebody lifts it is an administrator's decision to make.
+ */
+const durationPage = (person, { timedOnly }) => `
   <button type="button" class="peer-menu-item" data-menu-back>
     <span aria-hidden="true">←</span><span>Server mute ${displayName(person)} for…</span>
   </button>
   <div class="peer-menu-split" role="separator"></div>
-  ${MUTE_DURATIONS.map((d) => `
+  ${MUTE_DURATIONS.filter((d) => !(timedOnly && d.minutes == null)).map((d) => `
   <button type="button" class="peer-menu-item"
           data-mute-minutes="${d.minutes == null ? '' : d.minutes}">
     <span>${esc(d.label)}</span>
@@ -99,19 +111,22 @@ const durationPage = (person) => `
 /**
  * @param {object}  person    a roster row — needs username, displayName, forceMuted
  * @param {boolean} isSelf    your own row offers nothing; you have the self bar for that
- * @param {boolean} canModerate  admin AND a server that advertises `moderation`
+ * @param {boolean} canServerMute  an administrator, or a tester, on a server that honours it
+ * @param {boolean} canKick   an administrator on a server that advertises `moderation`
+ * @param {boolean} timedOnly the server mute offers no open-ended duration (a tester)
  * @param {object}  listen    { muted, volume } — how you currently hear them
  * @param {boolean} priority  you have starred them as a priority speaker
  * @param {string}  page      'main' | 'duration'
  * @param {boolean} armed     the kick is waiting for its second press
  */
 export function peerMenu({
-    person, isSelf = false, canModerate = false,
+    person, isSelf = false, canServerMute = false, canKick = false, timedOnly = false,
     listen = { muted: false, volume: 1 }, priority = false, page = 'main', armed = false,
 } = {}) {
+    const privileged = !isSelf && (canServerMute || canKick);
     const body = page === 'duration'
-        ? durationPage(person)
-        : `${isSelf ? '' : listenSection(listen, priority)}${canModerate && !isSelf ? adminSection(person, armed) : ''}`;
+        ? durationPage(person, { timedOnly })
+        : `${isSelf ? '' : listenSection(listen, priority)}${privileged ? privilegedSection(person, { canServerMute, canKick, armed }) : ''}`;
 
     return `
     <div class="peer-menu" role="menu" aria-label="${displayName(person)}">

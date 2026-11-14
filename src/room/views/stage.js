@@ -44,15 +44,8 @@ const initialsOf = (name) => String(name ?? '?').trim().slice(0, 2).toUpperCase(
  * there is more than one stream to choose between, the spotlight. `spot` is null when there
  * is nothing to choose between, otherwise whether THIS tile holds the spotlight.
  */
-const streamPill = (t, canReport = false, spot = null) => `
+const streamPill = (t, spot = null) => `
   <span class="stream-pill">
-    ${canReport ? `
-    <span class="pill-report-label" aria-hidden="true">Stream quality</span>
-    <button type="button" class="pill-btn pill-report good" data-report-good
-            title="Report stream quality: good" aria-label="Report this stream's quality as good">${icons.thumbUp}<span>Good</span></button>
-    <button type="button" class="pill-btn pill-report bad" data-report-bad
-            title="Report stream quality: bad" aria-label="Report this stream's quality as bad">${icons.thumbDown}<span>Bad</span></button>
-    <span class="pill-sep" aria-hidden="true"></span>` : ''}
     ${t.self || !t.audio ? '' : `
     <button type="button" class="pill-btn" data-listen-mute
             title="${t.audio.muted ? 'Unmute for you' : 'Mute for you'}"
@@ -111,7 +104,7 @@ const watchButton = (t, limited = false) => `
  *   strip — watched, beside a spotlight: live pictures, the identity chip, click to swap
  *   else  — not watched: the placeholder (or your own camera's mirror) and the Watch verb
  */
-const tile = (t, { main = false, spot = null, canReport = false, limited = false } = {}) => {
+const tile = (t, { main = false, spot = null, limited = false } = {}) => {
     const focused = main;   // `.focused` is the big-area styling the CSS already knows
     return `
   <div class="tile${focused ? ' focused' : ''}${t.watched ? ' watched' : ''}${t.self ? ' self' : ''}${t.live ? '' : ' idle'}"
@@ -120,7 +113,7 @@ const tile = (t, { main = false, spot = null, canReport = false, limited = false
     ${t.live ? `<video autoplay playsinline ${t.self ? 'muted' : ''}></video>` : placeholder(t)}
     ${focused ? `
     <span class="live-badge"><i aria-hidden="true"></i>LIVE · ${esc(t.label)}</span>
-    ${streamPill(t, canReport, spot)}` : `
+    ${streamPill(t, spot)}` : `
     ${t.slot === 'screen' ? '<span class="live-badge small"><i aria-hidden="true"></i>LIVE</span>' : ''}
     ${identityChip(t)}
     ${t.watched ? '' : watchButton(t, limited && !t.self)}`}
@@ -141,7 +134,7 @@ export const STRIP_VISIBLE = 4;
  * back to the grid rather than to a black box.
  */
 export function stageView({
-    tiles = [], spotlight = null, heightPx = null, canReport = false, watchLimitReached = false,
+    tiles = [], spotlight = null, heightPx = null, watchLimitReached = false,
 } = {}) {
     if (!tiles.length) return '';
     const ordered = orderTiles(tiles);
@@ -155,7 +148,7 @@ export function stageView({
         return `
     <section class="stage" aria-label="Live video"${heightPx ? ` style="height: ${Math.round(heightPx)}px"` : ''}>
       <div class="stage-grid" data-count="${Math.min(ordered.length, 9)}">
-        ${ordered.map((t) => tile(t, { canReport, limited })).join('')}
+        ${ordered.map((t) => tile(t, { limited })).join('')}
       </div>
     </section>`;
     }
@@ -165,17 +158,17 @@ export function stageView({
     return `
     <section class="stage has-focus" aria-label="Live video"${heightPx ? ` style="height: ${Math.round(heightPx)}px"` : ''}>
       <div class="stage-main">${spotKey
-        ? tile(inMain[0], { main: true, spot: spotFor(inMain[0]), canReport })
+        ? tile(inMain[0], { main: true, spot: spotFor(inMain[0]) })
         : `
         <div class="watch-grid" data-count="${Math.min(inMain.length, 9)}">
-          ${inMain.map((t) => tile(t, { main: true, spot: spotFor(t), canReport })).join('')}
+          ${inMain.map((t) => tile(t, { main: true, spot: spotFor(t) })).join('')}
         </div>`}
       </div>
       ${thumbs.length ? `
       <div class="strip-shell${thumbs.length > STRIP_VISIBLE ? ' scrollable' : ''}">
         ${thumbs.length > STRIP_VISIBLE ? `
         <button type="button" class="strip-nav" data-strip-nav="-1" aria-label="Earlier streams">‹</button>` : ''}
-        <div class="stage-strip">${thumbs.map((t) => tile(t, { canReport, limited })).join('')}</div>
+        <div class="stage-strip">${thumbs.map((t) => tile(t, { limited })).join('')}</div>
         ${thumbs.length > STRIP_VISIBLE ? `
         <button type="button" class="strip-nav" data-strip-nav="1" aria-label="More streams">›</button>` : ''}
       </div>` : ''}

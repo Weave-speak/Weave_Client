@@ -7,6 +7,21 @@ All notable changes to Weave Client are recorded here. The format follows
 The newest entries are what the app shows under **What's new** after it updates, so they are
 written for the people using it rather than for the people building it.
 
+## [0.1.77] - 2026-11-14
+
+### Changed
+- **Testers can server-mute.** Right-click somebody and a tester now gets a **Tester**
+  section with **Server mute…**: 30 seconds, 5 minutes or 1 hour. A tester can't mute
+  administrators, can't mute until lifted, and can lift only mutes they placed themselves;
+  kicking and moving people stay with administrators. Needs server 0.1.41 or later.
+
+### Removed
+- **The Good/Bad stream quality buttons.** Testers no longer see them on a stream you are
+  watching, and nothing is sent when you watch one.
+- **The server-load snapshot in bug reports.** An administrator reading a report no longer
+  sees "The server, at that moment"; what the person said, their log and the server's log
+  are all still there.
+
 ## [0.1.76] - 2026-11-14
 
 ### Added

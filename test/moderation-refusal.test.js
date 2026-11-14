@@ -73,10 +73,19 @@ test('nothing in flight means nothing to say', () => {
 });
 
 test('the codes the server refuses moderation with are all recognised', () => {
-    for (const code of ['forbidden', 'target_is_admin', 'not_yourself', 'no_user', 'no_peer',
-        'text_channel', 'not_a_member']) {
+    for (const code of ['forbidden', 'target_is_admin', 'not_permitted', 'not_yourself',
+        'no_user', 'no_peer', 'text_channel', 'not_a_member']) {
         assert.ok(MODERATION_REFUSALS.has(code), code);
     }
+});
+
+test('a tester past the edge of what a tester may do is told which edge', () => {
+    const { refusal } = readModerationFrame(pendingModeration('unmute', 'Kestrel', T), {
+        type: 'error', code: 'not_permitted',
+        message: 'Only an administrator or whoever placed it can lift this mute.',
+    }, T + 10);
+    assert.equal(refusal.text,
+        "Could not lift Kestrel's server mute: Only an administrator or whoever placed it can lift this mute.");
 });
 
 test('the line it becomes is local, and carries the verb\'s icon', () => {

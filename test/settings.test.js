@@ -873,7 +873,6 @@ test('a report opens with both sides of the moment', () => {
             client: { version: '0.1.61', target: 'desktop' },
             description: 'Screen share froze.',
             log: 'client line',
-            server: { loadPerCore: 1.4 },
             serverLog: [{ msg: 'server line' }, 'a plain line'],
         },
     });
@@ -881,7 +880,6 @@ test('a report opens with both sides of the moment', () => {
     assert.match(markup, /Weave 0\.1\.61/);
     assert.match(markup, /Screen share froze\./);
     assert.match(markup, /client line/);
-    assert.match(markup, /loadPerCore/);
     assert.match(markup, /server line/);
     assert.match(markup, /a plain line/);
     assert.match(markup, /data-bug-close/);

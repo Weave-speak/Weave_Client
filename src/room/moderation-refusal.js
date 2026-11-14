@@ -17,13 +17,15 @@ export const REFUSAL_WINDOW_MS = 5_000;
 /**
  * The codes the moderation handlers refuse with, and nothing broader.
  *
- * `forbidden` is the server's gate for a session that is not (or is no longer) an
- * administrator; `target_is_admin` is one administrator aimed at another. The rest are the
- * handlers' own refusals — the person left, the room is text, the room is private.
+ * `forbidden` is the server's gate for a session that is not (or is no longer) allowed the
+ * verb at all; `target_is_admin` is somebody aimed at an administrator; `not_permitted` is a
+ * tester past the edge of what a tester may do — an open-ended mute, or lifting a mute
+ * somebody else placed. The rest are the handlers' own refusals — the person left, the room
+ * is text, the room is private.
  */
 export const MODERATION_REFUSALS = Object.freeze(new Set([
-    'forbidden', 'target_is_admin', 'not_yourself', 'no_user', 'no_peer', 'no_channel',
-    'text_channel', 'not_a_member', 'internal_error',
+    'forbidden', 'target_is_admin', 'not_permitted', 'not_yourself', 'no_user', 'no_peer',
+    'no_channel', 'text_channel', 'not_a_member', 'internal_error',
 ]));
 
 /** The acknowledgements that mean the verb went through. */

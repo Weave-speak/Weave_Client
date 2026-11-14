@@ -24,7 +24,6 @@ import { effectiveMute, onPushToTalkChange, muteButtonDisabled, pushToMuteAction
 import { acceleratorFor, matchesKeydown } from '../ui/hotkey.js';
 import { screenShareSettings, normaliseShareChoice, cameraConstraints, cameraEncodings } from '../media/presets.js';
 import { settingsFor } from '../server/store.js';
-import { classify } from '../media/stream-report.js';
 import { captureProcessAudio } from '../media/process-audio.js';
 import { micConstraints, micFailureText } from '../media/audio-options.js';
 import { playCue } from '../media/cue.js';
@@ -103,7 +102,7 @@ const BUNDLED_CUE_URLS = {
     message: new URL('../assets/sounds/new_text.ogg', import.meta.url).href,
 };
 
-export function createRoom({ mount, api, link, user, server, features = [], reportStream = () => Promise.resolve(false), onSignedOut }) {
+export function createRoom({ mount, api, link, user, server, features = [], onSignedOut }) {
     const state = createRoomState({
         me: user,
         server: { name: server?.lastSeen?.name ?? server?.label ?? 'Weave' },
@@ -145,77 +144,6 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             paintConnection({ ...state.raw.connection, ...mediaStats });
         }
     }, 5_000);
-
-    // While a screen is on the stage — yours or one you are watching — keep a short rolling
-    // history of its quality, so a Good/Bad click carries the run-up to a freeze rather than
-    // only the calm after it. Cheap: one getStats per active screen every couple of seconds,
-    // and nothing at all when the stage holds no video. The webcam is deliberately not
-    // sampled — a frozen face is nobody's emergency, and the report is about screen shares.
-    const streamDiagTimer = setInterval(() => {
-        // Only testers can report, so only testers need the rolling history sampled. For
-        // everyone else this timer is a no-op — no getStats, no buffer, nothing.
-        if (!user?.isTester) return;
-        for (const key of videoStreams.keys()) {
-            const [cid, slotName] = key.split(':');
-            if (slotName !== 'screen') continue;
-            voice.sampleStream({ role: cid === 'self' ? 'streamer' : 'viewer', cid, slot: slotName })
-                .catch(() => {});
-        }
-    }, 2_000);
-
-    /**
-     * Turn a Good/Bad click into a report. The clicked tile names the stream (`cid:slot`),
-     * which says whether this client is the STREAMER of it (self) or a VIEWER — and therefore
-     * which half of the metrics it holds. A client-side verdict is computed now with no Pi
-     * stamp; the server re-decides with the media-core load only it can see. Both Good and Bad
-     * are sent: a baseline is what a bad sample is compared against.
-     */
-    async function reportStreamQuality(bad, holder, clicked) {
-        const [cid, slotName] = holder.dataset.tile.split(':');
-        const self = cid === 'self';
-        const role = self ? 'streamer' : 'viewer';
-        // Capture THIS instant at full fidelity before reading the buffer. The background
-        // sampler runs every couple of seconds; a slight moment of lag the person reacted to
-        // could fall between two of those ticks, so take a fresh sample now — the click's own
-        // moment belongs in the report, not just the last one that happened to be timed.
-        await voice.sampleStream({ role, cid, slot: slotName }).catch(() => {});
-        const { samples, latest } = voice.streamReport({ role, cid, slot: slotName });
-        const verdict = latest ? classify({ ...latest, pi: null })
-            : { verdict: 'no-samples', reasons: ['no samples were captured before the click'] };
-        const peer = self ? null : [...state.raw.peers.values()].find((p) => p.cid === cid) ?? null;
-
-        reportStream(bad ? 'stream-bad' : 'stream-good', {
-            v: 1,
-            at: new Date().toISOString(),
-            role,
-            slot: slotName,
-            reporter: state.raw.me?.username ?? null,
-            subject: self ? (state.raw.me?.username ?? null) : (peer?.displayName || peer?.username || cid),
-            channel: state.raw.currentChannelId ?? null,
-            // The field names predate the share chooser and the server stores reports as
-            // they come, so they stay; what they carry is now the running share's choice.
-            preset: activeShare.choice.quality,
-            prefer: activeShare.choice.content,
-            verdict: verdict.verdict,
-            reasons: verdict.reasons,
-            samples,
-        })
-            .then((ok) => flashReport(holder, clicked, Boolean(ok)))
-            .catch(() => flashReport(holder, clicked, false));
-    }
-
-    /** Momentary feedback on the buttons: a click that vanishes without a trace reads as broken. */
-    function flashReport(holder, clicked, ok) {
-        const buttons = [...holder.querySelectorAll('[data-report-good], [data-report-bad]')];
-        buttons.forEach((b) => { b.disabled = true; });
-        const span = clicked.querySelector('span');
-        const original = span?.textContent ?? null;
-        if (span) span.textContent = ok ? 'Sent' : 'Failed';
-        setTimeout(() => {
-            buttons.forEach((b) => { b.disabled = false; });
-            if (span && original !== null) span.textContent = original;
-        }, 1800);
-    }
 
     let prefs = readPrefs(server.id);
     // The settings of the share that is running, or of the next one until a choice is made.
@@ -278,7 +206,14 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
     // kept the drag and the administrator half of the menu until they relaunched, pressing
     // verbs the server would only refuse.
     const canMovePeople = () => Boolean(user?.isAdmin) && features.includes('peers.admin-move');
-    const canModeratePeople = () => Boolean(user?.isAdmin) && features.includes('moderation');
+    // A tester's one administrator power is the server mute, and only where the server says
+    // it will honour one from them — against an older server the entry would only be refused.
+    const canMutePeople = () => (Boolean(user?.isAdmin) && features.includes('moderation'))
+        || (Boolean(user?.isTester) && features.includes('moderation.tester-mute'));
+    const canKickPeople = () => Boolean(user?.isAdmin) && features.includes('moderation');
+    // Testers mute for a while, never until lifted; the server refuses the open-ended form
+    // from them anyway, so the menu does not offer it.
+    const muteTimedOnly = () => !user?.isAdmin;
     // The call the user is part of, and where to stand again when it ends.
     // Right-clicking somebody, and dragging them into a room. Built after the shell is
     // mounted, because both of its surfaces are appended to it.
@@ -331,27 +266,6 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         log: (level, message) => platform.log(level, `[voice] ${message}`),
         // Which speakers/headset the room's voices play out of; '' is the system default.
         getAudioOutput: () => prefs.audioOutput,
-        // Render-side truth for a watched video, read off the stage's own <video> element:
-        // whether it is fullscreen, how far it is being upscaled, and how many frames the
-        // display is failing to paint. None of this is in getStats, and it is the half that
-        // explains "fine until fullscreen". Null when the element is not on the stage.
-        getRenderStats(cid, slot) {
-            const holder = mount.querySelector(`[data-tile="${cid}:${slot}"]`);
-            const video = holder?.querySelector('video');
-            if (!video) return null;
-            const q = video.getVideoPlaybackQuality?.();
-            const rect = video.getBoundingClientRect();
-            return {
-                at: Date.now(),
-                fullscreen: document.fullscreenElement === holder,
-                displayWidth: rect.width,
-                displayHeight: rect.height,
-                videoWidth: video.videoWidth,
-                videoHeight: video.videoHeight,
-                totalVideoFrames: q?.totalVideoFrames ?? null,
-                droppedVideoFrames: q?.droppedVideoFrames ?? null,
-            };
-        },
         // Only when the user asked to share audio, and only for the source they picked: capture
         // that program's audio in isolation so Weave's own call is not in it. Returns null on
         // any failure, and voice falls back to the loopback track.
@@ -562,7 +476,6 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         walkingOut = true;
         clearInterval(syncTimer);
         clearInterval(statsTimer);
-        clearInterval(streamDiagTimer);
         api.setToken(null);
         await platform.tokens.clear(server.id).catch(() => {});
         // A wiped or revoked account's saved password is dead weight that would re-fill
@@ -578,7 +491,6 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
     async function signOut() {
         clearInterval(syncTimer);
         clearInterval(statsTimer);
-        clearInterval(streamDiagTimer);
         await api.logout().catch(() => {
             // A network failure must not trap somebody in a signed-in interface. The
             // session lapses on its own; the important part is that this client forgets it.
@@ -865,7 +777,7 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
 
         lastStageSignature = signature;
         slot.innerHTML = stageView({
-            tiles, spotlight, heightPx: stageHeightPx, watchLimitReached, canReport: Boolean(user?.isTester),
+            tiles, spotlight, heightPx: stageHeightPx, watchLimitReached,
         });
         attachStreams(slot);
         paintMediaButtons();
@@ -1499,20 +1411,17 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
 
         if (msg.type === 'roles_changed') {
             // An admin granted or removed our tester/admin flag while we are signed in. The
-            // room's `user` is a snapshot taken at sign-in, so without this the stream-quality
-            // buttons would stay hidden (or lingering) until the next launch. Update the
-            // snapshot in place and repaint the stage, which is what gates the buttons.
+            // room's `user` is a snapshot taken at sign-in; the gates read it live, so
+            // updating it in place is what makes the change take effect without a relaunch.
             if (user) {
                 if (typeof msg.isTester === 'boolean') user.isTester = msg.isTester;
                 if (typeof msg.isAdmin === 'boolean') user.isAdmin = msg.isAdmin;
             }
-            // The administrator verbs re-gate too. The grab cursor is a promise that a drag
-            // will do something, and a menu already open was drawn under the old roles —
-            // closing it (and dropping any drag in flight) is cheaper than letting a
-            // demoted person press a kick the server will refuse.
+            // The grab cursor is a promise that a drag will do something, and a menu already
+            // open was drawn under the old roles — closing it (and dropping any drag in
+            // flight) is cheaper than letting somebody press a verb the server will refuse.
             $('.app-shell', mount)?.toggleAttribute('data-can-move', canMovePeople());
             peerActions?.close();
-            paintStage();
             return;
         }
 
@@ -2299,12 +2208,6 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
                 }
                 return;
             }
-            const reportBtn = event.target.closest('[data-report-good], [data-report-bad]');
-            if (reportBtn) {
-                const holder = reportBtn.closest('[data-tile]');
-                if (holder) reportStreamQuality(reportBtn.matches('[data-report-bad]'), holder, reportBtn);
-                return;
-            }
             if (event.target.closest('[data-listen-volume]')) return;   // the slider is not a watch click
 
             const tile = event.target.closest('[data-tile]');
@@ -2603,7 +2506,9 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             voice,
             link,
             canMove: canMovePeople,
-            canModerate: canModeratePeople,
+            canServerMute: canMutePeople,
+            canKick: canKickPeople,
+            muteTimedOnly,
             isPriority: (person) => starred().has(person.id),
             togglePriority,
             paint,
@@ -3274,7 +3179,6 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             clearTimeout(fullscreenHoldTimer);
             clearInterval(syncTimer);
             clearInterval(statsTimer);
-            clearInterval(streamDiagTimer);
             // Signed out: the shortcut goes back to every other program, and a press that
             // arrives on the way out has nothing left to mute.
             unwirePushToMute();

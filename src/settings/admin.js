@@ -110,9 +110,9 @@ const asLines = (entries) => entries
  * report opened in full when a line looks like the one.
  *
  * A report deliberately carries both sides of the moment: what the reporter said, the tail
- * of their app log with paths and tokens already removed on their own machine, the server's
- * load at the instant it arrived, and the server's log around the same time. Reading one
- * file should answer the question without correlating two by timestamp.
+ * of their app log with paths and tokens already removed on their own machine, and the
+ * server's log around the same time. Reading one file should answer the question without
+ * correlating two by timestamp.
  */
 export function adminBugsPanel({
     reports = null, total = 0, open = null, error = null, notice = null, armedKey = null,
@@ -131,10 +131,6 @@ export function adminBugsPanel({
     ${open.description ? `
     <h4 class="panel-section">What they said</h4>
     <p class="bug-said">${esc(open.description)}</p>` : ''}
-
-    ${open.server ? `
-    <h4 class="panel-section">The server, at that moment</h4>
-    <pre class="bug-log">${esc(JSON.stringify(open.server, null, 2))}</pre>` : ''}
 
     ${open.log ? `
     <h4 class="panel-section">Their log</h4>

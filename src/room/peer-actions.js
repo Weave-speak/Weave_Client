@@ -35,9 +35,13 @@ export function createPeerActions({
     voice,
     link,
     // Whether this session may act on other people at all. Read fresh on every open, so
-    // it is right after a server-info refresh rather than only at construction.
+    // a role granted or removed mid-session is right on the next right-click. Server mute
+    // and kick are asked separately because a tester has the one and not the other, and
+    // `muteTimedOnly` is the tester's limit on the mute itself.
     canMove = () => false,
-    canModerate = () => false,
+    canServerMute = () => false,
+    canKick = () => false,
+    muteTimedOnly = () => false,
     // Priority speaker: whether this listener has starred somebody, and starring them.
     // The room owns the list, because it is a stored preference and the roster marks it.
     isPriority = () => false,
@@ -118,7 +122,9 @@ export function createPeerActions({
         const next = html(peerMenu({
             person,
             isSelf: person.id === state.toShell().me.id,
-            canModerate: canModerate(),
+            canServerMute: canServerMute(),
+            canKick: canKick(),
+            timedOnly: muteTimedOnly(),
             listen: listenOf(person),
             priority: isPriority(person),
             page: menuPage,

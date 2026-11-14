@@ -85,6 +85,11 @@ test('the duration page offers every duration, including the open-ended one', ()
     // The open-ended one carries an empty value, which is what "no expiry" is on the wire.
     assert.match(page, /data-mute-minutes=""/);
     assert.match(page, /data-mute-minutes="5"/);
+    // Thirty seconds is half a minute on the wire, and comes first: the shortest, most
+    // forgiving choice sits where the pointer lands.
+    assert.match(page, /data-mute-minutes="0.5"/);
+    assert.equal(MUTE_DURATIONS[0].label, '30 seconds');
+    assert.ok(page.indexOf('30 seconds') < page.indexOf('5 minutes'));
     assert.match(page, /data-menu-back/);
 
     // Nothing destructive shares the page, so a mis-aimed click cannot kick.

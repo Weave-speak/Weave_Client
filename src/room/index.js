@@ -273,8 +273,12 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             settings?.refreshBubbles?.();
         },
     });
-    const canMovePeople = Boolean(user?.isAdmin) && features.includes('peers.admin-move');
-    const canModeratePeople = Boolean(user?.isAdmin) && features.includes('moderation');
+    // Functions, not values. `user` is a snapshot from sign-in that `roles_changed` updates
+    // in place, and these were computed from it once — so somebody demoted while signed in
+    // kept the drag and the administrator half of the menu until they relaunched, pressing
+    // verbs the server would only refuse.
+    const canMovePeople = () => Boolean(user?.isAdmin) && features.includes('peers.admin-move');
+    const canModeratePeople = () => Boolean(user?.isAdmin) && features.includes('moderation');
     // The call the user is part of, and where to stand again when it ends.
     // Right-clicking somebody, and dragging them into a room. Built after the shell is
     // mounted, because both of its surfaces are appended to it.
@@ -1277,6 +1281,11 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
     /* ── talking to the server ───────────────────────────────────────────── */
 
     function applyFrame(msg) {
+        // First and without consuming anything: a move, mute or kick this person just sent
+        // is answered either by its acknowledgement or by an error, and a refusal is owed a
+        // sentence rather than the silence it used to get.
+        peerActions?.observe(msg);
+
         // Module messages arrive namespaced, so a module can never shadow a core type.
         if (bubbleRoom?.handle(msg)) {
             paintBubblesButton();
@@ -1497,6 +1506,12 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
                 if (typeof msg.isTester === 'boolean') user.isTester = msg.isTester;
                 if (typeof msg.isAdmin === 'boolean') user.isAdmin = msg.isAdmin;
             }
+            // The administrator verbs re-gate too. The grab cursor is a promise that a drag
+            // will do something, and a menu already open was drawn under the old roles —
+            // closing it (and dropping any drag in flight) is cheaper than letting a
+            // demoted person press a kick the server will refuse.
+            $('.app-shell', mount)?.toggleAttribute('data-can-move', canMovePeople());
+            peerActions?.close();
             paintStage();
             return;
         }
@@ -1530,8 +1545,8 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
         }
 
         // The acknowledgement of our OWN moderation action. The roster already changed via
-        // the broadcast, so there is nothing to apply — but the menu is gone by now and a
-        // silent success is indistinguishable from a dropped message.
+        // the broadcast, so there is nothing to apply. What it settles — that the verb was
+        // not refused — peerActions.observe has already read at the top of this function.
         if (msg.type === 'serverMuteChanged' || msg.type === 'kickedPeer') return;
 
         if (msg.type === 'kicked') {
@@ -2587,13 +2602,20 @@ export function createRoom({ mount, api, link, user, server, features = [], repo
             state,
             voice,
             link,
-            canMove: () => canMovePeople,
-            canModerate: () => canModeratePeople,
+            canMove: canMovePeople,
+            canModerate: canModeratePeople,
             isPriority: (person) => starred().has(person.id),
             togglePriority,
             paint,
+            // A refused move, mute or kick, as a line only this administrator sees, in the
+            // timeline they are looking at — the same place a refused slash command lands.
+            onRefused: ({ icon, text }) => {
+                const channelId = state.raw.viewChannelId ?? state.raw.currentChannelId;
+                if (!channelId) return;
+                state.addMessage(channelId, refusalItem(text, Date.now(), icon));
+            },
         });
-        $('.app-shell', mount)?.toggleAttribute('data-can-move', canMovePeople);
+        $('.app-shell', mount)?.toggleAttribute('data-can-move', canMovePeople());
 
         input?.addEventListener('paste', (event) => composerPicture.paste(event));
         input?.addEventListener('input', updateMention);

@@ -66,6 +66,17 @@ const RATE_LIMIT_BACKOFF_MS = 20_000;
  */
 const FATAL = new Set(['protocol_mismatch', 'unauthenticated', 'no_channels', 'forbidden']);
 
+/**
+ * Codes that are only fatal as the answer to a JOIN.
+ *
+ * Once joined, `forbidden` is the server refusing one request — an administrator verb the
+ * session is no longer (or never was) entitled to, or one aimed at another administrator
+ * on an older server. Treating that as terminal marked the link failed and stopped the
+ * heartbeat with nothing on screen, so a server mute that was refused looked like a button
+ * that did nothing, and the socket then quietly timed out a minute later.
+ */
+const FATAL_ONLY_BEFORE_JOIN = new Set(['forbidden']);
+
 /** Deliberate leave, so the server announces immediately instead of waiting out its grace. */
 const LEAVE_CODE = 4000;
 
@@ -456,7 +467,7 @@ export function createLink({
                 return;
 
             case 'error':
-                if (FATAL.has(msg.code)) {
+                if (FATAL.has(msg.code) && !(joined && FATAL_ONLY_BEFORE_JOIN.has(msg.code))) {
                     giveUp(msg.code, msg.message, msg.detail);
                     handleEvent(msg);
                     return;

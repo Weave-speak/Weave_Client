@@ -13,6 +13,7 @@
 
 import { peerMenu, peerMenuHasContent } from './views/peer-menu.js';
 import { avatar, displayName } from './views/parts.js';
+import { pendingModeration, readModerationFrame } from './moderation-refusal.js';
 import { html } from '../ui/dom.js';
 
 /** Below this a press is a press, not a drag. Roughly the width of a shaky click. */
@@ -42,12 +43,23 @@ export function createPeerActions({
     isPriority = () => false,
     togglePriority = () => {},
     paint = () => {},
+    // A move, mute or kick the server refused, as { icon, text }. The room decides where
+    // the sentence goes; this only knows that one is owed.
+    onRefused = () => {},
 }) {
     let menuEl = null;
     let menuFor = null;         // the person the open menu belongs to
     let menuPage = 'main';
     let kickArmed = false;
     let drag = null;
+    // The last administrator verb sent, until something answers it. See moderation-refusal.js.
+    let pending = null;
+
+    /** Send an administrator verb and remember it, so a refusal can be put into words. */
+    function sendVerb(action, person, type, payload) {
+        pending = pendingModeration(action, person.displayName || person.username);
+        link.send(type, payload);
+    }
 
     /**
      * Whether somebody may be put in this room.
@@ -157,7 +169,7 @@ export function createPeerActions({
         if (landed) {
             // userId, not cid: somebody signed in twice is one row in the roster, and
             // moving half their connections would leave them audible in the old room.
-            link.send('adminMove', { userId: person.id, channelId: landed.dataset.room });
+            sendVerb('move', person, 'adminMove', { userId: person.id, channelId: landed.dataset.room });
         }
         // Suppressed while the gesture was live, so the roster catches up now.
         paint();
@@ -267,7 +279,7 @@ export function createPeerActions({
         const serverMute = event.target.closest('[data-server-mute]');
         if (serverMute) {
             if (serverMute.dataset.serverMute === 'off') {
-                link.send('serverMute', { userId: person.id, muted: false });
+                sendVerb('unmute', person, 'serverMute', { userId: person.id, muted: false });
                 closeMenu();
             } else {
                 // A second page rather than a submenu: one panel, one set of hit targets,
@@ -281,7 +293,7 @@ export function createPeerActions({
         const duration = event.target.closest('[data-mute-minutes]');
         if (duration) {
             const raw = duration.dataset.muteMinutes;
-            link.send('serverMute', {
+            sendVerb('mute', person, 'serverMute', {
                 userId: person.id, muted: true, minutes: raw === '' ? null : Number(raw),
             });
             closeMenu();
@@ -297,7 +309,7 @@ export function createPeerActions({
                 refreshMenu();
                 return;
             }
-            link.send('kickPeer', { userId: person.id });
+            sendVerb('kick', person, 'kickPeer', { userId: person.id });
             closeMenu();
         }
     });
@@ -321,6 +333,21 @@ export function createPeerActions({
             if (row) row.classList.add('selected');
             else closeMenu();      // they left the room; the menu is aimed at nobody
         },
-        close: closeMenu,
+        /**
+         * Every inbound frame, so a refusal of the verb in flight can be said out loud.
+         * Never consumes the frame: an acknowledgement or error still goes on to whatever
+         * else handles it.
+         */
+        observe(msg) {
+            if (!pending) return;
+            const { pending: next, refusal } = readModerationFrame(pending, msg);
+            pending = next;
+            if (refusal) onRefused(refusal);
+        },
+        /** Close the menu and drop any drag in flight — the roles they were drawn under changed. */
+        close() {
+            if (drag) endDrag(false);
+            closeMenu();
+        },
     };
 }

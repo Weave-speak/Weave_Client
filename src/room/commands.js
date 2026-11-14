@@ -87,13 +87,14 @@ export function resultItem(frame) {
  * A refusal, as a line only the person who typed it sees.
  *
  * The server sends usage errors to the sender alone — broadcasting somebody's typo is
- * noise — so this is minted locally and never leaves this machine.
+ * noise — so this is minted locally and never leaves this machine. A refused administrator
+ * verb is the same kind of line with a different icon (room/moderation-refusal.js).
  */
-export function refusalItem(message, at = Date.now()) {
+export function refusalItem(message, at = Date.now(), icon = 'dice') {
     return {
         kind: 'system',
         id: `cmd-error-${at}`,
-        icon: 'dice',
+        icon,
         who: '',
         text: String(message ?? 'That command did not work.'),
         createdAt: at,

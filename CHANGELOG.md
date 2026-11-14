@@ -7,6 +7,22 @@ All notable changes to Weave Client are recorded here. The format follows
 The newest entries are what the app shows under **What's new** after it updates, so they are
 written for the people using it rather than for the people building it.
 
+## [0.1.76] - 2026-11-14
+
+### Added
+- **Server mute for 30 seconds.** Right-click somebody, choose **Server mute…**, and the first
+  option is now 30 seconds, ahead of 5 minutes, 1 hour and until lifted. Server 0.1.40 or
+  later; on an older server it lasts one minute.
+
+### Fixed
+- **A server mute, move or kick that does not go through now says why.** Before, a refused
+  one looked like a button that did nothing, and in some cases quietly cost the administrator
+  their own connection a minute later. The reason now appears as a line in the room you are
+  looking at, seen only by you, and your connection stays as it was.
+- **Losing administrator rights takes effect straight away.** Somebody whose administrator
+  access is removed while they are signed in no longer keeps the drag-to-move, server mute
+  and kick until they restart the app.
+
 ## [0.1.75] - 2026-11-12
 
 ### Fixed

@@ -22,8 +22,13 @@ import { avatar, displayName } from './parts.js';
  *
  * `minutes: null` is the form the word "irreversible" describes — it ends when an
  * administrator decides it ends, and not before.
+ *
+ * Thirty seconds travels as `minutes: 0.5` rather than as a new field, so a server too old
+ * to know about short mutes still understands it — it rounds up to its one-minute floor,
+ * which is a longer mute than asked for rather than none at all.
  */
 export const MUTE_DURATIONS = Object.freeze([
+    { minutes: 0.5, label: '30 seconds' },
     { minutes: 5, label: '5 minutes' },
     { minutes: 60, label: '1 hour' },
     { minutes: null, label: 'Until I lift it' },

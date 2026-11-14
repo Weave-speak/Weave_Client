@@ -318,6 +318,36 @@ test('a rejected token stops trying and says why', () => {
     assert.equal(h.FakeSocket.opened, opened);
 });
 
+test('a refused request once joined is passed up, not treated as the end of the link', () => {
+    // An administrator verb the server will not do — aimed at another administrator, or
+    // sent by somebody demoted since they signed in — answers `forbidden`. That refuses
+    // the one request; the session is fine and must stay live with its heartbeat running.
+    const h = harness();
+    h.goLive();
+    h.sock.deliver({
+        type: 'error', code: 'forbidden', message: 'Administrators cannot server-mute one another.',
+    });
+
+    assert.equal(h.link.state, LINK.LIVE);
+    assert.equal(h.link.failure, null);
+    assert.ok(h.events.some((e) => e.type === 'error' && e.code === 'forbidden'),
+        'the room is told, so it can say why nothing happened');
+
+    // Still heartbeating: a stopped heartbeat is how the old behaviour lost the socket.
+    const pings = h.sock.sent.filter((m) => m.type === 'ping').length;
+    h.clock.advance(30_000);
+    assert.ok(h.sock.sent.filter((m) => m.type === 'ping').length > pings);
+});
+
+test('forbidden as the answer to a join is still terminal', () => {
+    const h = harness();
+    h.link.connect();
+    h.sock.accept();
+    h.sock.deliver({ type: 'hello', cid: 'C' });
+    h.sock.deliver({ type: 'error', code: 'forbidden', message: 'Not allowed here.' });
+    assert.equal(h.link.state, LINK.FAILED);
+});
+
 test('an incompatible protocol is terminal and keeps the detail', () => {
     const h = harness();
     h.link.connect();

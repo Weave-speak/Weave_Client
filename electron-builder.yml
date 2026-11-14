@@ -22,19 +22,23 @@ files:
 
 asar: true
 
-# The process-audio capture sidecar (Windows). Built by `npm run build:native` before
-# packaging (the pack/release scripts do this) and dropped into the app's resources directory,
-# where the main process spawns it from via process.resourcesPath. It is deliberately NOT in
-# the asar: it is a standalone executable, not code the renderer imports.
-extraResources:
-  - from: native/audio-capture/weave-audio-capture.exe
-    to: weave-audio-capture.exe
+# The process-audio capture sidecar is Windows-only, so it is declared under `win:` below
+# rather than here. Listed at the top level it would be demanded of every platform, and a
+# Linux build would fail looking for a .exe that cannot exist on that machine.
 
 win:
   target:
     - target: nsis
       arch: [x64]
   icon: build/icon.ico
+
+  # The process-audio capture sidecar. Built by `npm run build:native` before packaging (the
+  # pack/release scripts do this) and dropped into the app's resources directory, where the
+  # main process spawns it from via process.resourcesPath. It is deliberately NOT in the
+  # asar: it is a standalone executable, not code the renderer imports.
+  extraResources:
+    - from: native/audio-capture/weave-audio-capture.exe
+      to: weave-audio-capture.exe
 
   # REQUIRED while we ship unsigned, and it must flip to true the day we start signing.
   #
@@ -51,6 +55,18 @@ win:
   # warning, so this is the line that will need a certificate behind it.
   signtoolOptions:
     publisherName: Weave
+
+# Linux ships as an AppImage because it is the only Linux format electron-updater can update
+# in place; a .deb or pacman package would have to be reinstalled by hand. There is no audio
+# capture sidecar here — electron/app.js reports process-audio capture as unsupported off
+# Windows — so nothing extra is bundled.
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+  icon: build/icon.png
+  category: Network
+  artifactName: Weave-${version}.${ext}
 
 nsis:
   # An assisted wizard rather than a one-click install. `allowToChangeInstallationDirectory`

@@ -19,6 +19,7 @@
     "electron:dev": "electron .",
     "build:native": "cmd /c native\\audio-capture\\build.bat",
     "pack": "npm run build:native && npm run art && npm run build:desktop && electron-builder --win --publish never",
+    "pack:linux": "npm run build:desktop && electron-builder --linux --publish never",
     "release": "node scripts/ensure-release.mjs && npm run build:native && npm run art && npm run build:desktop && electron-builder --win --publish always && node scripts/finish-release.mjs",
     "lint": "eslint .",
     "predict-delta": "node scripts/predict-delta.mjs",

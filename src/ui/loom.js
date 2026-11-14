@@ -31,6 +31,8 @@
 // its row height as `height / voices` — so whatever parents it has to be exactly as tall as
 // that column. A face and the string that belongs to it must line up.
 
+import { createFrameGate } from './frame-gate.js';
+
 /** The modes, in the order they are offered. Shared with the settings panel. */
 export const LOOM_MODES = Object.freeze(['cloth', 'harp', 'web']);
 
@@ -80,6 +82,12 @@ export class LoomRenderer {
         this._raf = opts.raf ?? ((fn) => requestAnimationFrame(fn));
         this._cancelRaf = opts.cancelRaf ?? ((id) => cancelAnimationFrame(id));
         this._doc = opts.document ?? (typeof document === 'undefined' ? null : document);
+
+        // How many of the display's frames are drawn. This one is not only about cost: the
+        // traces that feed `getVoices` decay PER FRAME and were tuned at sixty (see
+        // voice-trace.js), so on a 180 Hz display an uncapped loom spent a pluck in a third
+        // of a second instead of a second. Zero is every frame, for a test stepping by hand.
+        this._gate = createFrameGate(opts.maxFps ?? 0);
 
         this._handle = 0;
         this._t0 = 0;
@@ -134,6 +142,7 @@ export class LoomRenderer {
         // No clock is started here on purpose. The animation's time base is the frame
         // timestamp rAF hands in, and seeding it from a second clock instead means the
         // very first frame is computed against a `t` that belongs to neither.
+        this._gate.reset();
         this._handle = this._raf(this._animate);
     }
 
@@ -377,6 +386,10 @@ export class LoomRenderer {
     _animate(frameTime) {
         const at = Number.isFinite(frameTime) ? frameTime : now();
         if (!this._t0) this._t0 = at;
+
+        // Too soon after the last one. Declined before `getVoices` is read, because reading
+        // it is what steps the traces — a skipped frame must not advance them.
+        if (!this._gate.due(at)) { this._handle = this._raf(this._animate); return; }
 
         // The clock stands still when motion is off, so the strings hold one shape rather
         // than freezing mid-wobble at whatever phase the last frame happened to catch.

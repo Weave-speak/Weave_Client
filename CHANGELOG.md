@@ -7,6 +7,21 @@ All notable changes to Weave Client are recorded here. The format follows
 The newest entries are what the app shows under **What's new** after it updates, so they are
 written for the people using it rather than for the people building it.
 
+## [0.1.78] - 2026-11-15
+
+### Fixed
+- **Weave no longer works your graphics card as hard as your monitor is fast.** The moving
+  strands behind a room and the strings beside the people in it were redrawn once for every
+  frame the screen could show, so on a 144 Hz or 180 Hz monitor they cost two or three times
+  what they did on an ordinary one, the whole time Weave was open. They now draw at a fixed
+  rate, slow down while another window has the focus, and stop while Weave is minimised.
+- **Memory no longer climbs the longer Weave stays open.** Pictures in the chat were kept
+  for the whole session once you had scrolled past them, and a room you sat in kept every
+  message it had ever shown. Both are now let go of when they are no longer on screen;
+  scrolling up fetches older messages exactly as before.
+- **A video playing in the chat no longer restarts when somebody joins or leaves.** The
+  message list was rebuilt on every change to the room, whether or not a message had changed.
+
 ## [0.1.77] - 2026-11-14
 
 ### Changed

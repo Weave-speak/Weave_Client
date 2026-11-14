@@ -115,8 +115,10 @@ export function createRoomState({ me = null, server = {} } = {}) {
      * them twice, which reads as a bug to everyone who sees it — and it is the one thing a
      * peer-shaped list gets wrong that a user-shaped one does not.
      */
-    function occupantsOf(channelId) {
-        const all = people();
+    function occupantsOf(channelId, all = people()) {
+        // `all` is handed in by toShell, which asks about every channel in turn. Building
+        // the roster is a map and a locale-aware sort over every account on the server, and
+        // doing that once per CHANNEL per paint was most of what a repaint cost.
         const seen = new Set();
         const here = [];
 
@@ -410,6 +412,22 @@ export function createRoomState({ me = null, server = {} } = {}) {
             emit();
         },
 
+        /**
+         * Let go of all but the newest `keep` messages of a channel.
+         *
+         * Returns the oldest message still held, which is where paging has to resume from,
+         * or null when there was nothing to drop. WHEN this is safe is history.js's call —
+         * see shouldTrim.
+         */
+        trimMessages(channelId, keep) {
+            const list = state.messages.get(channelId);
+            if (!list || !(keep > 0) || list.length <= keep) return null;
+            const kept = list.slice(-keep);
+            state.messages.set(channelId, kept);
+            emit();
+            return kept[0];
+        },
+
         /** An older page joining the front of the timeline. Duplicates lose to first sighting. */
         prependMessages(channelId, older = []) {
             const list = state.messages.get(channelId) ?? [];
@@ -579,7 +597,7 @@ export function createRoomState({ me = null, server = {} } = {}) {
                     occupied: c.id === state.currentChannelId,
                     unread: state.unreads.get(c.id)?.unread ?? 0,
                     mentions: state.unreads.get(c.id)?.mentions ?? 0,
-                    occupants: occupantsOf(c.id),
+                    occupants: occupantsOf(c.id, roster),
                 })),
                 room: activeDm
                     ? {

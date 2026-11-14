@@ -13,7 +13,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 /** Channels the main process may push on. Anything else is ignored. */
-const PUSH = new Set(['weave:update', 'weave:hotkey']);
+const PUSH = new Set(['weave:update', 'weave:hotkey', 'weave:window']);
 
 contextBridge.exposeInMainWorld('weaveNative', {
     /**
@@ -141,6 +141,27 @@ contextBridge.exposeInMainWorld('weaveNative', {
             const wrapped = (_event, payload) => handler({ name: String(payload?.name ?? '') });
             ipcRenderer.on('weave:hotkey', wrapped);
             return () => ipcRenderer.removeListener('weave:hotkey', wrapped);
+        },
+    },
+
+    /**
+     * Whether the window is on screen, and whether it is the one in front.
+     *
+     * The page cannot be trusted to know: background throttling is off so voice keeps time
+     * behind a game, and that takes `visibilitychange` with it. The room uses this to stop
+     * drawing animations nobody can see. Two booleans and nothing else cross.
+     */
+    windowState: {
+        available: true,
+        state: () => ipcRenderer.invoke('weave:window.state'),
+        onChange(handler) {
+            if (typeof handler !== 'function') return () => {};
+            const wrapped = (_event, payload) => handler({
+                visible: payload?.visible !== false,
+                focused: payload?.focused !== false,
+            });
+            ipcRenderer.on('weave:window', wrapped);
+            return () => ipcRenderer.removeListener('weave:window', wrapped);
         },
     },
 

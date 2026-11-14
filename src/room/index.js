@@ -32,6 +32,7 @@ import { openWhatsNew } from '../updates/whats-new.js';
 import { createRoomBrowser } from '../rooms/browser.js';
 import { createPeerActions } from './peer-actions.js';
 import { createAvatarCache, withAvatars } from './avatars.js';
+import { createBlobUrls } from './blob-urls.js';
 import { createBubbles } from './bubbles.js';
 import { createAttachmentSlot, outgoingMessage } from './compose.js';
 import { attachChipView } from './views/attach.js';
@@ -42,9 +43,12 @@ import { mentionQuery, matchMentions, insertMention } from './mentions.js';
 import {
     parseCommand, commandQuery, matchCommands, completeCommand, resultItem, refusalItem, COMMAND_REFUSALS,
 } from './commands.js';
-import { freshHistory, advanceHistory, nextPageQuery, shouldLoadOlder } from './history.js';
+import {
+    freshHistory, advanceHistory, nextPageQuery, shouldLoadOlder, shouldTrim, rewindHistory, TRIM_KEEP,
+} from './history.js';
 import { stageView, tileKey, sharePickerView, shareSetupView, MAX_WATCHED } from './views/stage.js';
 import { stageSignature, stagePaintDecision } from './stage-paint.js';
+import { motionPlan, BACKGROUND_FPS, LOOM_FPS } from './motion.js';
 import { createStreamCues } from './stream-cues.js';
 import { messageCue } from './notify.js';
 import { extractUrls } from './embeds.js';
@@ -124,6 +128,31 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
     // client did. Without this a text channel is a room full of people and a dead canvas.
     const msgNoise = createMessageNoise();
     const history = new Map();   // channelId -> paging bookkeeping (see history.js)
+
+    // The roster, built once per change rather than once per reader. `state.people` maps
+    // and locale-sorts every account on the server each time it is read, and two things
+    // read it on a clock rather than on a change: the background on every frame it draws,
+    // and the speaking rings ten times a second. Neither can see anything the last state
+    // change did not put there.
+    let rosterNow = null;
+    let onlineNow = null;
+    state.subscribe(() => { rosterNow = null; onlineNow = null; });
+    const rosterPeople = () => (rosterNow ??= state.people);
+    const onlinePeople = () => (onlineNow ??= rosterPeople()
+        .filter((p) => p.presence !== 'offline')
+        .map((p) => ({ person: p, strand: { id: p.username, hue: userHue(p.username) } })));
+
+    // What the shell says the window is doing; see motion.js for why the page has to be
+    // told. Assumed in view until it says otherwise, which is also the whole answer in a
+    // browser and under an older shell.
+    let windowState = { visible: true, focused: true };
+    const unwatchWindow = platform.windowState.onChange((next) => {
+        windowState = next;
+        applyMotionPrefs();
+    });
+    platform.windowState.state()
+        .then((now) => { if (now) { windowState = now; applyMotionPrefs(); } })
+        .catch(() => { /* an older shell; the assumption above stands */ });
 
     /** The people standing in MY room right now, producers and all — the sync's truth. */
     const roomPeers = () => [...state.raw.peers.values()]
@@ -621,13 +650,16 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
      * frame. This toggles a class on elements that already exist and touches nothing else.
      */
     function paintSpeaking() {
-        const view = state.toShell();
+        // The roster alone, and the cached one. This used to ask for the whole shell view —
+        // every channel's occupants, the timeline's items, the DM rail — ten times a second,
+        // to read two fields off each person.
+        const meId = state.raw.me?.id;
         const now = Date.now();
 
-        for (const person of view.people) {
+        for (const person of rosterPeople()) {
             // The loudest of ALL their connections. Levels are per peer, and somebody
             // signed in twice would otherwise be silent on screen while audibly talking.
-            let level = person.id === view.me.id ? (voiceLevels.get('self') ?? 0) : 0;
+            let level = person.id === meId ? (voiceLevels.get('self') ?? 0) : 0;
             for (const cid of person.cids ?? []) {
                 level = Math.max(level, voiceLevels.get(cid) ?? 0);
             }
@@ -1016,6 +1048,10 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
      * down because a new message arrived, while they are reading something further up, is
      * the single most irritating thing a chat client can do.
      */
+    // The timeline as last written, and the element it was written into — a remount makes
+    // a new, empty one, which must be filled whatever the markup says.
+    let paintedTimeline = { list: null, markup: null };
+
     function paintMessages(items) {
         const scroller = $('#timeline', mount);
         const list = $('#msgList', mount);
@@ -1030,7 +1066,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         // Reacting is possible in channels when the server carries the module; DM
         // messages have no reaction store yet, so the add button stays away there.
         const inDm = Boolean(state.raw.activeDmId);
-        list.innerHTML = messageList(items.map((i) =>
+        const markup = messageList(items.map((i) =>
             (i.kind === 'message'
                 ? {
                     ...i,
@@ -1039,6 +1075,19 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                     previewDismissed: dismissedPreviews.has(i.id),
                 }
                 : i)));
+        // Written only when it differs from what is already there. repaint() runs for every
+        // state change — somebody joining, a typing line, a mute — and each one used to
+        // throw the whole timeline away and build it again: every row re-parsed, every
+        // picture re-decoded, a playing video embed restarted, an open reaction picker
+        // gone. Building the string is cheap; it is the DOM behind it that was not.
+        //
+        // Compared as markup rather than by tracking what the views depend on, because the
+        // list of those is long (names, faces, reactions, previews, the day labels) and a
+        // missed one is a timeline that silently stops updating.
+        if (paintedTimeline.list !== list || paintedTimeline.markup !== markup) {
+            list.innerHTML = markup;
+            paintedTimeline = { list, markup };
+        }
         hydrateAuthImages();
         if (!inDm) requestPreviews(state.raw.viewChannelId ?? state.raw.currentChannelId);
 
@@ -1066,23 +1115,24 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         const canvas = $('#roomBg', mount);
         if (!canvas) return;
         background = new WeaveBackground(canvas, {
-            // `state.people` rather than `toShell()`: this is read on every animation
-            // frame, and toShell() additionally walks the roster once per channel to work
-            // out who is standing where — none of which a field of strands needs.
+            maxFps: BACKGROUND_FPS,
+            // The cached roster rather than `state.people` or `toShell()`: this is read on
+            // every frame drawn, and either of those rebuilds and sorts the whole member
+            // list to produce it — toShell() once more per channel on top.
             getState: () => {
                 // Everyone ONLINE, not the occupants of whatever room is on screen. The
                 // field answers "who is here", and that must not change because you opened
                 // a text channel to read — which is what it used to do, and since a text
                 // channel has no occupants at all it went blank exactly when somebody was
                 // most likely to be looking at it.
-                const here = state.people.filter((p) => p.presence !== 'offline');
+                const here = onlinePeople();
                 const meId = state.raw.me?.id;
 
                 return {
-                    participants: here.map((p) => ({ id: p.username, hue: userHue(p.username) })),
+                    participants: here.map((entry) => entry.strand),
                     // How much is being said, by voice or in text, whichever is livelier.
                     noise: Math.max(
-                        voiceNoise(here.map((p) => levelOf(p, meId))),
+                        voiceNoise(here.map((entry) => levelOf(entry.person, meId))),
                         msgNoise.value(Date.now()),
                     ),
                 };
@@ -1115,9 +1165,10 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             live.set(peer.username, entry);
         }
 
-        const readings = [...mount.querySelectorAll('.loom-anchors .room-person')]
-            .map((el) => el.dataset.person)
-            .filter(Boolean)
+        // The rows as mountLoom found them after the last render — still the DOM's order,
+        // which is the point of the paragraph above, without asking the DOM for it again
+        // on every frame.
+        const readings = loomRows
             .map((username) => {
                 const person = live.get(username);
                 // A muted string lies flat. Somebody who has muted themselves is not
@@ -1134,10 +1185,15 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
     /** The renderer lights the avatar that belongs to each string. */
     function loomRing(username, glow) {
-        const avatar = mount.querySelector(
-            `.loom-anchors .room-person[data-person="${CSS.escape(username)}"] .avatar`);
+        const avatar = loomAvatars.get(username);
         if (avatar) avatar.style.boxShadow = glow;
     }
+
+    // Who has a row on the loom, top first, and the face on each row. Read off the DOM once
+    // per render by mountLoom rather than once per frame by the two functions above: the
+    // rows only ever change when #roomScroll is rewritten, and mountLoom follows every one.
+    let loomRows = [];
+    let loomAvatars = new Map();
 
     /**
      * Parent the one canvas into wherever the loom currently is.
@@ -1148,6 +1204,14 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
      */
     function mountLoom() {
         const wrap = $('.loom-canvas-wrap', mount);
+        loomRows = [];
+        loomAvatars = new Map();
+        for (const row of mount.querySelectorAll('.loom-anchors .room-person')) {
+            const username = row.dataset.person;
+            if (!username) continue;
+            loomRows.push(username);
+            loomAvatars.set(username, row.querySelector('.avatar'));
+        }
         if (!wrap) { loom?.stop(); return; }   // not standing in a voice room
 
         if (!loomCanvas) {
@@ -1158,6 +1222,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         if (loomCanvas.parentElement !== wrap) wrap.append(loomCanvas);
 
         loom ??= new LoomRenderer(loomCanvas, {
+            maxFps: LOOM_FPS,
             mode: prefs.loomMode,
             getVoices: loomVoices,
             onRing: loomRing,
@@ -1180,8 +1245,16 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         // A tile in fullscreen is the second reason to stop, and it is not a preference:
         // see onFullscreenChange for what these cost over a full-screen video.
         // Bubbles stop drifting for the same reasons, but stay where they are: still is not gone.
-        bubbleRoom?.setMoving(!(prefs.staticBackground || document.fullscreenElement));
-        if (prefs.staticBackground || document.fullscreenElement) {
+        // And the window not being on screen is the third; motion.js holds the policy.
+        const plan = motionPlan({
+            staticBackground: Boolean(prefs.staticBackground),
+            fullscreen: Boolean(document.fullscreenElement),
+            windowVisible: windowState.visible,
+            windowFocused: windowState.focused,
+        });
+        bubbleRoom?.setMoving(plan.run);
+        background?.setMaxFps(plan.backgroundFps);
+        if (!plan.run) {
             background?.stop();
             loom?.stop();
             return;
@@ -1209,6 +1282,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             const viewId = state.raw.viewChannelId ?? state.raw.currentChannelId;
             const fresh = state.addMessage(record.channelId, record);
             if (record.channelId === viewId) msgNoise.record(Date.now());
+            if (fresh) trimTimeline(record.channelId);
             if (fresh) {
                 chimeFor({
                     fromSelf: record.userId === state.raw.me?.id,
@@ -1741,6 +1815,31 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         }
     }
 
+    /**
+     * Cut a long timeline back to its newest end, when that disturbs nobody.
+     *
+     * Called as each message arrives. The policy is shouldTrim()'s; this supplies what it
+     * cannot know — whether that channel is the one on screen and where its reader is — and
+     * moves the paging cursor to match, so scrolling up afterwards fetches exactly what was
+     * let go.
+     */
+    function trimTimeline(channelId) {
+        const onScreen = !state.raw.activeDmId
+            && channelId === (state.raw.viewChannelId ?? state.raw.currentChannelId);
+        const scroller = $('#timeline', mount);
+        const atBottom = Boolean(scroller)
+            && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < STICK_PX;
+        const entry = history.get(channelId);
+        if (!shouldTrim({
+            length: state.raw.messages.get(channelId)?.length ?? 0,
+            onScreen,
+            atBottom,
+            busy: Boolean(entry?.busy),
+        })) return;
+        const oldest = state.trimMessages(channelId, TRIM_KEEP);
+        if (oldest) history.set(channelId, rewindHistory(entry, oldest));
+    }
+
     /** The one line above the oldest message: fetching, or the start of the room. */
     function paintHistoryNote(channelId) {
         const list = $('#msgList', mount);
@@ -1778,8 +1877,11 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
     // store with no way to see or undo what is in it.
     const dismissedPreviews = new Set();
 
-    // url -> objectURL for auth-gated images, so each image is fetched once.
-    const blobUrls = new Map();
+    // url -> objectURL for auth-gated images, so each image is fetched once — within a
+    // budget, and never dropping one that is on screen. See blob-urls.js.
+    const blobUrls = createBlobUrls({
+        inUse: (objectUrl) => [...document.images].some((img) => img.src === objectUrl),
+    });
     // url -> preview | null (null = asked and answered nothing), so the server is asked once.
     const previewCache = new Map();
     const previewAsked = new Set();
@@ -1792,9 +1894,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             const held = blobUrls.get(url);
             if (held) { img.src = held; continue; }
             api.fetchBlob(url).then((blob) => {
-                const obj = URL.createObjectURL(blob);
-                blobUrls.set(url, obj);
-                img.src = obj;
+                img.src = blobUrls.put(url, blob);
             }).catch(() => { img.closest('.attach-image-wrap')?.remove(); });
         }
     }
@@ -1812,9 +1912,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         const held = blobUrls.get(url);
         if (held) { play(held); return; }
         api.fetchBlob(url).then((blob) => {
-            const obj = URL.createObjectURL(blob);
-            blobUrls.set(url, obj);
-            play(obj);
+            play(blobUrls.put(url, blob));
         }).catch(() => { /* the sound may have been deleted since it was chosen */ });
     }
 
@@ -3176,6 +3274,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
 
         destroy() {
             document.removeEventListener('fullscreenchange', onFullscreenChange);
+            unwatchWindow();
             clearTimeout(fullscreenHoldTimer);
             clearInterval(syncTimer);
             clearInterval(statsTimer);
@@ -3188,6 +3287,10 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             loom?.destroy();
             bubbleRoom?.destroy();
             bubblePhotos.destroy();
+            // Every face and every picture in the chat is an object URL holding its bytes.
+            // Neither was released here before, so signing out and back in kept the lot.
+            avatarCache.destroy();
+            blobUrls.destroy();
             link.onEvent = () => {};
             link.onState = () => {};
         },

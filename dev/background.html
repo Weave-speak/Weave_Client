@@ -40,6 +40,10 @@
     <strong>Background harness</strong>
     <label>people <input id="n" type="range" min="0" max="12" value="6"><output id="nOut">6</output></label>
     <label>noise <input id="noise" type="range" min="0" max="100" value="0"><output id="noiseOut">0.00</output></label>
+    <label>cap <select id="cap">
+      <option value="0">none</option><option value="20">20 (unfocused)</option>
+      <option value="30" selected>30 (the room)</option><option value="60">60</option>
+    </select></label>
     <button id="join">+ join</button>
     <button id="leave">− leave</button>
     <button id="toggle">stop</button>
@@ -74,12 +78,20 @@ const noiseOut = document.getElementById('noiseOut');
 const fps = document.getElementById('fps');
 
 let count = Number(n.value);
-const state = () => ({
-    participants: NAMES.slice(0, count).map((name) => ({ id: name, hue: userHue(name) })),
-    noise: Number(noise.value) / 100,
-});
+// getState is read once per frame DRAWN, which makes it the place to count them — as
+// distinct from the frames the display offered, counted at the bottom of this file.
+let drawn = 0;
+const state = () => {
+    drawn++;
+    return {
+        participants: NAMES.slice(0, count).map((name) => ({ id: name, hue: userHue(name) })),
+        noise: Number(noise.value) / 100,
+    };
+};
 
-const bg = new WeaveBackground(document.getElementById('bg'), { getState: state });
+const cap = document.getElementById('cap');
+const bg = new WeaveBackground(document.getElementById('bg'), { getState: state, maxFps: Number(cap.value) });
+cap.onchange = () => bg.setMaxFps(Number(cap.value));
 bg.start();
 
 const setCount = (v) => {
@@ -102,8 +114,8 @@ let mark = performance.now();
 (function tick(now) {
     frames++;
     if (now - mark >= 1000) {
-        fps.textContent = `${frames} fps · ${count} strands · phase ${bg.phase.toFixed(2)}`;
-        frames = 0; mark = now;
+        fps.textContent = `display ${frames} fps · drawn ${drawn} · ${count} strands · phase ${bg.phase.toFixed(2)}`;
+        frames = 0; drawn = 0; mark = now;
     }
     requestAnimationFrame(tick);
 })(performance.now());

@@ -255,7 +255,25 @@ function createWindow() {
         win.loadURL(`${SCHEME}://app/index.html`);
     }
 
+    // Tell the page what the window is doing. It cannot reliably find out for itself:
+    // backgroundThrottling is off (above), and that switch reaches the Page Visibility API
+    // as well as the timers, so a minimised window may never see `visibilitychange`. The
+    // room's canvases were pausing on that event and nothing else, which is to say not at
+    // all — drawing a window-sized animation behind whatever game was in front.
+    for (const evt of ['minimize', 'restore', 'hide', 'show', 'focus', 'blur']) {
+        win.on(evt, () => toRenderer('weave:window', windowState()));
+    }
+
     win.on('closed', () => { win = null; });
+}
+
+/** On screen at all, and in front. Both false once the window is gone. */
+function windowState() {
+    const alive = Boolean(win && !win.isDestroyed());
+    return {
+        visible: alive && win.isVisible() && !win.isMinimized(),
+        focused: alive && win.isFocused(),
+    };
 }
 
 /* ── tokens ───────────────────────────────────────────────────────────────── */
@@ -550,6 +568,9 @@ function registerBridge() {
             return null;
         }
     });
+
+    // For a renderer that mounted after the last change; the pushes cover the rest.
+    ipcMain.handle('weave:window.state', () => windowState());
 
     ipcMain.handle('weave:app.info', () => ({
         version: app.getVersion(),

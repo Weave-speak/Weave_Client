@@ -54,6 +54,49 @@ export function shouldLoadOlder(entry, scrollTop) {
 }
 
 /**
+ * How long a timeline may get before its oldest end is let go, and what is kept.
+ *
+ * Paging only ever ADDED: a room somebody sat in for a week held every message of that week,
+ * and every one of them was a row in the DOM, re-laid-out on each arrival. Nothing is lost
+ * by letting the top go — it is exactly what scrolling up fetches — so past the first figure
+ * the list is cut back to the second. The gap between them is there so that it happens once
+ * every couple of hundred messages rather than on every one.
+ */
+export const TRIM_ABOVE = 400;
+export const TRIM_KEEP = 200;
+
+/**
+ * Whether a channel's held messages should be cut back now.
+ *
+ * Never while its reader is scrolled up — the rows that would go are the ones they are
+ * reading, or about to — and never while an older page is in flight, whose reply would land
+ * on a list that no longer reaches back to meet it. A channel nobody is looking at has no
+ * reader to disturb.
+ */
+export function shouldTrim({ length = 0, onScreen = false, atBottom = false, busy = false } = {}) {
+    if (busy || length <= TRIM_ABOVE) return false;
+    return !onScreen || atBottom;
+}
+
+/**
+ * Point the paging cursor at the oldest message still held, after a trim.
+ *
+ * Without this the cursor still names the oldest message EVER fetched, so scrolling up
+ * would ask for the page before that one and leave a hole where the trimmed rows were. And
+ * `done` has to be cleared for the same reason it latches: the beginning of the room is no
+ * longer what is on screen.
+ */
+export function rewindHistory(entry, oldest) {
+    if (!oldest || oldest.createdAt == null || oldest.id == null) return entry ?? freshHistory();
+    return {
+        ...(entry ?? freshHistory()),
+        nextBefore: oldest.createdAt,
+        nextBeforeId: oldest.id,
+        done: false,
+    };
+}
+
+/**
  * Older messages joining what is already held, deduplicated.
  *
  * Duplicates are not hypothetical: the page boundary can overlap a message that also

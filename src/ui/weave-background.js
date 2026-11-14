@@ -21,6 +21,8 @@
 //   - Joining and leaving fade over about a second. A departing strand keeps being drawn
 //     while it fades, then retires.
 
+import { createFrameGate } from './frame-gate.js';
+
 /** Pace in phase-radians per second, before `paceScale`. */
 const PACE_IDLE = 0.10;   // a silent room still drifts, very slowly
 const PACE_GAIN = 0.55;   // extra pace at full noise
@@ -51,6 +53,11 @@ export class WeaveBackground {
         this._raf = opts.raf ?? ((fn) => requestAnimationFrame(fn));
         this._cancelRaf = opts.cancelRaf ?? ((id) => cancelAnimationFrame(id));
         this._doc = opts.document ?? (typeof document === 'undefined' ? null : document);
+
+        // How many of the display's frames are drawn; see frame-gate.js for why this is not
+        // simply all of them. Zero is every frame, which is what the original did and what a
+        // test stepping the loop by hand wants. The room sets a real figure.
+        this._gate = createFrameGate(opts.maxFps ?? 0);
 
         this.order = [];          // strand ids currently drawn, including ones fading out
         this.strands = new Map(); // id -> { hue, phase, kjit, ajit, present, target }
@@ -98,9 +105,18 @@ export class WeaveBackground {
 
     get running() { return this._handle !== 0; }
 
+    /**
+     * Cap the frames drawn per second. Takes effect on the next frame; nothing restarts.
+     *
+     * Not below twenty: a frame's step is clamped to 50 ms in `_animate`, so anything slower
+     * would not just look choppier, it would run the weave slow.
+     */
+    setMaxFps(fps) { this._gate.setMaxFps(fps); }
+
     _resume() {
         if (this._handle) return;
         this._last = 0;
+        this._gate.reset();
         this._handle = this._raf(this._animate);
     }
 
@@ -219,6 +235,11 @@ export class WeaveBackground {
     }
 
     _animate(now) {
+        // Too soon after the last one. Declined before anything is touched — `_resize`
+        // clears the canvas, and `_last` must keep meaning "the last frame that was drawn"
+        // so the step below covers the frames that were skipped.
+        if (!this._gate.due(now)) { this._handle = this._raf(this._animate); return; }
+
         const dim = this._resize();
         const dt = Math.min(0.05, this._last ? (now - this._last) / 1000 : 0.016);
         this._last = now;

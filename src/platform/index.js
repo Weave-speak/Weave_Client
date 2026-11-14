@@ -131,6 +131,12 @@ const noHotkeys = {
     onPress() { return () => {}; },
 };
 
+const noWindowState = {
+    available: false,
+    async state() { return { visible: true, focused: true }; },
+    onChange() { return () => {}; },
+};
+
 const browserPlatform = {
     target: 'browser',
     version: VERSION,
@@ -139,6 +145,8 @@ const browserPlatform = {
 
     updates: noUpdates,
     hotkeys: noHotkeys,
+    // A tab's own visibility events work, and the renderers already listen for them.
+    windowState: noWindowState,
     // A browser has no log file to offer. A bug report from one is the description alone,
     // which is still worth sending — most of a report is what the person says anyway.
     diagnostics: {
@@ -239,6 +247,14 @@ const desktopPlatform = {
     power: (typeof window !== 'undefined' && window.weaveNative?.power)
         ? { available: true, ...window.weaveNative.power }
         : { available: false, idleSeconds: null },
+
+    // Whether the window is on screen and in front, from the shell — which is the only
+    // thing that knows, with background throttling off. Absent in a plain browser, and with
+    // an older shell under a newer page; the room then assumes it is being looked at, which
+    // is what it assumed before this existed.
+    windowState: (typeof window !== 'undefined' && window.weaveNative?.windowState)
+        ? { available: true, ...window.weaveNative.windowState }
+        : noWindowState,
 
     // Shortcuts that work while another program is in front. Absent in a plain browser,
     // where the room falls back to listening for the key itself while the page has focus.

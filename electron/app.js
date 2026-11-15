@@ -34,9 +34,12 @@ import { join, dirname, normalize, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { contextMenuItems } from './context-menu.js';
+import { updateSkipReason } from './update-support.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
+// Computed once: neither the packaging nor the platform changes while the app runs.
+const skipReason = updateSkipReason({ packaged: app.isPackaged, platform: process.platform });
 
 /* ── logging ──────────────────────────────────────────────────────────────── */
 
@@ -422,8 +425,8 @@ function startUpdateCheck() {
         });
     });
 
-    if (isDev) {
-        setUpdateState({ status: 'skipped', reason: 'development build' });
+    if (skipReason) {
+        setUpdateState({ status: 'skipped', reason: skipReason });
         return;
     }
     autoUpdater.checkForUpdates().catch((err) => updaterLog.error('Update check threw', err));
@@ -497,6 +500,8 @@ function registerBridge() {
     ipcMain.handle('weave:update.state', () => updateState);
 
     ipcMain.handle('weave:update.checkNow', () => {
+        // Same reason as at launch: with no feed to read, a manual check could only fail.
+        if (skipReason) return { started: false, message: skipReason };
         // The same sequence launch runs: listeners are already registered, so every
         // outcome flows to the banner exactly as a boot-time check would.
         return autoUpdater.checkForUpdates()

@@ -89,6 +89,30 @@ npm run build                      # -> dist/            served by a Weave serve
 WEAVE_TARGET=desktop npm run build # -> dist-electron/renderer
 ```
 
+### Build an installable app locally
+
+These package the desktop build into something you can install or run, and do not publish
+anything. Output goes to `release/`.
+
+| Platform | Command | Produces | Needs |
+|---|---|---|---|
+| **Windows** | `npm run pack` | `Weave-Setup-<version>.exe` | Visual Studio C++ Build Tools, for the process-audio capture sidecar |
+| **Linux** | `npm run pack:linux` | `Weave-<version>.AppImage` | Nothing beyond `npm ci` |
+
+```bash
+npm ci
+npm run pack:linux
+./release/Weave-*.AppImage
+```
+
+Each command has to run on its own platform: electron-builder cannot produce an AppImage
+from Windows, and the Windows sidecar is compiled with MSVC. Process-audio capture (sharing
+one application's sound with a screen share) is Windows-only, so the Linux build does not
+include it.
+
+Linux builds are not yet published to Releases, so building locally is currently the only
+way to get one.
+
 ## Licence
 
 [MIT](LICENSE). The client is deliberately more permissive than the AGPL-3.0 server: a

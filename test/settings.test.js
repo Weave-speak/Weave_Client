@@ -735,7 +735,12 @@ test('each device says what it is and when it was last used', () => {
     });
     assert.match(markup, /Weave desktop on Windows/);
     assert.match(markup, /Chrome on Android/);
-    assert.match(markup, /Signed in 9 September 2026 · last active just now/);
+    // The date is written in the reader's own locale ("9 September 2026" here, "September 9,
+    // 2026" on a US machine, which is what CI runs on), so the expectation is built with the
+    // same helper rather than hard-coding one locale's spelling of it.
+    const signedIn = joinedOn(SESSIONS[0].createdAt);
+    assert.match(signedIn, /2026/);
+    assert.ok(markup.includes(`Signed in ${signedIn} · last active just now`), markup);
     assert.match(markup, /last active 3 hours ago/);
 });
 
@@ -787,7 +792,9 @@ test('how long ago is said in the words somebody would use', () => {
     assert.equal(lastActive(now - 5 * 60 * 60_000, now), '5 hours ago');
     assert.equal(lastActive(now - 2 * 24 * 60 * 60_000, now), '2 days ago');
     // Past a week the date is the more useful answer again.
-    assert.equal(lastActive(Date.parse('2026-08-01T10:00:00Z'), now), '1 August 2026');
+    // (Spelled in the reader's locale, so compare with the shared date helper, not a literal.)
+    assert.equal(lastActive(Date.parse('2026-08-01T10:00:00Z'), now), joinedOn('2026-08-01T10:00:00Z'));
+    assert.match(lastActive(Date.parse('2026-08-01T10:00:00Z'), now), /2026/);
     // A session from before last_used_at was recorded says nothing rather than 1970.
     assert.equal(lastActive(null, now), null);
     assert.equal(lastActive(0, now), null);

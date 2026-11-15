@@ -6,8 +6,8 @@ import assert from 'node:assert/strict';
 import { parseDeepLink } from '../src/server/deeplink.js';
 
 test('the invite link the server mints parses to its parts', () => {
-    const got = parseDeepLink('weave://join?server=https%3A%2F%2Fweave-chat-dev.codeine.cloud&code=ab12-cd34');
-    assert.deepEqual(got, { verb: 'join', server: 'https://weave-chat-dev.codeine.cloud', code: 'AB12-CD34' });
+    const got = parseDeepLink('weave://join?server=https%3A%2F%2Fweave.example.com&code=ab12-cd34');
+    assert.deepEqual(got, { verb: 'join', server: 'https://weave.example.com', code: 'AB12-CD34' });
 });
 
 test('a bare host works too, and the code is normalised upward', () => {

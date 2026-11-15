@@ -109,8 +109,27 @@ const durationPage = (person, { timedOnly }) => `
   <p class="peer-menu-note">They cannot lift this themselves.</p>`;
 
 /**
+ * The top of the menu: who it is about, and the way into their profile.
+ *
+ * A button rather than a heading, because the face and the name are what a hand reaches
+ * for when it wants to know more about somebody — the same gesture as clicking a name
+ * anywhere else. It is first in the menu for the same reason the harmless verbs are above
+ * the fold: it changes nothing for anybody.
+ */
+const head = (person) => `
+  <button type="button" class="peer-menu-head" data-peer-profile
+          title="View profile" aria-label="View ${displayName(person)}'s profile">
+    ${avatar(person, { size: 'sm', presence: false })}
+    <span class="peer-menu-name">${displayName(person)}</span>
+    <span class="peer-menu-head-hint" aria-hidden="true">Profile</span>
+  </button>`;
+
+/**
  * @param {object}  person    a roster row — needs username, displayName, forceMuted
- * @param {boolean} isSelf    your own row offers nothing; you have the self bar for that
+ * @param {boolean} isSelf    your own row offers only your profile; the self bar has the rest
+ * @param {boolean} online    they have a connection. Someone right-clicked from an old chat
+ *                  message may not, and muting or turning down a voice that is not there
+ *                  is a control that does nothing — so it is not offered.
  * @param {boolean} canServerMute  an administrator, or a tester, on a server that honours it
  * @param {boolean} canKick   an administrator on a server that advertises `moderation`
  * @param {boolean} timedOnly the server mute offers no open-ended duration (a tester)
@@ -120,20 +139,27 @@ const durationPage = (person, { timedOnly }) => `
  * @param {boolean} armed     the kick is waiting for its second press
  */
 export function peerMenu({
-    person, isSelf = false, canServerMute = false, canKick = false, timedOnly = false,
+    person, isSelf = false, online = true, canServerMute = false, canKick = false, timedOnly = false,
     listen = { muted: false, volume: 1 }, priority = false, page = 'main', armed = false,
 } = {}) {
-    const privileged = !isSelf && (canServerMute || canKick);
+    // A kick ends a connection, so with none there is nothing for it to do. A server mute is
+    // on the account and outlasts the session, so it stays.
+    const kicks = canKick && online;
+    const privileged = !isSelf && (canServerMute || kicks);
+    const listens = !isSelf && online;
     const body = page === 'duration'
         ? durationPage(person, { timedOnly })
-        : `${isSelf ? '' : listenSection(listen, priority)}${privileged ? privilegedSection(person, { canServerMute, canKick, armed }) : ''}`;
+        : `${listens ? listenSection(listen, priority) : ''}${privileged ? privilegedSection(person, { canServerMute, canKick: kicks, armed }) : ''}`;
 
+    // The duration page keeps a plain heading: its first line is already a way back, and a
+    // second clickable line above it would be two different exits from one small panel.
     return `
     <div class="peer-menu" role="menu" aria-label="${displayName(person)}">
-      <div class="peer-menu-head">
+      ${page === 'duration' ? `
+      <div class="peer-menu-head is-static">
         ${avatar(person, { size: 'sm', presence: false })}
         <span class="peer-menu-name">${displayName(person)}</span>
-      </div>
+      </div>` : head(person)}
       ${body}
     </div>`;
 }
@@ -141,8 +167,8 @@ export function peerMenu({
 /**
  * Whether right-clicking this person would show anything at all.
  *
- * A menu with a head and no items is worse than no menu: it reads as broken rather than as
- * nothing being on offer. Your own row is that case — every verb here is aimed at somebody
- * else, and the self bar already carries your own mute, deafen and leave.
+ * A menu with a head and no items would read as broken rather than as nothing on offer —
+ * which is why your own row used to open nothing. The head is an item now, the way into a
+ * profile, so every row has something to offer, yours included.
  */
-export const peerMenuHasContent = ({ isSelf = false } = {}) => !isSelf;
+export const peerMenuHasContent = () => true;

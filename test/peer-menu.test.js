@@ -38,13 +38,37 @@ test('an administrator gets both halves, separated', () => {
     assert.ok(menu.indexOf('data-peer-mute') < menu.indexOf('data-kick'));
 });
 
-test('your own row offers nothing — the self bar already has all of it', () => {
-    assert.equal(peerMenuHasContent({ isSelf: true }), false);
+test('your own row offers only your profile — the self bar already has the rest', () => {
+    assert.equal(peerMenuHasContent({ isSelf: true }), true, 'the profile is something to offer');
     assert.equal(peerMenuHasContent({ isSelf: false }), true);
 
     const mine = peerMenu({ person: kestrel, isSelf: true, ...ADMIN });
+    assert.match(mine, /data-peer-profile/);
     assert.ok(!mine.includes('data-peer-mute'), 'you cannot mute yourself for yourself');
     assert.ok(!mine.includes('data-kick'), 'nor kick yourself');
+});
+
+test('the face and name at the top open the profile, for anybody', () => {
+    const plain = peerMenu({ person: kestrel });
+    assert.match(plain, /<button[^>]*class="peer-menu-head"[^>]*data-peer-profile/);
+    // First, above every verb: it changes nothing for anybody.
+    assert.ok(plain.indexOf('data-peer-profile') < plain.indexOf('data-peer-mute'));
+    const evil = peerMenu({ person: { username: 'x', displayName: '<b>x</b>' } });
+    assert.ok(!evil.includes('<b>x</b>'), 'the label is a name from a server, and is escaped');
+
+    // The duration page's heading is not a second way out of a two-step choice.
+    const page = peerMenu({ person: kestrel, ...ADMIN, page: 'duration' });
+    assert.ok(!page.includes('data-peer-profile'));
+});
+
+test('someone with no connection gets no listen controls, but keeps the rest', () => {
+    const offline = peerMenu({ person: kestrel, online: false, ...ADMIN });
+    assert.match(offline, /data-peer-profile/);
+    assert.ok(!offline.includes('data-peer-mute'), 'there is no voice to mute');
+    assert.ok(!offline.includes('data-peer-volume'));
+    assert.ok(!offline.includes('data-peer-priority'));
+    assert.match(offline, /data-server-mute/, 'a server mute is on the account, and still applies');
+    assert.ok(!offline.includes('data-kick'), 'a kick ends a connection, and there is none');
 });
 
 test('the listen controls reflect what you currently hear', () => {

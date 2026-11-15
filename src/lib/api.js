@@ -119,6 +119,29 @@ export function createApi({ origin, token = null }) {
 
         removeAvatar: () => request('DELETE', '/api/me/avatar'),
 
+        /**
+         * The picture behind your name on your profile card. Same shape as the avatar —
+         * cropped and re-encoded here, sent as raw bytes, stored by the server beside the
+         * avatars and served by the same route. Needs `profile.banner`.
+         */
+        async uploadBanner(blob) {
+            const res = await fetch(origin + '/api/me/banner', {
+                method: 'POST',
+                headers: { ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) },
+                body: blob,
+                credentials: 'omit',
+                signal: AbortSignal.timeout(60_000),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new ApiError(data.message ?? data.error ?? 'The banner could not be saved.',
+                    { status: res.status });
+            }
+            return data;
+        },
+
+        removeBanner: () => request('DELETE', '/api/me/banner'),
+
         async uploadSound(file, name) {
             const res = await fetch(origin + `/api/sounds?name=${encodeURIComponent(name)}`, {
                 method: 'POST',

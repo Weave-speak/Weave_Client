@@ -534,6 +534,11 @@
 .crop-error { margin: var(--s-2) 0 0; text-align: center; font-size: var(--t-sm); color: var(--bad); }
 .crop-actions { display: flex; justify-content: center; gap: var(--s-2); margin-top: var(--s-3); }
 
+/* The banner's frame: the strip's own 4:1, at about the width of the card above it. Fixed,
+   not fluid, because the picker reads these numbers rather than measuring the frame. */
+.banner-crop-frame { width: 440px; height: 110px; }
+.banner-crop-zoom { max-width: 440px; }
+
 /* ── The self menu ────────────────────────────────────────────────────────── */
 
 /* Status and Settings, behind your own name. Absolute within the bar rather than fixed:
@@ -1773,6 +1778,21 @@
     padding: var(--s-1) var(--s-2) var(--s-2);
     min-width: 0;
 }
+/* The head is the way into a profile, so it behaves like the items beneath it. */
+button.peer-menu-head {
+    width: 100%;
+    padding: var(--s-2);
+    border-radius: var(--r-2);
+    text-align: left;
+}
+button.peer-menu-head:hover, button.peer-menu-head:focus-visible { background: var(--surface-2); }
+.peer-menu-head-hint {
+    flex: none;
+    font-size: var(--t-xs);
+    color: var(--ink-ghost);
+}
+button.peer-menu-head:hover .peer-menu-head-hint,
+button.peer-menu-head:focus-visible .peer-menu-head-hint { color: var(--ink-faint); }
 .peer-menu-name {
     flex: 1;
     min-width: 0;
@@ -2233,6 +2253,74 @@
 .profile-identity .avatar { border: 3px solid var(--surface-1); width: 68px; height: 68px; font-size: var(--t-xl); }
 .profile-name { display: flex; align-items: center; gap: var(--s-2); font-size: var(--t-lg); font-weight: 620; }
 .profile-meta { color: var(--ink-faint); font-size: var(--t-sm); margin-top: 2px; }
+.profile-id-text { min-width: 0; }
+
+/* A chosen banner. The strip takes the picture's own 4:1 shape — the shape it was cropped
+   to — so `cover` has nothing left to cut and the picture is never stretched. Without one,
+   the gradient above keeps its old, shorter height. */
+.profile-banner.has-image {
+    height: auto;
+    aspect-ratio: 4 / 1;
+    background: var(--surface-2);
+    overflow: hidden;
+}
+.profile-banner-img { display: block; width: 100%; height: 100%; object-fit: cover; }
+
+/* The face opens full size. A button for the keyboard, dressed as nothing but the face. */
+.profile-avatar-button {
+    flex: none;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: none;
+    cursor: zoom-in;
+}
+.profile-avatar-button:focus-visible { box-shadow: var(--focus-ring); }
+
+/* Somebody else's profile, opened from their right-click menu. */
+.profile-modal { width: min(520px, 92vw); }
+.profile-view { position: relative; }
+.profile-view .profile-card { margin: 0; border: 0; border-radius: 0; }
+.profile-view-close {
+    position: absolute;
+    top: var(--s-2);
+    right: var(--s-2);
+    z-index: var(--z-raised);
+    width: 32px;
+    height: 32px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--surface-2);
+    color: var(--ink);
+}
+.profile-view-close:hover { background: var(--surface-3); }
+
+/* The picture full size, in a dialog of its own over the profile (see profile-view.js for
+   why it is not a lightbox inside it). The dialog is only a frame for the lightbox layer:
+   no box of its own, and it covers the window so a click anywhere is a click on it. */
+.modal.picture-modal {
+    width: 100vw;
+    height: 100vh;
+    max-width: none;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+.modal.picture-modal::backdrop { background: transparent; }
+
+/* Round as it is everywhere else. Its stored square is 512px; past that it would only be
+   enlarging blur. Two classes, to outrank `.lightbox img`. */
+.lightbox .profile-lightbox-img {
+    width: min(512px, 80vmin);
+    height: min(512px, 80vmin);
+    max-width: none;
+    max-height: none;
+    border-radius: 50%;
+    object-fit: cover;
+}
 
 /* ── Settings rows ────────────────────────────────────────────────────────── */
 

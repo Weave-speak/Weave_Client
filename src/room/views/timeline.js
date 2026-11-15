@@ -168,15 +168,20 @@ const attachment = (a) => {
 function message(m) {
     const classes = ['msg', m.continued ? 'continued' : '', m.mentionsMe ? 'mentions-me' : '']
         .filter(Boolean).join(' ');
+    // Right-clicking the face or the name opens the same menu a roster row does — but only
+    // for somebody who still has an account. A departed author is a name and a picture kept
+    // for the record, with no profile left to open. Only the face and the name, never the
+    // whole row: right-clicking the text is how somebody copies it.
+    const author = m.author?.id ? m.author.username : null;
     return `
     <li class="${classes}" data-message="${esc(m.id)}">
       ${m.continued
         ? `<span class="msg-gutter-time" aria-hidden="true">${esc(m.at)}</span>`
-        : avatar(m.author, { size: 'lg', presence: false })}
+        : avatar(m.author, { size: 'lg', presence: false, author })}
       <div>
         ${m.continued ? `<span class="sr-only">${displayName(m.author)}, ${esc(m.at)}</span>` : `
         <div class="msg-head">
-          <span class="msg-author">${displayName(m.author)}</span>
+          <span class="msg-author"${author ? ` data-author="${esc(author)}"` : ''}>${displayName(m.author)}</span>
           ${adminBadge(m.author)}
           <span class="msg-time">${esc(m.at)}</span>
         </div>`}

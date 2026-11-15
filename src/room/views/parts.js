@@ -23,10 +23,13 @@ export function initials(person) {
  * presence dot is a CSS pseudo-element driven by the data attribute, so there is one
  * element here regardless of state.
  */
-export function avatar(person, { size = '', presence = true } = {}) {
+export function avatar(person, { size = '', presence = true, author = null } = {}) {
     const hue = userHue(person?.username ?? '');
     const cls = ['avatar', size].filter(Boolean).join(' ');
     const state = presence ? ` data-presence="${esc(person?.presence ?? 'offline')}"` : '';
+    // A face in the chat that can be right-clicked for its owner's menu. Not `data-person`:
+    // the speaking ring is toggled on every element carrying that, ten times a second.
+    const owner = author ? ` data-author="${esc(author)}"` : '';
     // The picture goes INSIDE the initials rather than replacing them, so the coloured
     // circle is already the right shape and size while the bytes are still arriving and
     // nothing reflows when they land. `avatarUrl` is resolved by the avatar cache — the
@@ -35,7 +38,7 @@ export function avatar(person, { size = '', presence = true } = {}) {
     const face = person?.avatarUrl
         ? `<img class="avatar-face" src="${esc(person.avatarUrl)}" alt="">`
         : '';
-    return `<span class="${cls}" style="--av: hsl(${hue}, 55%, 40%)"${state}`
+    return `<span class="${cls}" style="--av: hsl(${hue}, 55%, 40%)"${state}${owner}`
         + ` aria-hidden="true">${esc(initials(person))}${face}</span>`;
 }
 

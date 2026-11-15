@@ -7,6 +7,20 @@ All notable changes to Weave Client are recorded here. The format follows
 The newest entries are what the app shows under **What's new** after it updates, so they are
 written for the people using it rather than for the people building it.
 
+## [0.1.79] - 2026-11-15
+
+### Added
+- **See anybody's profile.** Right-click a person — in the room list, or their picture or
+  name on a message — and click their picture or name at the top of the menu. Their profile
+  opens with their banner, when they joined, and an Admin badge if they run the server.
+  Right-clicking yourself now opens your own.
+- **Open a profile picture full size.** Click the picture on a profile to see it large;
+  Escape or a click outside closes it. Pictures uploaded from now on are stored at twice the
+  size, so they stay sharp when opened.
+- **Banners.** In Settings → My Profile, choose a picture to fill the strip behind your name.
+  You drag and zoom to pick which part shows, the same way as your profile picture; it keeps
+  its proportions and is never stretched. Needs server 0.1.42 or later.
+
 ## [0.1.78] - 2026-11-15
 
 ### Fixed

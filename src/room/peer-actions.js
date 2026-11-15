@@ -1,4 +1,4 @@
-// Right-clicking a person, and dragging one into a room.
+// Right-clicking a person — in the roster or in the chat — and dragging one into a room.
 //
 // Its own file rather than more of room/index.js, because both behaviours own a piece of
 // live DOM that must survive a repaint — and the roster does not. `repaint()` rewrites
@@ -50,9 +50,14 @@ export function createPeerActions({
     // A move, mute or kick the server refused, as { icon, text }. The room decides where
     // the sentence goes; this only knows that one is owed.
     onRefused = () => {},
+    // The face and name at the top of the menu were clicked: show this person's profile.
+    onViewProfile = () => {},
 }) {
     let menuEl = null;
     let menuFor = null;         // the person the open menu belongs to
+    // What the menu was opened from: a roster 'row', or an 'author' in the chat. It decides
+    // what a repaint means for it — see reselect().
+    let menuFrom = 'row';
     let menuPage = 'main';
     let kickArmed = false;
     let drag = null;
@@ -122,6 +127,9 @@ export function createPeerActions({
         const next = html(peerMenu({
             person,
             isSelf: person.id === state.toShell().me.id,
+            // Somebody right-clicked from an old message may have no connection at all,
+            // and then there is no voice to mute and nobody to kick.
+            online: (person.cids?.length ?? 0) > 0,
             canServerMute: canServerMute(),
             canKick: canKick(),
             timedOnly: muteTimedOnly(),
@@ -141,8 +149,12 @@ export function createPeerActions({
         menuEl.querySelector('button')?.focus({ preventScroll: true });
     }
 
-    function openMenu(row, x, y) {
-        const username = row.dataset.person;
+    /**
+     * @param {string} username   whose menu
+     * @param {HTMLElement|null} row  the roster row it came from, marked while it is open;
+     *                            null when it came from a face or a name in the chat
+     */
+    function openMenu(username, row, x, y) {
         const person = personOf(username);
         const isSelf = person && person.id === state.toShell().me.id;
         // Nothing to offer is not a menu. An empty panel reads as broken.
@@ -150,8 +162,9 @@ export function createPeerActions({
 
         closeMenu();
         menuFor = username;
+        menuFrom = row ? 'row' : 'author';
         menuAt = { x, y };
-        row.classList.add('selected');
+        row?.classList.add('selected');
         renderMenu();
     }
 
@@ -231,11 +244,14 @@ export function createPeerActions({
     /* ── wiring ──────────────────────────────────────────────────────────── */
 
     mount.addEventListener('contextmenu', (event) => {
+        // A roster row, or a face or name in the chat. Only those: right-clicking anywhere
+        // else keeps whatever the platform offers — message text most of all, because that
+        // menu is how somebody copies it.
         const row = event.target.closest('.room-person');
-        if (!row) return;
-        // Only ours. Right-clicking anywhere else keeps whatever the platform offers.
+        const author = row ? null : event.target.closest('[data-author]');
+        if (!row && !author) return;
         event.preventDefault();
-        openMenu(row, event.clientX, event.clientY);
+        openMenu(row ? row.dataset.person : author.dataset.author, row, event.clientX, event.clientY);
     });
 
     mount.addEventListener('pointerdown', (event) => {
@@ -261,6 +277,12 @@ export function createPeerActions({
         if (!panel) return;
         const person = personOf(menuFor);
         if (!person) return closeMenu();
+
+        if (event.target.closest('[data-peer-profile]')) {
+            closeMenu();
+            onViewProfile(person);
+            return;
+        }
 
         if (event.target.closest('[data-peer-mute]')) {
             const now = listenOf(person);
@@ -335,6 +357,13 @@ export function createPeerActions({
         /** After a repaint: the row the menu points at was replaced, so re-mark it. */
         reselect() {
             if (!menuFor) return;
+            // Opened from the chat, the menu was never about a row: whether they are standing
+            // in a room has nothing to do with it, and closing it on the next presence change
+            // would make it vanish under the pointer. It only goes if the account does.
+            if (menuFrom === 'author') {
+                if (!personOf(menuFor)) closeMenu();
+                return;
+            }
             const row = mount.querySelector(`.room-person[data-person="${CSS.escape(menuFor)}"]`);
             if (row) row.classList.add('selected');
             else closeMenu();      // they left the room; the menu is aimed at nobody

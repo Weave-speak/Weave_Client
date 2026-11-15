@@ -8,11 +8,72 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-    minimumScale, clampOffset, centredOffset, sourceRect, zoomAbout,
-    scaleForPercent, percentForScale, MAX_ZOOM,
+    minimumScale, clampOffset, centredOffset, sourceRect, sourceBox, zoomAbout,
+    scaleForPercent, percentForScale, MAX_ZOOM, OUTPUT_PX,
 } from '../src/settings/avatar-crop.js';
 
 const FRAME = 200;
+
+/* ── a banner: the same arithmetic on a 4:1 strip ─────────────────────────── */
+
+const STRIP = { frameW: 400, frameH: 100 };
+
+test('a banner covers its strip: a tall photo is limited by its width, not its height', () => {
+    // 800x800 into 400x100: half size fills the width, and the height overflows. Taking the
+    // height's ratio instead would leave bands down both sides of the banner.
+    assert.equal(minimumScale({ width: 800, height: 800, ...STRIP }), 0.5);
+    // A panorama wider than the strip is limited by its height instead.
+    assert.equal(minimumScale({ width: 2000, height: 200, ...STRIP }), 0.5);
+});
+
+test('a banner starts centred, and drags only as far as the picture reaches', () => {
+    const scale = 0.5;
+    const start = centredOffset({ width: 800, height: 800, scale, ...STRIP });
+    assert.deepEqual(start, { x: 0, y: -150 }, 'the middle of the photo, top and bottom cut evenly');
+
+    const at = (x, y) => clampOffset({ x, y, width: 800, height: 800, scale, ...STRIP });
+    assert.deepEqual(at(50, 50), { x: 0, y: 0 });
+    assert.deepEqual(at(-999, -999), { x: 0, y: -300 }, 'no sideways travel: it is exactly as wide');
+});
+
+test('what a banner frame shows is the strip of the original that is saved', () => {
+    // 1200x1200 at the covering scale (1/3) shows a 1200x300 slice; dragged to the bottom.
+    const scale = 1 / 3;
+    const box = sourceBox({ width: 1200, height: 1200, scale, x: 0, y: -300, ...STRIP });
+    assert.equal(box.sx, 0);
+    assert.ok(Math.abs(box.sy - 900) < 1e-9, `sy ${box.sy}`);
+    assert.ok(Math.abs(box.sw - 1200) < 1e-9);
+    assert.ok(Math.abs(box.sh - 300) < 1e-9);
+    // The same 4:1 as the strip, so drawing it into 1200x300 stretches nothing.
+    assert.ok(Math.abs(box.sw / box.sh - 4) < 1e-9);
+});
+
+test('zooming a banner keeps the middle of the strip still', () => {
+    const dims = { width: 800, height: 800, ...STRIP };
+    const lowest = minimumScale(dims);
+    const before = { scale: lowest, ...centredOffset({ ...dims, scale: lowest }) };
+    const middle = (v) => {
+        const b = sourceBox({ ...dims, ...v });
+        return { x: b.sx + b.sw / 2, y: b.sy + b.sh / 2 };
+    };
+    const after = zoomAbout({ ...dims, ...before, next: lowest * 2 });
+    const a = middle(before);
+    const b = middle(after);
+    assert.ok(Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6, 'the subject stays put');
+    assert.equal(scaleForPercent({ percent: 200, ...dims }), lowest * 2);
+    assert.equal(percentForScale({ scale: lowest * 2, ...dims }), 200);
+});
+
+test('a square frame gives the same answer either way it is described', () => {
+    const args = { width: 640, height: 480, scale: 0.5, x: -20, y: -10 };
+    const square = sourceRect({ ...args, frame: FRAME });
+    const box = sourceBox({ ...args, frameW: FRAME, frameH: FRAME });
+    assert.deepEqual([box.sx, box.sy, box.sw, box.sh], [square.sx, square.sy, square.size, square.size]);
+});
+
+test('a profile picture is stored large enough to be opened full size', () => {
+    assert.ok(OUTPUT_PX >= 512, 'it is shown at up to 512px when opened');
+});
 
 test('the smallest scale COVERS the frame rather than fitting inside it', () => {
     // A wide picture is limited by its height, a tall one by its width. Taking the smaller

@@ -1,4 +1,5 @@
-// The DOM half of choosing a profile picture.
+// The DOM half of choosing a profile picture — and a banner, which is the same gesture on a
+// wider frame.
 //
 // Everything here is positioning and events; every number it relies on comes from
 // avatar-crop.js, which is pure and tested. That split is deliberate — the arithmetic is
@@ -11,22 +12,37 @@
 // interpretation of them.
 
 import {
-    OUTPUT_PX, minimumScale, clampOffset, centredOffset, sourceRect, zoomAbout,
+    OUTPUT_PX, minimumScale, clampOffset, centredOffset, sourceBox, zoomAbout,
     scaleForPercent, MAX_ZOOM,
 } from './avatar-crop.js';
 
-/** Matches the frame in shell.css. Read once rather than measured, so the maths is stable. */
+/** Matches the avatar frame in shell.css. Read once rather than measured, so the maths is stable. */
 const FRAME_PX = 220;
 
 /**
  * A picture is re-encoded as WebP where the browser has it and PNG otherwise.
  *
- * A cropped 256px square is a few kilobytes either way, so this is about the server's
+ * A cropped square or strip is tens of kilobytes either way, so this is about the server's
  * sniffer recognising it rather than about size — both are on its accepted list.
  */
 const OUTPUT_TYPE = 'image/webp';
 
-export function createAvatarPicker({ root, api, onSaved = () => {}, onError = () => {} }) {
+/**
+ * @param {object} opts
+ * @param {HTMLElement} opts.root   where the cropper's elements are
+ * @param {{w: number, h: number}} [opts.frame]   the crop frame on screen, as drawn in shell.css
+ * @param {{w: number, h: number}} [opts.output]  the size stored
+ * @param {(blob: Blob) => Promise<object>} [opts.upload]  where the bytes go
+ * @param {string} [opts.attr]  the data- prefix of this cropper's elements, so two can share
+ *                              one panel: `crop` for the picture, `banner-crop` for the banner
+ */
+export function createAvatarPicker({
+    root, api, onSaved = () => {}, onError = () => {},
+    frame = { w: FRAME_PX, h: FRAME_PX },
+    output = { w: OUTPUT_PX, h: OUTPUT_PX },
+    upload = (blob) => api.uploadAvatar(blob),
+    attr = 'crop',
+}) {
     let image = null;          // the loaded HTMLImageElement
     let objectUrl = null;      // its blob URL, released when the cropper closes
     let view = { scale: 1, x: 0, y: 0 };
@@ -35,10 +51,10 @@ export function createAvatarPicker({ root, api, onSaved = () => {}, onError = ()
     const $ = (selector) => root.querySelector(selector);
 
     const els = () => ({
-        crop: $('[data-crop]'),
-        frame: $('[data-crop-frame]'),
-        img: $('[data-crop-image]'),
-        zoom: $('[data-crop-zoom]'),
+        crop: $(`[data-${attr}]`),
+        frame: $(`[data-${attr}-frame]`),
+        img: $(`[data-${attr}-image]`),
+        zoom: $(`[data-${attr}-zoom]`),
     });
 
     /** Push the current view onto the element. The only place transform is written. */
@@ -53,7 +69,8 @@ export function createAvatarPicker({ root, api, onSaved = () => {}, onError = ()
     const dims = () => ({
         width: image?.naturalWidth ?? 0,
         height: image?.naturalHeight ?? 0,
-        frame: FRAME_PX,
+        frameW: frame.w,
+        frameH: frame.h,
     });
 
     function open(file) {
@@ -95,14 +112,14 @@ export function createAvatarPicker({ root, api, onSaved = () => {}, onError = ()
 
     function beginDrag(event) {
         if (!image) return;
-        const frame = els().frame;
+        const frameEl = els().frame;
         // Where the pointer started, and where the picture was when it did. Both are
         // needed: the drag is a delta applied to the position at the moment of grabbing,
         // not an absolute position, or the picture would jump to the cursor.
         const from = { pointerX: event.clientX, pointerY: event.clientY, x: view.x, y: view.y };
 
-        frame.classList.add('dragging');
-        frame.setPointerCapture?.(event.pointerId);
+        frameEl.classList.add('dragging');
+        frameEl.setPointerCapture?.(event.pointerId);
 
         const move = (ev) => {
             view = {
@@ -118,7 +135,7 @@ export function createAvatarPicker({ root, api, onSaved = () => {}, onError = ()
         };
 
         const up = () => {
-            frame.classList.remove('dragging');
+            frameEl.classList.remove('dragging');
             window.removeEventListener('pointermove', move);
             window.removeEventListener('pointerup', up);
         };
@@ -140,20 +157,20 @@ export function createAvatarPicker({ root, api, onSaved = () => {}, onError = ()
     /* ── committing ──────────────────────────────────────────────────────── */
 
     /**
-     * Draw the framed square at the stored size and hand back the bytes.
+     * Draw the framed area at the stored size and hand back the bytes.
      *
-     * Deliberately not the original resolution: an avatar is rendered at 42 pixels, and
-     * storing a 12-megapixel photograph to show it at 42 costs everybody who ever loads
-     * the roster.
+     * Deliberately not the original resolution: an avatar is rendered at 42 pixels and at
+     * most 512 when opened, a banner across a dialog, and storing a 12-megapixel photograph
+     * to show it at either size costs everybody who ever loads the roster.
      */
     async function toBlob() {
-        const rect = sourceRect({ ...dims(), ...view });
+        const rect = sourceBox({ ...dims(), ...view });
         const canvas = document.createElement('canvas');
-        canvas.width = OUTPUT_PX;
-        canvas.height = OUTPUT_PX;
+        canvas.width = output.w;
+        canvas.height = output.h;
         const ctx = canvas.getContext('2d');
         ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(image, rect.sx, rect.sy, rect.size, rect.size, 0, 0, OUTPUT_PX, OUTPUT_PX);
+        ctx.drawImage(image, rect.sx, rect.sy, rect.sw, rect.sh, 0, 0, output.w, output.h);
 
         const encode = (type, quality) => new Promise((resolve) => {
             canvas.toBlob(resolve, type, quality);
@@ -170,7 +187,7 @@ export function createAvatarPicker({ root, api, onSaved = () => {}, onError = ()
         try {
             const blob = await toBlob();
             if (!blob) throw new Error('This browser could not encode the picture.');
-            const result = await api.uploadAvatar(blob);
+            const result = await upload(blob);
             close();
             onSaved(result);
         } catch (err) {

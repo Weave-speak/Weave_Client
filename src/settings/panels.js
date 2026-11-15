@@ -15,7 +15,7 @@ import { esc } from '../ui/dom.js';
 import { labelFor } from '../ui/hotkey.js';
 import { LOOM_MODES } from '../ui/loom.js';
 import { icons } from '../room/icons.js';
-import { avatar } from '../room/views/parts.js';
+import { profileCard, joinedOn } from '../room/views/profile.js';
 
 /** Nav, in the design's groups. `needs` names a server feature the section depends on. */
 export const SECTIONS = [
@@ -93,25 +93,9 @@ const notYet = (what, why) => `
   </div>`;
 
 
-/**
- * A date a person would recognise, or nothing at all if the server did not send one.
- *
- * SQLite's datetime('now') produces "2026-08-23 14:01:59" — UTC, but with a space instead
- * of a T and no zone marker at all. Handed to `new Date` that is parsed as LOCAL time, so
- * an account created at 23:30 UTC shows the wrong day to anyone west of London. Normalising
- * it to ISO with an explicit Z is the whole fix.
- */
-export function joinedOn(value) {
-    if (!value) return null;
-    const text = String(value);
-    const normalised = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(text)
-        ? `${text.replace(' ', 'T')}Z`
-        : text;
-
-    const when = new Date(normalised);
-    if (Number.isNaN(when.getTime())) return null;
-    return when.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
-}
+// joinedOn lives with the profile card now, which is where the date is drawn; it is still
+// exported from here because the sessions and invites panels below use it too.
+export { joinedOn };
 
 /* ── panels ───────────────────────────────────────────────────────────────── */
 
@@ -144,6 +128,31 @@ const avatarCropper = ({ busy = false, error = '' } = {}) => `
     </div>
   </div>`;
 
+/**
+ * The banner's cropper. Same gesture, a strip instead of a circle, and its own `data-`
+ * prefix so the two croppers can sit in one panel without answering each other's buttons.
+ *
+ * No ring here: the frame IS the banner's shape, 4:1 as it is drawn on every profile card,
+ * so the edge of the frame is the edge of what everybody will see.
+ */
+const bannerCropper = ({ error = '' } = {}) => `
+  <div class="crop banner-crop" data-banner-crop hidden>
+    <div class="crop-frame banner-crop-frame" data-banner-crop-frame>
+      <img class="crop-image" data-banner-crop-image alt="">
+    </div>
+    <label class="crop-zoom banner-crop-zoom">
+      <span>Zoom</span>
+      <input type="range" data-banner-crop-zoom min="100" max="400" value="100"
+             aria-label="Zoom the banner">
+    </label>
+    <p class="crop-hint">Drag the picture to choose which part fills the banner.</p>
+    ${error ? `<p class="crop-error">${esc(error)}</p>` : ''}
+    <div class="crop-actions">
+      <button type="button" class="btn small" data-banner-crop-cancel>Cancel</button>
+      <button type="button" class="btn small primary" data-banner-crop-save>Save banner</button>
+    </div>
+  </div>`;
+
 /** The server's limit (LIMITS.DISPLAY_MAX). It decides; this only stops the typing early. */
 export const DISPLAY_NAME_MAX = 32;
 
@@ -156,31 +165,19 @@ export const DISPLAY_NAME_MAX = 32;
  * absent rather than present and refusing: such a server answers a rename with 200 and
  * changes nothing, which is worse than no field at all.
  */
-export function profilePanel({ me = {}, prefs = {}, features = [], avatarError = '', soundLibrary = [] } = {}) {
-    const joined = joinedOn(me.createdAt);
+export function profilePanel({
+    me = {}, prefs = {}, features = [], avatarError = '', bannerError = '', soundLibrary = [],
+} = {}) {
     const hasSounds = features.includes('module.sounds');
     const canEdit = features.includes('profile');
     const canRename = features.includes('profile.display-name');
+    const canBanner = features.includes('profile.banner');
 
     return `
     <h2 class="panel-title">My Profile</h2>
-    <p class="panel-lead">Your display name and picture are what the crew sees.</p>
+    <p class="panel-lead">Your display name, picture and banner are what the crew sees.</p>
 
-    <div class="profile-card">
-      <div class="profile-banner" aria-hidden="true"></div>
-      <div class="profile-identity">
-        ${avatar(me, { size: 'lg', presence: false })}
-        <div>
-          <div class="profile-name">
-            ${esc(me.displayName ?? me.username ?? '')}
-            ${me.isAdmin ? '<span class="badge admin">Admin</span>' : ''}
-          </div>
-          <div class="profile-meta">
-            ${esc(me.username ? `@${me.username}` : '')}${joined ? ` · joined ${esc(joined)}` : ''}
-          </div>
-        </div>
-      </div>
-    </div>
+    ${profileCard({ person: me, bannerUrl: me.bannerUrl ?? null })}
 
     ${canRename ? `
     <form class="sec-form name-form" data-change-name novalidate>
@@ -211,6 +208,25 @@ export function profilePanel({ me = {}, prefs = {}, features = [], avatarError =
     <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-avatar-file>
     ${avatarCropper({ error: avatarError })}`
         : notYet('Profile picture', 'This server has no route to attach one to an account.')}
+
+    ${canBanner ? `
+    <div class="setting">
+      <span class="setting-text">
+        <span class="setting-label">Banner</span>
+        <span class="setting-hint">The picture behind your name on your profile. You choose which part of it shows.</span>
+      </span>
+      <span class="setting-buttons">
+        <button type="button" class="btn small" data-pick-banner>
+          ${me.banner ? 'Change' : 'Upload'}
+        </button>
+        ${me.banner ? '<button type="button" class="btn small danger-btn" data-remove-banner>Remove</button>' : ''}
+      </span>
+    </div>
+    <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-banner-file>
+    ${bannerCropper({ error: bannerError })}`
+        // Against an older server the row is simply absent — the same choice the rename
+        // made, for the same reason: a button whose only result is a 404 is worse than none.
+        : ''}
 
     <!-- Status is deliberately NOT here. It lives behind your own name in the bottom bar,
          because a status three clicks into a preferences dialog is one nobody sets and

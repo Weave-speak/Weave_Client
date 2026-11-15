@@ -161,6 +161,10 @@ export function createSettings({
     // reproduces the same screen instead of losing a half-framed picture.
     let avatarError = '';
     let picker = null;
+    // The banner's, likewise. A second picker rather than a mode of the first, because both
+    // croppers are in the panel at once and each must keep its own half-framed picture.
+    let bannerError = '';
+    let bannerPicker = null;
 
     // Security & Recovery. The questions and the current choice come from the server when
     // the panel is opened; the rest is the working state of two forms, held here so a
@@ -218,8 +222,14 @@ export function createSettings({
     function panelBody() {
         switch (current) {
             case 'profile': return profilePanel({
-                me: { ...me, avatarUrl: avatars?.urlFor(me.avatar) ?? null },
-                prefs, features, avatarError, soundLibrary,
+                me: {
+                    ...me,
+                    avatarUrl: avatars?.urlFor(me.avatar) ?? null,
+                    // Banners are stored and served beside the avatars, so the same cache
+                    // fetches them with the session and repaints when one lands.
+                    bannerUrl: avatars?.urlFor(me.banner) ?? null,
+                },
+                prefs, features, avatarError, bannerError, soundLibrary,
             });
             case 'voice': return voicePanel({
                 prefs, devices, cameras, outputs, features,
@@ -866,6 +876,80 @@ export function createSettings({
     }
 
     /**
+     * Choosing a banner: the picture behind your name on your profile card.
+     *
+     * The avatar's picker on a 4:1 frame. The frame on screen is 440x110 — the width of the
+     * panel's card, near enough, so the crop is seen at about the size it will be shown —
+     * and what is stored is 1200x300: sharp on a wide, high-density screen and still tens of
+     * kilobytes. Both are the same 4:1 as the strip on every card, which is what makes "the
+     * part you framed" and "the part everybody sees" the same thing.
+     */
+    function wireBanner() {
+        const panel = $('#settingsPanel', modal.element);
+        const file = $('[data-banner-file]', panel);
+        if (!file) return;
+
+        bannerPicker = createAvatarPicker({
+            root: panel,
+            api,
+            attr: 'banner-crop',
+            frame: { w: 440, h: 110 },
+            output: { w: 1200, h: 300 },
+            upload: (blob) => api.uploadBanner(blob),
+            onSaved: (result) => {
+                bannerError = '';
+                me = { ...me, banner: result.banner ?? result.user?.banner ?? null };
+                onProfileChange(me);
+                renderPanel();
+            },
+            onError: (message) => {
+                bannerError = message;
+                renderPanel();
+            },
+        });
+
+        $('[data-pick-banner]', panel)?.addEventListener('click', () => {
+            bannerError = '';
+            // Cleared first, so choosing the SAME file twice still fires a change event.
+            file.value = '';
+            file.click();
+        });
+
+        file.addEventListener('change', () => {
+            const chosen = file.files?.[0];
+            if (chosen) bannerPicker.open(chosen);
+        });
+
+        $('[data-banner-crop-frame]', panel)?.addEventListener('pointerdown', (event) => {
+            event.preventDefault();
+            bannerPicker.beginDrag(event);
+        });
+
+        $('[data-banner-crop-zoom]', panel)?.addEventListener('input', (event) => {
+            bannerPicker.setZoom(Number(event.target.value));
+        });
+
+        $('[data-banner-crop-cancel]', panel)?.addEventListener('click', () => {
+            bannerPicker.close();
+            bannerError = '';
+        });
+
+        $('[data-banner-crop-save]', panel)?.addEventListener('click', () => bannerPicker.save());
+
+        $('[data-remove-banner]', panel)?.addEventListener('click', async () => {
+            try {
+                await api.removeBanner();
+                me = { ...me, banner: null };
+                onProfileChange(me);
+                bannerError = '';
+            } catch (err) {
+                bannerError = err?.message ?? 'The banner could not be removed.';
+            }
+            renderPanel();
+        });
+    }
+
+    /**
      * Renaming yourself.
      *
      * The server is the only judge of whether a name is free — it knows every account, and
@@ -1200,6 +1284,7 @@ export function createSettings({
         wireMicTest();
         wireAdminPanel();
         wireAvatar();
+        wireBanner();
         wireName();
         wireSecurity();
         wireSessions();

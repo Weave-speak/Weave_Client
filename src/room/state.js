@@ -301,6 +301,8 @@ export function createRoomState({ me = null, server = {} } = {}) {
                     const user = state.users.get(msg.userId);
                     if (user) {
                         if (msg.avatar !== undefined) user.avatar = msg.avatar;
+                        // On the account only: nothing a connection draws has a banner.
+                        if (msg.banner !== undefined) user.banner = msg.banner;
                         if (msg.status !== undefined) user.status = msg.status;
                         if (msg.displayName !== undefined) user.displayName = msg.displayName;
                     }
@@ -312,6 +314,7 @@ export function createRoomState({ me = null, server = {} } = {}) {
                     }
                     if (msg.userId === state.me?.id) {
                         if (msg.avatar !== undefined) state.me.avatar = msg.avatar;
+                        if (msg.banner !== undefined) state.me.banner = msg.banner;
                         if (msg.status !== undefined) state.me.status = msg.status;
                         if (msg.displayName !== undefined) state.me.displayName = msg.displayName;
                     }

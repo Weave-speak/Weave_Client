@@ -33,6 +33,7 @@ import { createRoomBrowser } from '../rooms/browser.js';
 import { createPeerActions } from './peer-actions.js';
 import { createAvatarCache, withAvatars } from './avatars.js';
 import { createBlobUrls } from './blob-urls.js';
+import { createProfileView } from './profile-view.js';
 import { createBubbles } from './bubbles.js';
 import { createAttachmentSlot, outgoingMessage } from './compose.js';
 import { attachChipView } from './views/attach.js';
@@ -214,9 +215,19 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         api,
         onResolved: () => {
             paint();
-            // The settings dialog is its own DOM and does not repaint with the room.
+            // The settings dialog is its own DOM and does not repaint with the room, and nor
+            // does an open profile — whose picture or banner may be the one that just landed.
             settings?.refreshProfile?.();
+            profileView.refresh();
         },
+    });
+    // Somebody's profile, opened from the top of their right-click menu. The card is drawn
+    // from the same roster the sidebar is, so a rename or a new picture shows there too.
+    const profileView = createProfileView({
+        api,
+        avatars: avatarCache,
+        createModal,
+        personById: (id) => rosterPeople().find((p) => p.id === id) ?? null,
     });
     // Bubbles. The photos are behind the session like avatars are, so they come through the
     // same kind of cache — shared with settings, where the admin screen shows them too.
@@ -1506,6 +1517,8 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
             if (msg.avatar) avatarCache.forget(msg.avatar);
             paint();
             paintStage();
+            // Their profile may be the one open: a new name, picture or banner shows at once.
+            profileView.refresh(msg.userId);
             return;
         }
 
@@ -2617,6 +2630,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
                 if (!channelId) return;
                 state.addMessage(channelId, refusalItem(text, Date.now(), icon));
             },
+            onViewProfile: (person) => profileView.open(person),
         });
         $('.app-shell', mount)?.toggleAttribute('data-can-move', canMovePeople());
 
@@ -3275,6 +3289,7 @@ export function createRoom({ mount, api, link, user, server, features = [], onSi
         destroy() {
             document.removeEventListener('fullscreenchange', onFullscreenChange);
             unwatchWindow();
+            profileView.close();
             clearTimeout(fullscreenHoldTimer);
             clearInterval(syncTimer);
             clearInterval(statsTimer);

@@ -7,6 +7,25 @@ All notable changes to Weave Client are recorded here. The format follows
 The newest entries are what the app shows under **What's new** after it updates, so they are
 written for the people using it rather than for the people building it.
 
+## [0.1.80] - 2026-11-18
+
+### Added
+- **Calls ring.** When somebody calls you privately, the call window now rings instead of
+  appearing in silence. Closing it (Escape, or a click beside it) quiets the ring on this
+  computer without declining the call.
+- **Calling…** When you call somebody you hear it ringing at their end, and the room says
+  who you are calling, with **Cancel** beside it. A call that cannot be started says so.
+- **Huddles ring.** When somebody starts a private huddle you belong to, it rings for you
+  the same way, and **Join** takes you straight in. (Needs Weave Server 0.1.43.)
+- **Take the call here.** Signed in on your phone and your computer, a call rings on both.
+  Answer on one and the other stops ringing and says "You are in a call on another device",
+  with **Take it here** to move the call across.
+
+### Fixed
+- With Weave open on two devices, the one that did not answer a call no longer thinks it
+  is in the call (offering to end it), and no longer says "Call declined." when you
+  declined it yourself on the other one.
+
 ## [0.1.79] - 2026-11-15
 
 ### Added

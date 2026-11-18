@@ -319,6 +319,23 @@ test('the room says why a microphone stopped working, ahead of anything else', a
     assert.equal(voiceNotice({ state: 'idle' }).show, false, 'and silent when it is not true');
 });
 
+test('a call you placed says who it is ringing, with the way out beside it', async () => {
+    const { voiceNotice } = await import('../src/room/views/timeline.js');
+    const calling = voiceNotice({ state: 'live', calling: 'Kestrel' });
+    assert.equal(calling.text, 'Calling Kestrel…');
+    assert.deepEqual(calling.action, { label: 'Cancel', attr: 'data-dm-hangup' });
+    // An administrator's mute is still said first: it is the one thing nobody here can undo.
+    assert.match(voiceNotice({ calling: 'Kestrel', forceMuted: true }).text, /administrator/);
+});
+
+test('your call on another device is said, with the way to bring it here', async () => {
+    const { voiceNotice } = await import('../src/room/views/timeline.js');
+    const there = voiceNotice({ state: 'idle', callElsewhere: true });
+    assert.equal(there.text, 'You are in a call on another device.');
+    assert.deepEqual(there.action, { label: 'Take it here', attr: 'data-call-here' });
+    assert.equal(voiceNotice({ state: 'idle', callElsewhere: false }).show, false);
+});
+
 // ── Status, and a face ───────────────────────────────────────────────────────
 
 test('status lives behind your own name, not in the settings panel', async () => {

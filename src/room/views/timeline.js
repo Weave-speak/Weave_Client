@@ -260,6 +260,28 @@ export function voiceNotice(status = {}) {
         };
     }
 
+    // A call you placed that has not been answered yet: said, with the way out beside it,
+    // while the ringback plays.
+    if (status.calling) {
+        return {
+            show: true,
+            tone: 'quiet',
+            text: `Calling ${status.calling}…`,
+            action: { label: 'Cancel', attr: 'data-dm-hangup' },
+        };
+    }
+
+    // Your call, live on another of your devices (answered on your phone, say). Moving it
+    // here is answering it here: the server moves the call and stands the other device down.
+    if (status.callElsewhere) {
+        return {
+            show: true,
+            tone: 'quiet',
+            text: 'You are in a call on another device.',
+            action: { label: 'Take it here', attr: 'data-call-here' },
+        };
+    }
+
     switch (status.state) {
         case 'elsewhere':
             // One account is heard on one device. This one stays signed in, reading, and

@@ -790,6 +790,10 @@
     /* The design's opening split: 55% of the window to video, floor of 280px. The
        divider's inline height wins the moment the hand moves it. */
     height: max(280px, calc((100dvh - 190px) * 0.55));
+    /* ...but never taller than the row the room can give it. A height dragged out on a
+       tall monitor is kept in pixels, and on a shorter one it overhung its row: the
+       timeline painted over the bottom of the stream and the thumbnails beneath it. */
+    max-height: 100%;
 }
 .room .stage.has-focus { grid-template-rows: minmax(0, 1fr) auto; }
 
@@ -875,8 +879,13 @@
 }
 .tile:hover { border-color: var(--line-strong); }
 .tile.focused { border-color: rgb(var(--accent-rgb) / 0.6); box-shadow: var(--shadow-2); }
-/* The big window reads, it does not click: no zoom cursor, no toggle. */
-.stage-main .tile { aspect-ratio: auto; height: 100%; cursor: default; }
+/* The big window reads, it does not click: no zoom cursor, no toggle.
+   It is also the query container its pill and badge answer to (see .stream-pill): they
+   have to fit the TILE, and the window's size says nothing about that — three streams
+   side by side on a 1366×768 laptop are narrower than one on a 1080p monitor. Only here,
+   where both dimensions come from the grid: on a thumbnail sized by its content, size
+   containment would collapse it to nothing. */
+.stage-main .tile { aspect-ratio: auto; height: 100%; cursor: default; container-type: size; }
 .tile video { width: 100%; height: 100%; object-fit: contain; background: var(--video-backdrop); display: block; }
 /* A mirror for your own face only — everyone else must read your screen's text. */
 .tile.self video { transform: scaleX(-1); }
@@ -966,6 +975,20 @@
 .pill-volume { width: 88px; accent-color: var(--accent); margin: 0 var(--s-2) 0 2px; }
 .pill-sep { width: 1px; height: 18px; background: rgb(var(--sep-rgb) / 0.14); margin: 0 3px; flex: none; }
 
+/* The pill is a fixed row of about 250px, centred, and the tile clips what does not fit —
+   from BOTH ends, so a narrow tile lost Mute on the left and Stop watching on the right.
+   Two streams side by side on a 900px-wide window are already narrower than that, and so
+   are three on most laptop screens: a window dragged to a smaller monitor got there
+   without anyone touching the stage. So a tile too narrow for the whole pill gives up the
+   least-needed parts first: the words, the volume slider (mute stays, and the slider is
+   back the moment the tile grows), the separators, then mute itself. Fullscreen and Stop
+   watching never go — a stream you can neither enlarge nor leave is the trap this exists
+   to prevent. Each width is where the remaining pill, plus a margin, still fits. */
+@container (max-width: 400px) { .pill-word { display: none; } }
+@container (max-width: 270px) { .pill-volume { display: none; } }
+@container (max-width: 200px) { .pill-sep { display: none; } }
+@container (max-width: 175px) { .pill-btn[data-listen-mute] { display: none; } }
+
 /* LIVE, said the way the design says it. */
 .live-badge {
     position: absolute;
@@ -989,6 +1012,20 @@
 }
 .live-badge i { width: 6px; height: 6px; border-radius: 50%; background: var(--bad); flex: none; }
 .live-badge.small { top: 8px; left: 8px; padding: 2px 8px; font-size: 10px; }
+
+/* A short tile — a laptop screen, with the chat keeping its share of the height — pulls
+   the badge and the pill into its corners, so the pill never covers whose stream it is.
+   After the badge's own rule on purpose: a container query adds no specificity. */
+@container (max-height: 110px) {
+    .live-badge { top: var(--s-1); left: var(--s-2); }
+    .stream-pill { bottom: var(--s-1); padding: 2px var(--s-1); }
+}
+/* Five or six streams watched in a short window make tiles barely taller than the pill.
+   It centres and its buttons tighten, so the whole of each one is still on the tile. */
+@container (max-height: 60px) {
+    .stream-pill { top: 50%; bottom: auto; transform: translate(-50%, -50%); padding: 0 2px; }
+    .pill-btn { height: 28px; min-width: 28px; }
+}
 
 /* The thumbnail's identity chip: who, and what kind of picture. */
 .tile-chip {
@@ -1551,9 +1588,58 @@
 .drawer-scrim { display: none; }
 
 @media (max-width: 860px) {
-    .app-body { grid-template-columns: var(--rail-w) minmax(0, 1fr); }
-    .sidebar { display: none; }
+    .app-body {
+        grid-template-columns: var(--rail-w) minmax(0, 1fr);
+        /* The rail's column splits: navigation above, the self bar's controls docked
+           below it. The room spans both rows. */
+        grid-template-rows: minmax(0, 1fr) auto;
+    }
+    .app-body > .rail { grid-column: 1; grid-row: 1; }
+    .app-body > .room { grid-column: 2; grid-row: 1 / -1; }
     .titlebar-word { display: none; }
+
+    /* The controls dock to the foot of the rail. Folding the sidebar away used to take mic,
+       deafen, camera, screen share and leave with it, into a drawer behind a ☰ that says
+       "Rooms" — so a window dragged onto a smaller or higher-scaled monitor simply lost
+       its share button, and nothing on screen said where it went. The rail survives every
+       width; the controls now survive with it, in the same bottom-left corner they hold
+       at full width, so the hand finds them where it left them.
+       Same elements, not a copy: the sidebar stays rendered and shows only its buttons,
+       so #camBtn and #screenBtn stay unique and every handler keeps working. Who you are
+       and your status stay in the drawer, which opens the whole sidebar as before. */
+    .app-shell:not(.drawer-open) .sidebar {
+        display: block;
+        grid-column: 1;
+        grid-row: 2;
+        background: none;
+        border: 0;
+        border-radius: 0;
+        overflow: visible;
+    }
+    .app-shell:not(.drawer-open) .sidebar > :not(#selfBarSlot),
+    .app-shell:not(.drawer-open) .self-id,
+    .app-shell:not(.drawer-open) .self-rule,
+    .app-shell:not(.drawer-open) .self-menu { display: none; }
+    .app-shell:not(.drawer-open) .self-bar {
+        align-items: center;
+        gap: var(--s-2);
+        padding: var(--s-1) 0 var(--s-3);
+        background: none;
+        border-top: 0;
+    }
+    /* The rail's own divider, separating the controls from the conversations above. */
+    .app-shell:not(.drawer-open) .self-bar::before {
+        content: "";
+        width: 26px;
+        height: 1px;
+        background: var(--line);
+        margin-bottom: var(--s-1);
+    }
+    .app-shell:not(.drawer-open) .self-actions {
+        flex-direction: column;
+        align-items: center;
+        padding: 0;
+    }
     .drawer-toggle { display: grid; }
     /* The room list as a drawer, summoned by the hamburger in the room header. */
     .app-shell.drawer-open .sidebar {
@@ -1589,6 +1675,29 @@
     .app-shell.drawer-open .sidebar { left: var(--s-2); }
     .timeline-inner, .composer-wrap { padding-left: var(--s-3); padding-right: var(--s-3); }
     .app-body { grid-template-columns: var(--rail-w) minmax(0, 1fr); }
+}
+
+/* ── Shorter windows ──────────────────────────────────────────────────────── */
+
+/* A 1366×768 laptop at 125% leaves 566px of window, and there a live stage took all but
+ * 77px of the room — one message — and at 150% all but 32. The chat that "never leaves"
+ * had left. A floor on the chat alone is not the answer: tried first, it starved the
+ * stage instead, and the watched streams collapsed to nothing. So the fixed chrome gives
+ * back what it can (the header's and composer's padding, the thumbnail size), the stage
+ * keeps the rest, and the chat is promised one message and the typing line. */
+@media (max-height: 640px) {
+    .room { grid-template-rows: auto fit-content(62%) minmax(var(--timeline-min), 1fr) auto auto; }
+    .room-head { padding: var(--s-2) var(--s-4); }
+    .composer-wrap { padding-bottom: var(--s-3); }
+    .room .stage { padding-top: var(--s-2); }
+    .stage-strip .tile,
+    .room .stage:not(.has-focus) .stage-grid .tile { width: 128px; }
+    /* At that size the face would sit on the name chip; it shrinks and centres in the
+       space above it instead. */
+    .stage-strip .ph,
+    .room .stage:not(.has-focus) .ph { padding-bottom: var(--s-6); }
+    .room .stage-strip .ph-face,
+    .room .stage:not(.has-focus) .ph-face { width: 26px; height: 26px; font-size: var(--t-xs); }
 }
 
 @keyframes slide-in-left {

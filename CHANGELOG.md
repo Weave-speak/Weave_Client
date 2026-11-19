@@ -7,6 +7,24 @@ All notable changes to Weave Client are recorded here. The format follows
 The newest entries are what the app shows under **What's new** after it updates, so they are
 written for the people using it rather than for the people building it.
 
+## [0.1.81] - 2026-11-19
+
+### Fixed
+- **Weave fits whichever monitor it is on.** Dragged to a smaller screen, or one with
+  a higher display scale, the window could end up taller than the screen, with the
+  buttons along its bottom (mute, deafen, camera, **share your screen**, leave) hidden
+  under the taskbar. It now resizes itself to fit the screen it lands on.
+- **Your call buttons stay on screen in a narrow window.** When the window is too narrow
+  for the room list, mute, deafen, camera, share and leave used to disappear with it.
+  They now sit at the bottom of the left-hand bar instead.
+- **Stream controls fit small video tiles.** Watching several streams side by side on a
+  small screen, the controls on each one (mute, fullscreen, stop watching) could be cut
+  off at the edges. They now shrink to fit, and fullscreen and stop watching are always
+  there.
+- **The chat keeps some room on short screens.** With a stream on, a short window could
+  squeeze the chat down to a single line. It now always keeps room for at least one
+  message.
+
 ## [0.1.80] - 2026-11-18
 
 ### Added

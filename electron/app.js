@@ -17,7 +17,7 @@
 // what that server sends back. Treating the window as a general-purpose browser would mean
 // a hostile server could navigate it somewhere and inherit whatever the page can do.
 
-import { app, BrowserWindow, ipcMain, shell, safeStorage, nativeTheme, protocol, net, desktopCapturer, powerMonitor, globalShortcut, Menu, clipboard } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, safeStorage, nativeTheme, protocol, net, desktopCapturer, powerMonitor, globalShortcut, Menu, clipboard, screen } from 'electron';
 import crypto from 'node:crypto';
 // Both of these are CommonJS. A named import from CJS depends on Node's module lexer
 // spotting the export in compiled output, which is not something to rely on in a process
@@ -35,6 +35,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { contextMenuItems } from './context-menu.js';
 import { updateSkipReason } from './update-support.js';
+import { fitBounds, minimumSizeFor } from './window-fit.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
@@ -113,11 +114,16 @@ function serveRenderer() {
 let win = null;
 
 function createWindow() {
+    // The launch maximizes, but these are the bounds a restore goes back to — and a fixed
+    // 1280×820 is taller than a 1366×768 laptop at 125%, so un-maximizing there put the
+    // bottom of the window off the screen before it had been moved at all.
+    const { workArea } = screen.getPrimaryDisplay();
+    const minimum = minimumSizeFor(workArea);
     win = new BrowserWindow({
-        width: 1280,
-        height: 820,
-        minWidth: 620,
-        minHeight: 480,
+        width: Math.min(1280, workArea.width),
+        height: Math.min(820, workArea.height),
+        minWidth: minimum.width,
+        minHeight: minimum.height,
         show: false,
         backgroundColor: '#08070f',      // matches --bg-void, so there is no white flash
         titleBarStyle: 'hidden',
@@ -267,7 +273,51 @@ function createWindow() {
         win.on(evt, () => toRenderer('weave:window', windowState()));
     }
 
-    win.on('closed', () => { win = null; });
+    // Keep the window on whichever monitor it is on (window-fit.js says why). Asked at the
+    // end of a drag — Windows raises 'moved' once, on release, not while the hand is still
+    // moving — when a maximized window is restored onto a smaller screen than it was
+    // restored from, and when a display changes under it: scale or resolution changed,
+    // a monitor plugged in or pulled out. Display events arrive in bursts while Windows
+    // settles, so they are answered once, after the last.
+    win.on('moved', () => keepOnScreen('moved'));
+    win.on('unmaximize', () => keepOnScreen('unmaximize'));
+    let settle = null;
+    const onDisplays = () => {
+        clearTimeout(settle);
+        settle = setTimeout(() => keepOnScreen('display-changed'), 250);
+    };
+    const DISPLAY_EVENTS = ['display-metrics-changed', 'display-added', 'display-removed'];
+    for (const evt of DISPLAY_EVENTS) screen.on(evt, onDisplays);
+
+    win.on('closed', () => {
+        clearTimeout(settle);
+        for (const evt of DISPLAY_EVENTS) screen.removeListener(evt, onDisplays);
+        win = null;
+    });
+}
+
+/**
+ * Fit the window to the display it is mostly on. The minimum size follows the display even
+ * while maximized, so that a later restore is not held taller than the screen; the bounds
+ * are left to Windows while maximized or fullscreen, which size those to the screen anyway.
+ */
+function keepOnScreen(reason) {
+    if (!win || win.isDestroyed() || win.isMinimized()) return;
+    const display = screen.getDisplayMatching(win.getBounds());
+    // Before the bounds: on a display smaller than the old minimum, a fit would otherwise
+    // be held back up to the very size that did not fit.
+    const minimum = minimumSizeFor(display.workArea);
+    win.setMinimumSize(minimum.width, minimum.height);
+    if (win.isMaximized() || win.isFullScreen()) return;
+
+    const from = win.getBounds();
+    const to = fitBounds(from, display.workArea);
+    if (!to) return;
+    win.setBounds(to);
+    // "The share button is off the bottom of my screen" is otherwise unfalsifiable from a
+    // log. This line says the window was corrected, from what, and on which display.
+    log.info({ evt: 'window.fit', reason, from, to, display: display.id, scale: display.scaleFactor,
+        workArea: display.workArea }, 'Window resized to fit its display');
 }
 
 /** On screen at all, and in front. Both false once the window is gone. */

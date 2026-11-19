@@ -8,6 +8,8 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { shell, connection } from '../src/room/shell.js';
 import { rail } from '../src/room/views/rail.js';
@@ -394,4 +396,55 @@ test('a face is drawn over the initials, and escaped like everything else', asyn
 
     const hostile = avatar({ username: 'kestrel', avatarUrl: '" onerror="alert(1)' });
     assert.ok(!hostile.includes('onerror="alert'), 'a URL is still a hole to be escaped');
+});
+
+/* ── The layout at other sizes ─────────────────────────────────────────────── */
+
+// These two read the stylesheet, as tokens.test.js does: what they guard is decided by CSS
+// alone, and there is no browser here to ask. Both broke for real on a second monitor.
+
+const css = readFileSync(fileURLToPath(new URL('../src/styles/shell.css', import.meta.url)), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+
+/** Every block opened by an at-rule starting with `prelude` (literal text), contents only. */
+const blocks = (prelude) => {
+    const literal = prelude.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return [...css.matchAll(new RegExp(`${literal}[^{]*\\{`, 'g'))].map((m) => {
+        let depth = 1;
+        let j = m.index + m[0].length;
+        for (; j < css.length && depth; j++) {
+            if (css[j] === '{') depth++;
+            else if (css[j] === '}') depth--;
+        }
+        return css.slice(m.index + m[0].length, j - 1);
+    });
+};
+
+test('folding the sidebar away keeps the voice controls on screen', () => {
+    // Below 860px the sidebar becomes a drawer. It used to take mic, deafen, camera,
+    // screen share and leave with it, so a window on a smaller monitor had no share button.
+    const [narrow] = blocks('@media (max-width: 860px)');
+    assert.ok(narrow, 'the narrow layout exists');
+    assert.ok(!/(^|[}\s])\.sidebar\s*\{\s*display:\s*none/.test(narrow),
+        'the whole sidebar is not simply hidden any more');
+    assert.match(narrow, /\.self-actions\s*\{[^}]*flex-direction:\s*column/,
+        'the controls dock, stacked, at the foot of the rail');
+    for (const rule of narrow.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+        const [, selector, body] = rule;
+        if (!/display:\s*none/.test(body)) continue;
+        assert.ok(!/self-actions|round-btn|selfBarSlot\b(?!\))/.test(selector.replace(/:not\([^)]*\)/g, '')),
+            `"${selector.trim()}" hides the controls in the narrow layout`);
+    }
+});
+
+test('a narrow stream tile never drops the way to enlarge or leave it', () => {
+    // The pill gives up its parts as its tile narrows; these two must survive every step.
+    const queries = blocks('@container');
+    assert.ok(queries.length >= 4, 'the pill answers to its tile');
+    for (const q of queries) {
+        assert.ok(!/pill-stop|data-stop-watching|data-tile-full/.test(q),
+            'Stop watching and Fullscreen are never hidden for want of room');
+    }
+    assert.match(css, /\.stage-main \.tile\s*\{[^}]*container-type:\s*size/,
+        'the container is the tile, not the window');
 });

@@ -165,6 +165,9 @@
     /* Beyond this the message column stops growing. At 4K an uncapped column produces
        3,000-pixel lines, which is unreadable however good the typography is. */
     --reading-max: 1180px;
+    /* The least of the chat a short window keeps while a stream is on: one message and the
+       typing line. Below this the room is a video player with a text box under it. */
+    --timeline-min: 96px;
 
     --avatar-sm: 26px;
     --avatar: 34px;
